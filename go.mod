@@ -3,6 +3,7 @@ module github.com/francisrath/partdb-print-agent
 go 1.27.3
 
 require (
+	github.com/gosnmp/gosnmp v1.47.0
 	github.com/klippa-app/go-pdfium v1.21.4
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/zalando/go-keyring v0.2.8

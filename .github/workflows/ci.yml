@@ -28,6 +28,12 @@ jobs:
       - run: go vet ./...
       # Tests never print: printers and Part-DB are faked on localhost.
       - run: go test ./...
+        if: matrix.os != 'ubuntu-latest'
+      - name: go test with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go test -coverpkg=./... -coverprofile=coverage.out ./...
+          { echo '### Test coverage'; echo; awk -f .github/coverage-summary.awk coverage.out; } >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     runs-on: ubuntu-latest

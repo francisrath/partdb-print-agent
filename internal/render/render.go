@@ -30,12 +30,19 @@ const (
 	widthToleranceMM = 0.6
 )
 
+// ErrSize means the page doesn't fit the media (see Options.CheckSize).
+var ErrSize = errors.New("label size doesn't match the media")
+
 type Options struct {
 	WidthDots    int     // cross-feed (printhead) dots
 	LengthDots   int     // feed dots; 0 = keep the page's aspect ratio (continuous media)
-	MediaWidthMM float64 // used by Rotate "auto"
-	Rotate       string  // "" or "auto", "0", "90", "180", "270" (clockwise)
-	Threshold    uint8   // luminance below this is black; 0 = 128
+	MediaWidthMM float64 // used by Rotate "auto" and CheckSize
+	// CheckSize refuses pages that don't fit the media: the cross-feed side must be within
+	// ±0.6 mm of MediaWidthMM and, for die-cut (MediaLengthMM > 0), the length within ±1 mm.
+	CheckSize     bool
+	MediaLengthMM float64
+	Rotate        string // "" or "auto", "0", "90", "180", "270" (clockwise)
+	Threshold     uint8  // luminance below this is black; 0 = 128
 }
 
 type Renderer struct {
@@ -137,6 +144,14 @@ func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options
 	crossMM, feedMM := wMM, hMM
 	if rot == enums.FPDF_PAGE_ROTATION_90_CW || rot == enums.FPDF_PAGE_ROTATION_270_CW {
 		crossMM, feedMM = hMM, wMM
+	}
+	if o.CheckSize && (math.Abs(crossMM-o.MediaWidthMM) > widthToleranceMM ||
+		(o.MediaLengthMM > 0 && math.Abs(feedMM-o.MediaLengthMM) > 1)) {
+		media := fmt.Sprintf("%g mm", o.MediaWidthMM)
+		if o.MediaLengthMM > 0 {
+			media = fmt.Sprintf("%g×%g mm", o.MediaWidthMM, o.MediaLengthMM)
+		}
+		return nil, fmt.Errorf("%w: label is %.1f×%.1f mm, loaded media is %s", ErrSize, wMM, hMM, media)
 	}
 	// Render straight at the target dot size: resampling afterwards would smear QR modules.
 	w, h := o.WidthDots, o.LengthDots

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/zalando/go-keyring"
 )
@@ -92,7 +93,7 @@ func newHarness(t *testing.T) *harness {
 	qlAddr, jobs := fakeQL(t)
 	qlHost, qlPort, _ := net.SplitHostPort(qlAddr)
 	port, _ := strconv.Atoi(qlPort)
-	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210",
+	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
 		Transport: config.Transport{Kind: "tcp", Host: qlHost, Port: port}}}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := &printing.Service{Log: log}
@@ -254,6 +255,15 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	if !strings.Contains(h.flash(), "unknown Brother QL model") {
 		t.Errorf("bad model: %q", h.flash())
 	}
+	for i := range h.srv.cfg.Printers {
+		if h.srv.cfg.Printers[i].ID == "ql2" {
+			h.srv.cfg.Printers[i].SNMPCommunity, h.srv.cfg.Printers[i].AllowScaling, h.srv.cfg.Printers[i].NoSNMP = "s3cret", true, true
+		}
+	}
+	h.post("/printers", url.Values{"id": {"ql2"}, "model": {"QL-820NWB"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-11204"}, "rotate": {"auto"}, "cut": {"per_label"}})
+	if p, _ := h.srv.config().Printer("ql2"); p.SNMPCommunity != "s3cret" || !p.AllowScaling || !p.NoSNMP || p.Cut != "per_label" {
+		t.Errorf("editing in the UI dropped settings the form doesn't show: %+v", p)
+	}
 	h.post("/printers/ql2/delete", nil)
 	if _, err := h.srv.config().Printer("ql2"); err == nil {
 		t.Error("not deleted")
@@ -266,8 +276,37 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	<-h.jobs
 
 	w := h.do("GET", "/printers/ql/status", nil)
-	if !strings.Contains(w.Body.String(), "no status over TCP") {
+	if !strings.Contains(w.Body.String(), "no status over TCP") || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Errorf("status: %s", w.Body)
+	}
+	// without media, a printer that reports nothing can't print: flag it
+	h.srv.cfg.Printers[0].Media = ""
+	if w := h.do("GET", "/printers/ql/status", nil); !strings.Contains(w.Body.String(), "set media") || !strings.Contains(w.Body.String(), `"ok":false`) {
+		t.Errorf("status without media: %s", w.Body)
+	}
+}
+
+func TestStatusText(t *testing.T) {
+	loaded := &driver.Media{ID: "dk-11201"}
+	ready := &driver.Status{Code: driver.OK, Model: "QL-810W", Detail: "READY", Media: loaded}
+	if text, ok := statusText(ready, &config.Printer{Media: "dk-11201"}); !ok || text != "OK · QL-810W · dk-11201 loaded · READY" {
+		t.Errorf("match: %q %v", text, ok)
+	}
+	if text, ok := statusText(ready, &config.Printer{Media: "dk-22210"}); ok || !strings.Contains(text, "config expects dk-22210") {
+		t.Errorf("mismatch: %q %v", text, ok)
+	}
+	if _, ok := statusText(ready, &config.Printer{}); !ok {
+		t.Error("no configured media: any known roll is fine")
+	}
+	unknown := &driver.Status{Code: driver.OK, Model: "QL-810W", Media: &driver.Media{ID: "unknown"}}
+	if text, ok := statusText(unknown, &config.Printer{}); ok || !strings.Contains(text, "set media") {
+		t.Errorf("unknown roll, no configured media: %q %v", text, ok)
+	}
+	if _, ok := statusText(&driver.Status{Code: driver.OK}, &config.Printer{}); ok {
+		t.Error("no roll reported, no configured media: jobs would fail")
+	}
+	if _, ok := statusText(unknown, &config.Printer{Media: "dk-22210"}); !ok {
+		t.Error("unknown roll with configured media: printing falls back to the config")
 	}
 }
 
