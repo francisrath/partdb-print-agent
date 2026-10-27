@@ -155,12 +155,11 @@ type ldProfile struct {
 }
 
 func (c *Client) getJSON(ctx context.Context, path, accept string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", accept)
-	req.Header.Set("Authorization", "Bearer "+c.Token)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err

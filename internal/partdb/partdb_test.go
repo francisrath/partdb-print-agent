@@ -96,8 +96,15 @@ func TestTokenAndProfiles(t *testing.T) {
 
 func TestRefusesPlainHTTPAndDowngrade(t *testing.T) {
 	ctx := context.Background()
-	if _, err := New("http://partdb.lan", "tcp_x").GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "plain http") {
+	lan := New("http://partdb.lan", "tcp_x")
+	if _, err := lan.GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "plain http") {
 		t.Errorf("plain http to a LAN host: %v", err)
+	}
+	if _, err := lan.TokenInfo(ctx); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("TokenInfo over plain http: %v", err)
+	}
+	if _, err := lan.Profiles(ctx); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("Profiles over plain http: %v", err)
 	}
 	// https → http redirect must not follow (it would resend the token in clear text)
 	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
