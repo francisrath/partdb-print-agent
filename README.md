@@ -18,7 +18,8 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 
 ```sh
 go build -o bin/pdb-print ./cmd/pdb-print
-cp .env.example .env          # fill in PDB_PRINT_TOKEN (Read-Only API token), then:
+cp config.example.yaml config.local.yaml   # set your printer's address
+cp .env.example .env          # fill in PDB_PRINT_URL and PDB_PRINT_TOKEN (Read-Only API token), then:
 set -a; . ./.env; set +a      # loads PDB_PRINT_URL / PDB_PRINT_TOKEN / PDB_PRINT_CONFIG
 
 bin/pdb-print printers status ql810                           # model, errors, loaded roll

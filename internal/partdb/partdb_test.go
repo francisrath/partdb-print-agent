@@ -54,3 +54,20 @@ func TestGenerateLabels(t *testing.T) {
 		t.Errorf("missing profile: %v", err)
 	}
 }
+
+func TestRefusesPlainHTTPAndDowngrade(t *testing.T) {
+	ctx := context.Background()
+	if _, err := New("http://partdb.lan", "tcp_x").GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("plain http to a LAN host: %v", err)
+	}
+	// https → http redirect must not follow (it would resend the token in clear text)
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+r.Host+r.URL.Path, http.StatusFound)
+	}))
+	defer tls.Close()
+	c := New(tls.URL, "tcp_x")
+	c.HTTP.Transport = tls.Client().Transport
+	if _, err := c.GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Errorf("downgrade redirect: %v", err)
+	}
+}

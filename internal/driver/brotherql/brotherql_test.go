@@ -6,9 +6,11 @@ import (
 	"errors"
 	"flag"
 	"image"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 )
@@ -174,5 +176,25 @@ func TestValidate(t *testing.T) {
 	}
 	if err := d.Validate([]*image.Gray{white(306, 10)}, &driver.Job{Cut: "sometimes"}, &m); err == nil {
 		t.Error("bad cut mode accepted")
+	}
+}
+
+// eofTransport is a printer connection that was closed.
+type eofTransport struct{}
+
+func (eofTransport) Open(context.Context) error  { return nil }
+func (eofTransport) Write(p []byte) (int, error) { return len(p), nil }
+func (eofTransport) Read([]byte) (int, error)    { return 0, io.EOF }
+func (eofTransport) Close() error                { return nil }
+func (eofTransport) Kind() string                { return "test" }
+
+func TestWaitDoneStopsOnClosedConnection(t *testing.T) {
+	start := time.Now()
+	err := WaitDone(context.Background(), eofTransport{}, 1, 30*time.Second)
+	if !errors.Is(err, driver.ErrNoReadback) || !errors.Is(err, io.EOF) {
+		t.Errorf("err = %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("spun for %v on a closed connection", time.Since(start))
 	}
 }

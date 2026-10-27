@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -25,6 +26,9 @@ type Instance struct {
 	// Token is a Read-Only API token. PDB_PRINT_TOKEN overrides it.
 	// ponytail: plain config field; OS keychain storage comes with the web UI setup.
 	Token string `yaml:"token"`
+	// AllowHTTP permits a plain-http base_url on a non-loopback host. The token then
+	// crosses the network unencrypted; prefer https.
+	AllowHTTP bool `yaml:"allow_http,omitempty"`
 }
 
 type Printer struct {
@@ -107,28 +111,28 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// Instance returns the instance with id, or the only one when id is empty.
-// With no instances configured, PDB_PRINT_URL defines one.
-// The token is taken from PDB_PRINT_TOKEN when set.
+// Instance returns a copy of the instance with id (or the only one when id is empty)
+// with its token resolved. With no instances configured, PDB_PRINT_URL defines one ("env").
 func (c *Config) Instance(id string) (*Instance, error) {
-	var in *Instance
+	var in Instance
 	switch {
-	case len(c.Instances) == 0 && os.Getenv("PDB_PRINT_URL") != "":
-		in = &Instance{ID: "env", BaseURL: os.Getenv("PDB_PRINT_URL")}
+	case len(c.Instances) == 0 && os.Getenv("PDB_PRINT_URL") != "" && (id == "" || id == "env"):
+		in = Instance{ID: "env", BaseURL: os.Getenv("PDB_PRINT_URL"), AllowHTTP: os.Getenv("PDB_PRINT_ALLOW_HTTP") == "1"}
 		if err := in.validate(); err != nil {
 			return nil, fmt.Errorf("PDB_PRINT_URL: %w", err)
 		}
 	case id == "" && len(c.Instances) == 1:
-		in = &c.Instances[0]
+		in = c.Instances[0]
 	case id == "":
 		return nil, fmt.Errorf("%d Part-DB instances configured: pick one with --instance", len(c.Instances))
 	default:
-		for i := range c.Instances {
-			if c.Instances[i].ID == id {
-				in = &c.Instances[i]
+		found := false
+		for _, i := range c.Instances {
+			if i.ID == id {
+				in, found = i, true
 			}
 		}
-		if in == nil {
+		if !found {
 			return nil, fmt.Errorf("no instance %q in config", id)
 		}
 	}
@@ -138,7 +142,7 @@ func (c *Config) Instance(id string) (*Instance, error) {
 	if in.Token == "" {
 		return nil, fmt.Errorf("instance %q has no API token: set token in the config or PDB_PRINT_TOKEN", in.ID)
 	}
-	return in, nil
+	return &in, nil
 }
 
 func (in *Instance) validate() error {
@@ -146,7 +150,19 @@ func (in *Instance) validate() error {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return errors.New("base_url must be an http(s) URL")
 	}
+	if u.Scheme == "http" && !in.AllowHTTP && !IsLoopback(u.Hostname()) {
+		return errors.New("base_url uses plain http, which would send the API token unencrypted: use https, or set allow_http: true")
+	}
 	return nil
+}
+
+// IsLoopback reports whether host is localhost or a loopback IP.
+func IsLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c *Config) Printer(id string) (*Printer, error) {

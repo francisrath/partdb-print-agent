@@ -242,7 +242,7 @@ func (a *app) print(ctx context.Context, args []string) error {
 			return err
 		}
 		start := time.Now()
-		if pdf, err = partdb.New(in.BaseURL, in.Token).GenerateLabels(ctx, *profile, *ids, *elemType); err != nil {
+		if pdf, err = partdb.FromInstance(in).GenerateLabels(ctx, *profile, *ids, *elemType); err != nil {
 			return err
 		}
 		a.log.Info("fetched labels", "instance", in.ID, "profile", *profile, "ids", *ids, "bytes", len(pdf), "took", time.Since(start).Round(time.Millisecond))
