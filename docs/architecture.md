@@ -570,7 +570,7 @@ All PRs follow the `BrowserPluginSettings` pattern: a Settings class, **default 
 * *Agent topic* `…/agents/{id}`: private Mercure updates carrying only a job id; the subscriber JWT is issued to the agent's own token and scoped to that one topic (as in §10).
 * *Entity topics* `…/parts/{id}`, `…/part_lots/{id}`, `…/storage_locations/{id}` (and collection topics such as `…/parts`): private updates; payload = id + change type only, never entity data, so a subscriber re-fetches through the normal API with its own permissions.
 * *Subscriber JWTs* are short-lived (≈1 h), issued per user session or per API token, and list only the topics whose entities that user/token may **read** (Part-DB's existing `read` voter per entity type); no wildcard topics for users without the corresponding list permission.
-* Event types map 1:1 to Part-DB permissions: a part change is published only to subscribers allowed `parts.read`, a lot change to `parts_stock.read`/`parts.read`, a location change to `storelocations.read`. Turbo Streams in the Part-DB UI use the same rules.
+* Event types map to Part-DB permissions (`config/permissions.yaml`, v2.20.4): part and lot changes are published only to subscribers allowed `parts.read` (lots are read as part of their part; `parts_stock` only has write operations), location changes to `storelocations.read`. Turbo Streams in the Part-DB UI use the same rules.
 
 **What stays out of Part-DB:** drivers, DPI, media catalogues, rasterisation, vendor names, Bluetooth/USB, discovery, installers.
 
