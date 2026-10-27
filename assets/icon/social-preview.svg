@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <title>pdb-print – social preview background</title>
+  <!-- the Labelbot logo is composited on the left by scripts/gen-icons.sh -->
+  <rect width="1280" height="640" fill="#e9fbfd"/>
+  <rect x="0" y="600" width="1280" height="40" fill="#2ab0c0"/>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" fill="#17606a">
+    <text x="640" y="270" font-size="96" font-weight="700">pdb-print</text>
+    <text x="644" y="345" font-size="38">Direct label printing</text>
+    <text x="644" y="395" font-size="38">for Part-DB</text>
+    <text x="644" y="470" font-size="26" fill="#1c6f7a" opacity=".8">Brother QL · crisp QR codes · no driver scaling</text>
+  </g>
+</svg>

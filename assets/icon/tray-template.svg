@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>pdb-print – tray template</title>
+  <!-- monochrome template: black + alpha only; the OS tints it (macOS menu bar). Eyes are holes. -->
+  <line x1="256" y1="96" x2="256" y2="24" stroke="#000" stroke-width="56" stroke-linecap="round"/>
+  <path fill="#000" fill-rule="evenodd" d="
+    M132 72 H380 A100 100 0 0 1 480 172 V260 A100 100 0 0 1 380 360 H132 A100 100 0 0 1 32 260 V172 A100 100 0 0 1 132 72 Z
+    M160 156 a62 62 0 1 0 0.1 0 Z
+    M352 156 a62 62 0 1 0 0.1 0 Z"/>
+  <rect x="180" y="396" width="152" height="116" rx="20" fill="#000"/>
+</svg>

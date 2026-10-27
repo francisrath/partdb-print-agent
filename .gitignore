@@ -6,3 +6,5 @@ coverage.*
 .DS_Store
 /config.local.yaml
 /testdata/output/
+
+.env

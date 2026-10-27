@@ -1,0 +1,13 @@
+# Copy to the OS config dir (macOS: ~/Library/Application Support/pdb-print/config.yaml,
+# Linux: ~/.config/pdb-print/config.yaml, Windows: %AppData%\pdb-print\config.yaml)
+# or pass --config FILE.
+log_level: info
+printers:
+  - id: ql810
+    name: Brother QL-810W
+    driver: brother-ql
+    model: QL-810W              # QL-800 | QL-810W | QL-820NWB
+    transport: {kind: tcp, host: 192.168.1.50, port: 9100}
+    media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
+    rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
+    cut: per_label              # per_label | last | none
