@@ -1,0 +1,23 @@
+# POC: a standalone Mercure hub next to the Apache Part-DB image (jbtronics/part-db1 has no
+# built-in hub). Local only. Keys are throwaway POC values – never use these anywhere real.
+services:
+  hub:
+    image: dunglas/mercure:v1.1.5
+    environment:
+      SERVER_NAME: ":80"
+      MERCURE_TRUSTED_ISSUERS: https://partdb.example.org          # the token iss Part-DB would use
+      MERCURE_PUBLISHER_JWT_KEY: poc-publisher-secret-0123456789abcdef
+      MERCURE_SUBSCRIBER_JWT_KEY: poc-subscriber-secret-0123456789abcdef
+      MERCURE_EXTRA_DIRECTIVES: resource_identifier http://127.0.0.1:3901/.well-known/mercure
+    ports:
+      - "127.0.0.1:3901:80"
+
+  traefik:
+    image: traefik:v3.7.16
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.file.filename=/etc/traefik/dynamic.yaml
+    volumes:
+      - ./traefik-dynamic.yaml:/etc/traefik/dynamic.yaml:ro
+    ports:
+      - "127.0.0.1:3903:80"

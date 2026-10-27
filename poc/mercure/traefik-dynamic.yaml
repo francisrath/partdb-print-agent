@@ -1,0 +1,15 @@
+# POC: Traefik in front of the hub, with compression on (as many setups have it)
+http:
+  routers:
+    hub:
+      rule: PathPrefix(`/`)
+      service: hub
+      middlewares: [compress]
+  middlewares:
+    compress:
+      compress: {}
+  services:
+    hub:
+      loadBalancer:
+        servers:
+          - url: http://hub:80
