@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"math"
+	"os"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -40,6 +42,24 @@ type Renderer struct {
 	pool      pdfium.Pool
 	instance  pdfium.Pdfium
 	maxPixels int // MaxPixels; lowered in tests
+}
+
+// ReadFile reads a PDF from disk without ever holding more than MaxPDFBytes+1 bytes,
+// so an oversized file is refused before it is read whole.
+func ReadFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, MaxPDFBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > MaxPDFBytes {
+		return nil, fmt.Errorf("%s: PDF larger than %d bytes", path, MaxPDFBytes)
+	}
+	return b, nil
 }
 
 // New compiles the PDFium wasm module; this takes a moment, so reuse the Renderer.

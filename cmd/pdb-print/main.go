@@ -175,7 +175,7 @@ func (a *app) render(args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown or missing media %q (see `pdb-print media`)", p.Media)
 	}
-	pdf, err := os.ReadFile(pos[0])
+	pdf, err := render.ReadFile(pos[0])
 	if err != nil {
 		return err
 	}
@@ -246,7 +246,7 @@ func (a *app) print(ctx context.Context, args []string) error {
 			return err
 		}
 		a.log.Info("fetched labels", "instance", in.ID, "profile", *profile, "ids", *ids, "bytes", len(pdf), "took", time.Since(start).Round(time.Millisecond))
-	} else if pdf, err = os.ReadFile(pos[0]); err != nil {
+	} else if pdf, err = render.ReadFile(pos[0]); err != nil {
 		return err
 	}
 	return a.printPDF(ctx, *printerID, *dryRun, func(*driver.Media) ([]byte, error) { return pdf, nil })

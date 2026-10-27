@@ -9,15 +9,25 @@ import (
 
 // Page returns a wMM×hMM PDF. content is a PDF content stream in millimetre
 // units (origin bottom-left) and may use Helvetica as /F1.
-func Page(wMM, hMM float64, content string) []byte {
-	content = "2.8346 0 0 2.8346 0 0 cm " + content
+func Page(wMM, hMM float64, content string) []byte { return Pages(wMM, hMM, content) }
+
+// Pages returns a PDF with one wMM×hMM page per content stream (see Page).
+func Pages(wMM, hMM float64, contents ...string) []byte {
 	objs := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.3f %.3f] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>", wMM/25.4*72, hMM/25.4*72),
-		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+		"", // page tree, filled in below
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
 	}
+	var kids []string
+	for _, c := range contents {
+		c = "2.8346 0 0 2.8346 0 0 cm " + c
+		n := len(objs) + 1
+		kids = append(kids, fmt.Sprintf("%d 0 R", n))
+		objs = append(objs,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.3f %.3f] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>", wMM/25.4*72, hMM/25.4*72, n+1),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(c), c))
+	}
+	objs[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(contents))
 	var b bytes.Buffer
 	b.WriteString("%PDF-1.4\n")
 	var offs []int
