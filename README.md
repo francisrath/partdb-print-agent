@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" alt="Labelbot, the pdb-print mascot" width="160"></p>
+
 # partdb-print-agent
 
 Direct label printing for [Part-DB](https://github.com/Part-DB/Part-DB-server).
@@ -25,6 +27,9 @@ pdb-print media                                                  # known Brother
 
 Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 `go test ./... -update` rewrites golden files – inspect the diff first.
+Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen-icons.sh`
+(needs `brew install librsvg imagemagick`, plus `iconutil` from macOS); the output is committed.
+
 Status-only hardware check: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
