@@ -269,3 +269,29 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 		t.Errorf("status: %s", w.Body)
 	}
 }
+
+func TestRoutesKeepOtherInstances(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Instances = []config.Instance{{ID: "branch", BaseURL: h.partdb.URL}}
+	h.srv.cfg.Routes = []config.Route{{Instance: "branch", Profile: 2, Printer: "ql"}}
+	h.post("/routes", url.Values{"profile": {"2"}, "printer": {"ql"}})
+	if rs := h.srv.config().Routes; len(rs) != 2 || rs[0].Instance != "branch" || rs[1].Instance != "" {
+		t.Fatalf("saving a catch-all route replaced an instance route: %+v (%s)", rs, h.flash())
+	}
+	h.post("/routes/2/delete", url.Values{"instance": {""}})
+	if rs := h.srv.config().Routes; len(rs) != 1 || rs[0].Instance != "branch" {
+		t.Fatalf("deleting the catch-all route removed the instance route: %+v", rs)
+	}
+}
+
+func TestGuardAllowsBoundLoopbackAddress(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Addr = "127.0.0.2:8631"
+	h.h = h.srv.Handler()
+	if w := h.do("GET", "/v1/info", nil, func(r *http.Request) { r.Host = "127.0.0.2:8631" }); w.Code != 200 {
+		t.Errorf("bound address rejected: %d", w.Code)
+	}
+	if w := h.do("GET", "/v1/info", nil, func(r *http.Request) { r.Host = "127.0.0.3:8631" }); w.Code != http.StatusForbidden {
+		t.Errorf("other loopback address accepted: %d", w.Code)
+	}
+}

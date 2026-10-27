@@ -125,7 +125,8 @@ func (s *Server) Handler() http.Handler {
 // guard enforces the loopback Host allowlist, CSRF on POST and safe headers.
 func (s *Server) guard(next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(s.Addr)
-	allowed := map[string]bool{"127.0.0.1:" + port: true, "localhost:" + port: true, "[::1]:" + port: true}
+	allowed := map[string]bool{"127.0.0.1:" + port: true, "localhost:" + port: true, "[::1]:" + port: true,
+		s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.Host] {
 			http.Error(w, "forbidden host", http.StatusForbidden)
@@ -386,7 +387,7 @@ func (s *Server) saveRoute(w http.ResponseWriter, r *http.Request) {
 	err := s.update(func(c *config.Config) error {
 		rt := config.Route{Profile: profile, Name: name, Printer: printer}
 		for i := range c.Routes {
-			if c.Routes[i].Profile == profile {
+			if c.Routes[i].Profile == profile && c.Routes[i].Instance == "" { // UI routes apply to all instances
 				c.Routes[i] = rt
 				return nil
 			}
@@ -399,10 +400,11 @@ func (s *Server) saveRoute(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	profile, _ := strconv.Atoi(r.PathValue("profile"))
+	instance := r.FormValue("instance")
 	err := s.update(func(c *config.Config) error {
 		var rs []config.Route
 		for _, rt := range c.Routes {
-			if rt.Profile != profile {
+			if rt.Profile != profile || rt.Instance != instance {
 				rs = append(rs, rt)
 			}
 		}
@@ -492,16 +494,20 @@ func sign(key, msg string) string {
 }
 
 // bookmarklet opens the handoff window first (keeping the click's user activation),
-// signs the request with WebCrypto, then navigates the window to the agent.
+// signs the request with WebCrypto, then navigates the window to the agent. Without
+// WebCrypto (Part-DB over plain http) it sends the request unsigned, and the agent
+// asks for an explicit click instead of printing straight away.
 func bookmarklet(key string, profile int, agent string) string {
 	js := `(async()=>{const m=location.pathname.match(/\/(part|store_location)\/(\d+)/);` +
 		`if(!m){alert('pdb-print: open a part or storage location page first');return}` +
 		`const w=window.open('about:blank','pdbprint','popup,width=420,height=340');` +
 		`const p={src:location.origin,type:m[1]==='part'?'part':'storelocation',ids:m[2],profile:'` + strconv.Itoa(profile) + `',ts:String(Math.floor(Date.now()/1000))};` +
+		`const go=()=>{(w||window).location.href='` + agent + `/v1/handoff?'+new URLSearchParams(p)};` +
+		// no WebCrypto on plain-http pages: send unsigned; the agent then asks for a click
+		`if(!(window.crypto&&crypto.subtle)){go();return}` +
 		`const e=new TextEncoder(),k=await crypto.subtle.importKey('raw',e.encode('` + key + `'),{name:'HMAC',hash:'SHA-256'},false,['sign']);` +
 		`const s=await crypto.subtle.sign('HMAC',k,e.encode([p.src,p.type,p.ids,p.profile,p.ts].join('\n')));` +
-		`p.sig=Array.from(new Uint8Array(s),b=>b.toString(16).padStart(2,'0')).join('');` +
-		`(w||window).location.href='` + agent + `/v1/handoff?'+new URLSearchParams(p)})()`
+		`p.sig=Array.from(new Uint8Array(s),b=>b.toString(16).padStart(2,'0')).join('');go()})()`
 	return "javascript:" + url.PathEscape(js)
 }
 

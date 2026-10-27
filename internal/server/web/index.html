@@ -93,7 +93,7 @@
         <td>{{.Profile}} – {{.Name}}</td>
         <td>{{.Printer}}</td>
         <td>{{if .Bookmarklet}}<a class="bookmarklet" href="{{.Bookmarklet}}">🏷 {{.Name}}</a>{{else}}<span class="muted">connect Part-DB first</span>{{end}}</td>
-        <td><form method="post" action="/routes/{{.Profile}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Remove</button></form></td>
+        <td><form method="post" action="/routes/{{.Profile}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="instance" value="{{.Route.Instance}}"><button class="secondary">Remove</button></form></td>
       </tr>
     {{end}}
     </tbody>
