@@ -163,7 +163,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		return nil, err
 	}
 	var t *tcp.Transport
-	readback, viaSNMP := false, false
+	readback, viaSNMP, wasIdle := false, false, false
 	media, ok := brotherql.LookupMedia(p.Media)
 	if p.Media != "" && !ok {
 		return nil, fmt.Errorf("unknown media %q", p.Media)
@@ -171,7 +171,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	if dryRun == "" {
 		var st *driver.Status
 		if ss, err := querySNMP(ctx, p); err == nil {
-			st, viaSNMP = statusFromSNMP(ss), true
+			st, viaSNMP, wasIdle = statusFromSNMP(ss), true, ss.Idle
 		} else {
 			s.Log.Debug("no SNMP status", "printer", p.ID, "err", err)
 		}
@@ -243,12 +243,15 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	switch {
 	case viaSNMP:
 		done, err := s.waitSNMP(ctx, p, timeout)
-		if err != nil {
+		switch {
+		case err != nil:
 			return nil, err
-		}
-		if done {
+		case done && wasIdle:
 			msg, res.Confirmed = "printed", true
-		} else {
+		case done:
+			// it was busy when we sent: the printing we saw may have been another job
+			msg = "sent (unconfirmed: printer was busy with another job)"
+		default:
 			msg = "sent (unconfirmed: printer didn't report printing)"
 		}
 	case readback:
@@ -267,8 +270,10 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 }
 
 // waitSNMP polls until the printer has printed and is idle again (done), reports an
-// error, or the timeout passes (not done). Observed on a QL-810W: idle → printing →
-// other ("BUSY", cutting) → idle; errors show as device down plus a Printer-MIB alert.
+// error, or the timeout passes (not done). SNMP has no per-job id, so Print only treats
+// "done" as confirmation when the printer was idle before the job was sent.
+// Observed on a QL-810W: idle → printing → other ("BUSY", cutting) → idle; errors show
+// as device down plus a Printer-MIB alert.
 // ponytail: "idle for 1 s after activity" = done; a printer that pauses longer between
 // pages of a big job would be reported done early.
 func (s *Service) waitSNMP(ctx context.Context, p *config.Printer, timeout time.Duration) (bool, error) {

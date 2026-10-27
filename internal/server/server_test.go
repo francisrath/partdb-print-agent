@@ -256,11 +256,11 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	}
 	for i := range h.srv.cfg.Printers {
 		if h.srv.cfg.Printers[i].ID == "ql2" {
-			h.srv.cfg.Printers[i].SNMPCommunity, h.srv.cfg.Printers[i].AllowScaling = "s3cret", true
+			h.srv.cfg.Printers[i].SNMPCommunity, h.srv.cfg.Printers[i].AllowScaling, h.srv.cfg.Printers[i].NoSNMP = "s3cret", true, true
 		}
 	}
 	h.post("/printers", url.Values{"id": {"ql2"}, "model": {"QL-820NWB"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-11204"}, "rotate": {"auto"}, "cut": {"per_label"}})
-	if p, _ := h.srv.config().Printer("ql2"); p.SNMPCommunity != "s3cret" || !p.AllowScaling || p.Cut != "per_label" {
+	if p, _ := h.srv.config().Printer("ql2"); p.SNMPCommunity != "s3cret" || !p.AllowScaling || !p.NoSNMP || p.Cut != "per_label" {
 		t.Errorf("editing in the UI dropped settings the form doesn't show: %+v", p)
 	}
 	h.post("/printers/ql2/delete", nil)
@@ -275,8 +275,13 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	<-h.jobs
 
 	w := h.do("GET", "/printers/ql/status", nil)
-	if !strings.Contains(w.Body.String(), "no status over TCP") {
+	if !strings.Contains(w.Body.String(), "no status over TCP") || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Errorf("status: %s", w.Body)
+	}
+	// without media, a printer that reports nothing can't print: flag it
+	h.srv.cfg.Printers[0].Media = ""
+	if w := h.do("GET", "/printers/ql/status", nil); !strings.Contains(w.Body.String(), "set media") || !strings.Contains(w.Body.String(), `"ok":false`) {
+		t.Errorf("status without media: %s", w.Body)
 	}
 }
 
