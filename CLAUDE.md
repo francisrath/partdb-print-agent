@@ -19,7 +19,8 @@ working brief for the **MVP**.
 - Part-DB token: **read-only** API token (enough for `POST /api/labels/generate`).
 - No Part-DB changes needed for the MVP. Upstream issue is posted only **after** the v0.1.0 release.
 - Tag inbox (print parts tagged `print-label`) was **dropped** (2026-10-27, closed PR #5): tagging a part just to
-  print it was too much hassle. Printing from a phone/remote Part-DB waits for the upstream button + PrintJob API.
+  print it was too much hassle. Desktop printing works with a remote Part-DB too (bookmarklet; the agent fetches
+  outbound); only printing from a phone to an agent at home waits for the upstream button + PrintJob API.
 
 ## MVP milestones (do them in order, each ends with something runnable)
 1. **Skeleton** – `cmd/pdb-print` (cobra or plain flag subcommands), `internal/...` packages, config file

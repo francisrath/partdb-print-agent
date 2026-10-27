@@ -10,7 +10,7 @@ Legend used throughout: **[MVP]** = first release, no Part-DB changes needed · 
 ## 0. TL;DR
 
 * A **separate, MIT-licensed, single-binary agent written in Go** runs next to the printers (desktop tray app, Windows service, LaunchAgent, systemd unit, or Docker container on a Pi/NAS). It owns *everything* printer-specific: rasterising Part-DB's PDF to native printhead dots, media/cut/colour handling, vendor protocols (Brother QL/PT raster, ZPL, EPL2, TSPL, ESC/POS, DYMO, Niimbot, Phomemo) and transports (USB, TCP 9100, IPP, BLE, serial/SPP, OS print queue).
-* **Works today with zero Part-DB changes** [MVP]: the agent fetches PDFs through the existing `POST /api/labels/generate` (needs only a **read-only** API token). Jobs reach it via (a) a userscript button in the label dialog, (b) a bookmarklet / link that does a *top-level navigation* to the local agent (sidesteps Part-DB's CSP and Chrome's Local Network Access fetch gating), (c) a "hot folder" that prints `label_*.pdf` downloads, and (d) a CLI. Printing from a phone or through NAT needs the upstream additions below.
+* **Works today with zero Part-DB changes** [MVP]: the agent fetches PDFs through the existing `POST /api/labels/generate` (needs only a **read-only** API token). Jobs reach it via (a) a userscript button in the label dialog, (b) a bookmarklet / link that does a *top-level navigation* to the local agent (sidesteps Part-DB's CSP and Chrome's Local Network Access fetch gating), (c) a "hot folder" that prints `label_*.pdf` downloads, and (d) a CLI. These work with a remote Part-DB too, because the agent fetches labels outbound; only printing from a phone to an agent at home (through NAT) needs the upstream additions below.
 * **Instant printing through NAT** [P2/P3] needs a small, opt-in upstream addition in four sequential PRs: (1) a "Send to print agent" button + setting, (2) a `PrintJob` API resource + agent/printer registration (polling works from here on), (3) push via **Mercure** (the FrankenPHP image already ships a hub; the Apache image needs a sidecar hub), falling back to short polling, with an opt-in long-poll, (4) an opaque `print_hints` JSON field on label profiles. **No printer-specific code or schema lands in Part-DB.** The agent always connects *outbound*.
 * Rendering uses **PDFium compiled to WebAssembly (go-pdfium + wazero)**. It is BSD/Apache-licensed, needs no cgo and runs sandboxed. MuPDF (AGPL) and Poppler (GPL) are avoided. GPL vendor libraries (brother_ql, phomemo-tools) are not linked; their protocols are re-implemented from vendor specs, or they can be used as optional *external* exec plugins.
 
@@ -65,7 +65,7 @@ flowchart LR
   end
 
   subgraph PDB["Part-DB server (AGPL, unchanged in MVP)"]
-    API["REST API (API Platform)<br/>/api/labels/generate<br/>/api/parts?tags=…"]
+    API["REST API (API Platform)<br/>/api/labels/generate"]
     PJ["PrintJob / PrintAgent / Printer<br/>resources [P2, PR2]"]
     HUB["Mercure hub [P3, PR3]<br/>FrankenPHP built-in or sidecar"]
     BTN["'Send to printer' button<br/>+ settings [P2, PR1]"]
@@ -798,7 +798,7 @@ Decided 2026-10-27:
 | 7 | Signing | macOS: existing Apple Developer Program membership (Developer ID). Windows: **SignPath Foundation** |
 | 8 | 32-bit Pi | Not supported; 64-bit OS required |
 | 9 | Push on Part-DB | Recommend the **FrankenPHP image** (built-in Mercure); document an optional Mercure sidecar for the Apache image |
-| 10 | When to post the issue | **After a local MVP has been tested** |
+| 10 | When to post the issue | **After the v0.1.0 release** |
 | 11 | Name | `partdb-print-agent`, CLI `pdb-print` |
 
 ---
