@@ -24,6 +24,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/server"
 )
 
