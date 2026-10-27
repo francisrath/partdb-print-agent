@@ -26,10 +26,11 @@ The macOS binary isn't signed yet; the cask clears the quarantine flag on instal
 
 **Docker** (Linux amd64/arm64):
 ```sh
-docker run --rm --network host \
+docker run --rm --network host --stop-timeout 130 \
   -v pdb-print:/home/nonroot/.config/pdb-print \
   ghcr.io/francisrath/partdb-print-agent:latest
 ```
+On stop, the agent lets a print in progress finish (up to 2 minutes), hence `--stop-timeout 130`.
 The web UI binds loopback only, so `--network host` makes it reachable at `http://127.0.0.1:8631`
 on the host. In a container there is no OS keychain: the token is kept in the config file (0600).
 

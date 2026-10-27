@@ -43,7 +43,9 @@ changelog:
 
 dockers_v2:
   - images: ["ghcr.io/francisrath/partdb-print-agent"]
-    tags: ["{{ .Version }}", "latest"]
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}" # empty tags are skipped: pre-releases don't move latest
     platforms: [linux/amd64, linux/arm64]
     extra_files: [packaging/docker/config-dir.keep]
     labels:
@@ -54,6 +56,7 @@ dockers_v2:
 homebrew_casks:
   - name: pdb-print
     binaries: [pdb-print]
+    skip_upload: auto # pre-releases don't update the tap
     homepage: https://github.com/francisrath/partdb-print-agent
     description: Direct label printing for Part-DB
     license: MIT
