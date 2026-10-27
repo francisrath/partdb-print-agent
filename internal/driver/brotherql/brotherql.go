@@ -213,8 +213,8 @@ func WaitDone(ctx context.Context, t driver.Transport, n int, timeout time.Durat
 			return err
 		}
 		s, err := readStatus(t)
-		if errors.Is(err, driver.ErrNoReadback) && time.Now().Before(deadline) {
-			continue // long label still printing
+		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) && time.Now().Before(deadline) {
+			continue // read timed out: long label still printing
 		}
 		if err != nil {
 			return err
@@ -233,7 +233,7 @@ func readStatus(t driver.Transport) (*driver.Status, error) {
 	buf := make([]byte, 32)
 	if _, err := io.ReadFull(t, buf); err != nil {
 		if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, driver.ErrNoReadback) {
-			return nil, driver.ErrNoReadback
+			return nil, fmt.Errorf("%w: %w", driver.ErrNoReadback, err) // keep the cause: EOF means the connection is gone
 		}
 		return nil, err
 	}

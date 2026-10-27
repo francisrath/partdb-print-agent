@@ -232,7 +232,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 			data["TokenErr"] = err.Error()
 		} else {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			c := partdb.New(full.BaseURL, full.Token)
+			c := partdb.FromInstance(full)
 			if tok, err := c.TokenInfo(ctx); err != nil {
 				data["TokenErr"] = err.Error()
 			} else {
@@ -284,7 +284,9 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		in.BaseURL = baseURL
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		tok, err := partdb.New(baseURL, token).TokenInfo(ctx)
+		probe := *in
+		probe.Token = token
+		tok, err := partdb.FromInstance(&probe).TokenInfo(ctx)
 		if err != nil {
 			return err
 		}
@@ -372,7 +374,7 @@ func (s *Server) saveRoute(w http.ResponseWriter, r *http.Request) {
 	name := fmt.Sprintf("profile %d", profile)
 	if full, err := s.config().Instance(""); err == nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		if ps, err := partdb.New(full.BaseURL, full.Token).Profiles(ctx); err == nil {
+		if ps, err := partdb.FromInstance(full).Profiles(ctx); err == nil {
 			for _, p := range ps {
 				if p.ID == profile {
 					name = p.Name
@@ -560,7 +562,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 		var full *config.Instance
 		if full, err = cfg.Instance(in.ID); err == nil {
 			var pdf []byte
-			if pdf, err = partdb.New(full.BaseURL, full.Token).GenerateLabels(r.Context(), profile, ids, typ); err == nil {
+			if pdf, err = partdb.FromInstance(full).GenerateLabels(r.Context(), profile, ids, typ); err == nil {
 				var res *printing.Result
 				res, err = s.Svc.Print(r.Context(), p, "", printing.PDF(pdf))
 				v.Result = resultText(res)

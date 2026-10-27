@@ -8,7 +8,7 @@
 #   assets/icon/social-preview.svg  text/background for the GitHub social preview
 #
 # Dependencies (macOS):
-#   brew install librsvg imagemagick   # rsvg-convert, magick
+#   brew install librsvg imagemagick   # rsvg-convert, magick (perl ships with macOS/Linux)
 #   iconutil                           # ships with macOS (Xcode command line tools)
 #   go                                 # runs go-winres for the Windows resource
 # On Linux everything except the .icns step works; it is skipped with a warning.
@@ -71,16 +71,20 @@ for s in 16 22 24 32 48 64 128 256 512; do
 done
 mkdir -p $OUT/linux/hicolor/scalable/apps
 # drop the embedded provenance metadata from the shipped copy
-sed '/<metadata>/,/<\/metadata>/d; s#<metadata>.*</metadata>##' $LOGO > $OUT/linux/hicolor/scalable/apps/pdb-print.svg
+perl -0pe 's#<metadata>.*?</metadata>##s' $LOGO > $OUT/linux/hicolor/scalable/apps/pdb-print.svg
+grep -q '<svg' $OUT/linux/hicolor/scalable/apps/pdb-print.svg || { echo "scalable SVG came out empty" >&2; exit 1; }
 
 echo "Tray (template)"
 mkdir -p $OUT/tray
 for s in 16 32; do
-  png "$s" "$tmp/t.png" $TRAY && im "$tmp/t.png" -strip "$OUT/tray/tray-$s.png"
-  png $((s * 2)) "$tmp/t.png" $TRAY && im "$tmp/t.png" -strip "$OUT/tray/tray-$s@2x.png"
+  png "$s" "$tmp/t.png" $TRAY
+  im "$tmp/t.png" -strip "$OUT/tray/tray-$s.png"
+  png $((s * 2)) "$tmp/t.png" $TRAY
+  im "$tmp/t.png" -strip "$OUT/tray/tray-$s@2x.png"
 done
 for s in 22 24; do
-  png "$s" "$tmp/t.png" $TRAY && im "$tmp/t.png" -strip "$OUT/tray/tray-$s.png"
+  png "$s" "$tmp/t.png" $TRAY
+  im "$tmp/t.png" -strip "$OUT/tray/tray-$s.png"
 done
 
 echo "Web favicon"

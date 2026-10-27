@@ -69,9 +69,20 @@ printers:
 	if in, err := empty.Instance(""); err != nil || in.BaseURL != "https://env.example.org" || in.Token != "tcp_env" {
 		t.Errorf("env instance: %+v %v", in, err)
 	}
+	if _, err := empty.Instance("typo"); err == nil {
+		t.Error("explicit unknown id resolved to the env instance")
+	}
 	t.Setenv("PDB_PRINT_URL", "env.example.org")
 	if _, err := empty.Instance(""); err == nil {
 		t.Error("bad PDB_PRINT_URL accepted")
+	}
+	t.Setenv("PDB_PRINT_URL", "http://partdb.lan")
+	if _, err := empty.Instance(""); err == nil {
+		t.Error("plain-http PDB_PRINT_URL accepted without PDB_PRINT_ALLOW_HTTP")
+	}
+	t.Setenv("PDB_PRINT_ALLOW_HTTP", "1")
+	if _, err := empty.Instance(""); err != nil {
+		t.Errorf("PDB_PRINT_ALLOW_HTTP: %v", err)
 	}
 
 	for name, bad := range map[string]string{
@@ -81,6 +92,7 @@ printers:
 		"duplicate":  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
 		"bad yaml":   "printers: [",
 		"bad url":    "instances: [{id: h, base_url: partdb.local}]",
+		"plain http": "instances: [{id: h, base_url: http://partdb.lan}]",
 		"bad route":  "routes: [{profile: 2, printer: nope}]",
 	} {
 		if _, err := Load(write(bad), true); err == nil {
@@ -125,5 +137,24 @@ func TestKeychainAndSave(t *testing.T) {
 	}
 	if r, ok := got.Route("", 2); !ok || r.Printer != "ql" || got.Instances[0].PairingKey != "ab" {
 		t.Errorf("round trip: %+v", got)
+	}
+}
+
+func TestPlainHTTP(t *testing.T) {
+	for url, ok := range map[string]bool{
+		"https://partdb.lan":    true,
+		"http://partdb.lan":     false,
+		"http://127.0.0.1:8080": true,
+		"http://localhost:8080": true,
+		"http://[::1]:8080":     true,
+	} {
+		in := Instance{ID: "x", BaseURL: url}
+		if err := in.validate(); (err == nil) != ok {
+			t.Errorf("%s: %v", url, err)
+		}
+		in.AllowHTTP = true
+		if err := in.validate(); err != nil {
+			t.Errorf("%s with allow_http: %v", url, err)
+		}
 	}
 }
