@@ -28,6 +28,8 @@ type Folder struct {
 	Poll    time.Duration // default 1 s
 	Print   func(ctx context.Context, path string) error
 	Log     *slog.Logger
+
+	link func(oldname, newname string) error // os.Link; tests swap it to exercise the copy fallback
 }
 
 type seen struct {
@@ -49,6 +51,9 @@ func (f *Folder) defaults() {
 	}
 	if f.Poll == 0 {
 		f.Poll = time.Second
+	}
+	if f.link == nil {
+		f.link = os.Link
 	}
 }
 
@@ -125,7 +130,7 @@ func (f *Folder) handle(ctx context.Context, path string) {
 	dir := filepath.Join(f.Dir, dest)
 	err := os.MkdirAll(dir, 0o700)
 	if err == nil {
-		err = moveNoClobber(path, dir)
+		err = moveNoClobber(path, dir, f.link)
 	}
 	switch {
 	case err == nil:
@@ -145,7 +150,7 @@ const maxNumbered = 1000
 // moveNoClobber moves src into dir without ever replacing a file there: the same label
 // downloaded twice is archived as "name.pdf" and "name (2).pdf". It never gives up:
 // past maxNumbered it uses a unique timestamped name.
-func moveNoClobber(src, dir string) error {
+func moveNoClobber(src, dir string, link func(oldname, newname string) error) error {
 	base := filepath.Base(src)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
@@ -157,7 +162,7 @@ func moveNoClobber(src, dir string) error {
 		case i > 1:
 			name = fmt.Sprintf("%s (%d)%s", stem, i, ext)
 		}
-		placed, err := placeExclusive(src, filepath.Join(dir, name))
+		placed, err := placeExclusive(src, filepath.Join(dir, name), link)
 		if err != nil || placed {
 			return err
 		}
@@ -167,8 +172,8 @@ func moveNoClobber(src, dir string) error {
 // placeExclusive moves src to dst unless dst exists (then false). Both ways are atomic
 // with respect to dst: a hard link, or on filesystems without links (e.g. FAT) an
 // exclusive create plus copy.
-func placeExclusive(src, dst string) (bool, error) {
-	err := os.Link(src, dst)
+func placeExclusive(src, dst string, link func(oldname, newname string) error) (bool, error) {
+	err := link(src, dst)
 	switch {
 	case err == nil:
 		return true, os.Remove(src)

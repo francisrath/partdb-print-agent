@@ -151,8 +151,18 @@ func TestNeverReprintsWhenItCantMove(t *testing.T) {
 	}
 }
 
-func TestSameNameTwiceKeepsBoth(t *testing.T) {
+func TestSameNameTwiceKeepsBoth(t *testing.T) { sameNameTwice(t, nil) }
+
+func TestSameNameTwiceWithoutHardLinks(t *testing.T) {
+	// e.g. FAT: the move falls back to an exclusive create + copy
+	sameNameTwice(t, func(string, string) error { return errors.New("hard links not supported") })
+}
+
+func sameNameTwice(t *testing.T, link func(string, string) error) {
 	h := newHarness(t)
+	if link != nil {
+		h.f.link = link
+	}
 	for i := 0; i < 2; i++ {
 		h.file("label_Part5_bag.pdf", fmt.Sprintf("%%PDF-1 copy %d", i), 0)
 		h.scan(0)
@@ -160,9 +170,10 @@ func TestSameNameTwiceKeepsBoth(t *testing.T) {
 		h.scan(600 * time.Millisecond)
 		h.scan(time.Second) // gone from the folder: forget it
 	}
-	for _, name := range []string{"label_Part5_bag.pdf", "label_Part5_bag (2).pdf"} {
-		if !exists(filepath.Join(h.f.Dir, "printed", name)) {
-			t.Errorf("printed/%s missing", name)
+	for i, name := range []string{"label_Part5_bag.pdf", "label_Part5_bag (2).pdf"} {
+		b, err := os.ReadFile(filepath.Join(h.f.Dir, "printed", name))
+		if want := fmt.Sprintf("%%PDF-1 copy %d", i); err != nil || string(b) != want {
+			t.Errorf("printed/%s = %q, %v; want %q", name, b, err, want)
 		}
 	}
 	if len(h.printed) != 2 {
@@ -226,7 +237,7 @@ func TestMoveNeverGivesUp(t *testing.T) {
 	if err := os.WriteFile(p, []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := moveNoClobber(p, dir); err != nil || exists(p) {
+	if err := moveNoClobber(p, dir, os.Link); err != nil || exists(p) {
 		t.Fatalf("move: %v, source left: %v", err, exists(p))
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != maxNumbered+1 {
