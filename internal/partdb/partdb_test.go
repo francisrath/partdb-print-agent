@@ -110,3 +110,14 @@ func TestRefusesPlainHTTPAndDowngrade(t *testing.T) {
 		t.Errorf("downgrade redirect: %v", err)
 	}
 }
+
+func TestRefusesCrossHostRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 127.0.0.1 → localhost: a different host, as a subdomain redirect would be
+		http.Redirect(w, r, strings.Replace("http://"+r.Host, "127.0.0.1", "localhost", 1)+r.URL.Path, http.StatusFound)
+	}))
+	defer srv.Close()
+	if _, err := New(srv.URL, "tcp_x").GenerateLabels(context.Background(), 1, "1", ""); err == nil || !strings.Contains(err.Error(), "another host") {
+		t.Errorf("cross-host redirect: %v", err)
+	}
+}
