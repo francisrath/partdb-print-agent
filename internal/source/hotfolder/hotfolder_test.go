@@ -169,3 +169,87 @@ func TestSameNameTwiceKeepsBoth(t *testing.T) {
 		t.Errorf("printed %v", h.printed)
 	}
 }
+
+func TestKeepsFailedPDFWhenItCantMove(t *testing.T) {
+	h := newHarness(t)
+	h.fail = true
+	if err := os.WriteFile(filepath.Join(h.f.Dir, "failed"), nil, 0o600); err != nil { // blocks failed/
+		t.Fatal(err)
+	}
+	p := h.file("label_Part6_bag.pdf", "%PDF-1", 0)
+	h.scan(0)
+	h.scan(100 * time.Millisecond)
+	h.scan(600 * time.Millisecond)
+	h.scan(time.Second)
+	if !exists(p) || len(h.printed) != 1 {
+		t.Errorf("failed PDF lost or retried: exists=%v printed=%v", exists(p), h.printed)
+	}
+}
+
+func TestSkipsFileThatSettlesTooLate(t *testing.T) {
+	h := newHarness(t)
+	h.file("label_Part7_bag.pdf", "%PDF-1", 59*time.Second) // fresh at first sight
+	h.scan(0)
+	h.scan(100 * time.Millisecond)
+	h.scan(2 * time.Second) // now 61 s old when it would be printed
+	if len(h.printed) != 0 {
+		t.Errorf("printed a file older than MaxAge: %v", h.printed)
+	}
+}
+
+func TestStopsOnCancel(t *testing.T) {
+	h := newHarness(t)
+	h.file("label_Part8_bag.pdf", "%PDF-1", 0)
+	h.scan(0)
+	h.scan(100 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.now = h.now.Add(600 * time.Millisecond)
+	h.f.scan(ctx, h.state, h.now)
+	if len(h.printed) != 0 {
+		t.Errorf("printed after cancel: %v", h.printed)
+	}
+}
+
+func TestMoveNeverGivesUp(t *testing.T) {
+	src, dir := t.TempDir(), t.TempDir()
+	for i := 1; i <= maxNumbered; i++ {
+		name := "label_X.pdf"
+		if i > 1 {
+			name = fmt.Sprintf("label_X (%d).pdf", i)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := filepath.Join(src, "label_X.pdf")
+	if err := os.WriteFile(p, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveNoClobber(p, dir); err != nil || exists(p) {
+		t.Fatalf("move: %v, source left: %v", err, exists(p))
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != maxNumbered+1 {
+		t.Errorf("%d files, want %d (nothing overwritten)", len(entries), maxNumbered+1)
+	}
+}
+
+func TestCopyExclusiveNeverOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "a.pdf"), filepath.Join(dir, "b.pdf")
+	os.WriteFile(src, []byte("new"), 0o600)
+	os.WriteFile(dst, []byte("old"), 0o600)
+	if placed, err := copyExclusive(src, dst); placed || err != nil {
+		t.Fatalf("existing dst: placed=%v err=%v", placed, err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "old" || !exists(src) {
+		t.Fatal("overwrote the destination or lost the source")
+	}
+	os.Remove(dst)
+	if placed, err := copyExclusive(src, dst); !placed || err != nil {
+		t.Fatalf("free dst: placed=%v err=%v", placed, err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "new" || exists(src) {
+		t.Error("copy wrong or source not removed")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -95,6 +96,13 @@ func (f *Folder) scan(ctx context.Context, state map[string]*seen, now time.Time
 		if now.Sub(s.stable) < f.Settle {
 			continue
 		}
+		if ctx.Err() != nil {
+			return // shutting down: leave the remaining files in place
+		}
+		if now.Sub(fi.ModTime()) > f.MaxAge {
+			s.skipped = true // settled too late to count as a fresh download
+			continue
+		}
 		f.handle(ctx, path)
 		s.skipped = true // done; if it couldn't be moved away, it isn't printed again unless it changes
 	}
@@ -106,49 +114,89 @@ func (f *Folder) scan(ctx context.Context, state map[string]*seen, now time.Time
 }
 
 func (f *Folder) handle(ctx context.Context, path string) {
+	printErr := f.Print(ctx, path)
 	dest := "printed"
-	if err := f.Print(ctx, path); err != nil {
-		f.Log.Error("hot folder: print failed", "file", filepath.Base(path), "err", err)
+	if printErr != nil {
+		f.Log.Error("hot folder: print failed", "file", filepath.Base(path), "err", printErr)
 		dest = "failed"
 	} else {
 		f.Log.Info("hot folder: printed", "file", filepath.Base(path))
 	}
 	dir := filepath.Join(f.Dir, dest)
-	if err := os.MkdirAll(dir, 0o700); err == nil {
-		if err := moveNoClobber(path, dir); err == nil {
-			return
-		}
+	err := os.MkdirAll(dir, 0o700)
+	if err == nil {
+		err = moveNoClobber(path, dir)
 	}
-	// can't move it: delete rather than risk printing it again
-	if err := os.Remove(path); err != nil {
-		f.Log.Error("hot folder: can't move or delete", "file", path, "err", err)
+	switch {
+	case err == nil:
+	case printErr != nil:
+		// keep the PDF that didn't print; it stays marked, so it isn't retried
+		f.Log.Error("hot folder: can't move to failed/, left in place", "file", path, "err", err)
+	default:
+		// printed but can't be moved: delete rather than risk printing it again later
+		if err := os.Remove(path); err != nil {
+			f.Log.Error("hot folder: can't move or delete", "file", path, "err", err)
+		}
 	}
 }
 
+const maxNumbered = 1000
+
 // moveNoClobber moves src into dir without ever replacing a file there: the same label
-// downloaded twice is archived as "name.pdf" and "name (2).pdf".
+// downloaded twice is archived as "name.pdf" and "name (2).pdf". It never gives up:
+// past maxNumbered it uses a unique timestamped name.
 func moveNoClobber(src, dir string) error {
 	base := filepath.Base(src)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
-	for i := 1; i <= 1000; i++ {
+	for i := 1; ; i++ {
 		name := base
-		if i > 1 {
+		switch {
+		case i > maxNumbered:
+			name = fmt.Sprintf("%s (%d)%s", stem, time.Now().UnixNano(), ext)
+		case i > 1:
 			name = fmt.Sprintf("%s (%d)%s", stem, i, ext)
 		}
-		dst := filepath.Join(dir, name)
-		err := os.Link(src, dst) // fails if dst exists, so nothing is ever overwritten
-		if err == nil {
-			return os.Remove(src)
+		placed, err := placeExclusive(src, filepath.Join(dir, name))
+		if err != nil || placed {
+			return err
 		}
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		// no hard links on this filesystem (e.g. FAT): check, then rename
-		if _, err := os.Lstat(dst); err == nil {
-			continue
-		}
-		return os.Rename(src, dst)
 	}
-	return errors.New("no free file name")
+}
+
+// placeExclusive moves src to dst unless dst exists (then false). Both ways are atomic
+// with respect to dst: a hard link, or on filesystems without links (e.g. FAT) an
+// exclusive create plus copy.
+func placeExclusive(src, dst string) (bool, error) {
+	err := os.Link(src, dst)
+	switch {
+	case err == nil:
+		return true, os.Remove(src)
+	case errors.Is(err, fs.ErrExist):
+		return false, nil
+	}
+	return copyExclusive(src, dst)
+}
+
+func copyExclusive(src, dst string) (bool, error) {
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	in, err := os.Open(src)
+	if err == nil {
+		_, err = io.Copy(out, in)
+		in.Close()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return false, err
+	}
+	return true, os.Remove(src)
 }
