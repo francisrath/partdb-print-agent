@@ -73,7 +73,9 @@ func TestCard(wMM, hMM float64, lines []string) []byte {
 	size := min(max(wMM/10, 1.2), 3.2)
 	y := hMM - 3 - size
 	for _, s := range lines {
-		fmt.Fprintf(&c, "BT /F1 %.2f Tf 3 %.2f Td (%s) Tj ET\n", size, y, Text(s))
+		// shrink long lines to fit the width (Helvetica averages well under 0.6 em per glyph)
+		fs := min(size, (wMM-4.5)/(0.6*float64(max(len(s), 1))))
+		fmt.Fprintf(&c, "BT /F1 %.2f Tf 3 %.2f Td (%s) Tj ET\n", fs, y, Text(s))
 		y -= size * 1.3
 	}
 	n := int(min(wMM-6, y-3) / 0.5) // checkerboard fills what's left, square
