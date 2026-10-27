@@ -174,6 +174,9 @@ func TestValidate(t *testing.T) {
 	if err := d.Validate([]*image.Gray{white(165, 600)}, &driver.Job{}, &dc); err == nil {
 		t.Error("too-long die-cut label accepted")
 	}
+	if err := d.Validate([]*image.Gray{white(306, maxLines+1)}, &driver.Job{}, &m); err == nil {
+		t.Error("continuous label over 1 m accepted")
+	}
 	if err := d.Validate([]*image.Gray{white(306, 10)}, &driver.Job{Cut: "sometimes"}, &m); err == nil {
 		t.Error("bad cut mode accepted")
 	}
@@ -196,5 +199,22 @@ func TestWaitDoneStopsOnClosedConnection(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("spun for %v on a closed connection", time.Since(start))
+	}
+}
+
+// busyTransport keeps answering with a valid "phase change" status that never completes.
+type busyTransport struct{ eofTransport }
+
+func (busyTransport) Read(p []byte) (int, error) {
+	b := make([]byte, 32)
+	b[0], b[1], b[2], b[4], b[18] = 0x80, 0x20, 'B', 0x39, 0x06
+	return copy(p, b), nil
+}
+
+func TestWaitDoneHonoursDeadline(t *testing.T) {
+	start := time.Now()
+	err := WaitDone(context.Background(), busyTransport{}, 1, 200*time.Millisecond)
+	if !errors.Is(err, driver.ErrNoReadback) || time.Since(start) > 2*time.Second {
+		t.Errorf("err = %v after %v", err, time.Since(start))
 	}
 }

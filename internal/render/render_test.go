@@ -140,3 +140,47 @@ func TestRotation(t *testing.T) {
 		t.Error("45° accepted")
 	}
 }
+func TestPixelBudget(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.maxPixels = 306 * 400 // less than one 29x46 page (306x485)
+	_, err = r.Render(testPDF(29, 46, "x"), Options{WidthDots: 306, MediaWidthMM: 29})
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("over budget: %v", err)
+	}
+	// each page fits, the total doesn't: the budget is per PDF, not per page
+	r.maxPixels = 306 * 485 * 2
+	three := pdfgen.Pages(29, 46, "0 g 1 1 5 5 re f", "0 g 1 1 5 5 re f", "0 g 1 1 5 5 re f")
+	if _, err := r.Render(three, Options{WidthDots: 306, MediaWidthMM: 29}); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("multi-page over budget: %v", err)
+	}
+	r.maxPixels = MaxPixels
+	if _, err := r.Render(testPDF(29, 46, "x"), Options{WidthDots: 306, MediaWidthMM: 29}); err != nil {
+		t.Errorf("within budget: %v", err)
+	}
+	pages, err := r.Render(three, Options{WidthDots: 306, MediaWidthMM: 29})
+	if err != nil || len(pages) != 3 {
+		t.Errorf("three pages within budget: %d, %v", len(pages), err)
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	dir := t.TempDir()
+	small := filepath.Join(dir, "small.pdf")
+	if err := os.WriteFile(small, testPDF(29, 46, "x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ReadFile(small); err != nil || !bytes.HasPrefix(b, []byte("%PDF-")) {
+		t.Errorf("small: %v", err)
+	}
+	big := filepath.Join(dir, "big.pdf")
+	if err := os.WriteFile(big, make([]byte, MaxPDFBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadFile(big); err == nil {
+		t.Error("oversized file accepted")
+	}
+}
