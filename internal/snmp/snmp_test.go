@@ -15,6 +15,7 @@ func TestLoadedMedia(t *testing.T) {
 	}{
 		{`29mm / 1.1"`, driver.Continuous, 29, 0, true}, // seen on a QL-810W with DK-22210
 		{`12mm / 0.47"`, driver.Continuous, 12, 0, true},
+		{`29mm x 90mm / 1.1" x 3.5"`, driver.DieCut, 29, 90, true}, // seen on a QL-810W with DK-11201
 		{`17mm x 54mm / 0.66" x 2.1"`, driver.DieCut, 17, 54, true},
 		{"", "", 0, 0, false},
 		{"Media", "", 0, 0, false},

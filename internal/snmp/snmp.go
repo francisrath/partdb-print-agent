@@ -112,12 +112,12 @@ func (s *State) Problem() *driver.Error {
 	return nil
 }
 
-// e.g. `29mm / 1.1"`; die-cut names assumed like `17mm x 54mm …`
+// Seen on a QL-810W: `29mm / 1.1"` (continuous), `29mm x 90mm / 1.1" x 3.5"` (die-cut).
 var mediaRe = regexp.MustCompile(`^\s*(\d+)\s*mm(?:\s*[x×]\s*(\d+)\s*mm)?`)
 
 // LoadedMedia parses the roll the printer reports into kind and size in mm.
-// ponytail: only "29mm / 1.1\"" (DK-22210) is verified on hardware; other rolls
-// fall back to the configured media until their names are confirmed.
+// Verified on hardware for DK-22210 and DK-11201; a name that doesn't parse falls back
+// to the configured media.
 func (s *State) LoadedMedia() (kind driver.MediaKind, widthMM, lengthMM int, ok bool) {
 	m := mediaRe.FindStringSubmatch(s.MediaName)
 	if m == nil {
