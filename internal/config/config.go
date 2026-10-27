@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zalando/go-keyring"
 	"go.yaml.in/yaml/v3"
@@ -19,6 +20,31 @@ type Config struct {
 	Instances []Instance `yaml:"instances,omitempty"`
 	Printers  []Printer  `yaml:"printers,omitempty"`
 	Routes    []Route    `yaml:"routes,omitempty"`
+	HotFolder HotFolder  `yaml:"hot_folder,omitempty"`
+}
+
+// HotFolder prints label PDFs that land in a folder (Part-DB downloads label_*.pdf).
+type HotFolder struct {
+	Enabled bool   `yaml:"enabled"`
+	Dir     string `yaml:"dir,omitempty"`     // default ~/Downloads; a leading ~ is expanded
+	Pattern string `yaml:"pattern,omitempty"` // default label_*.pdf
+	Printer string `yaml:"printer,omitempty"`
+}
+
+// Path returns the folder to watch with ~ expanded.
+func (h HotFolder) Path() (string, error) {
+	dir := h.Dir
+	if dir == "" {
+		dir = "~/Downloads"
+	}
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, dir[1:])
+	}
+	return dir, nil
 }
 
 // Instance is a Part-DB server.
@@ -166,6 +192,12 @@ func (c *Config) Validate() error {
 		if p.Transport.Port == 0 {
 			p.Transport.Port = 9100
 		}
+	}
+	if c.HotFolder.Enabled && !seen[c.HotFolder.Printer] {
+		return errors.New("hot_folder: printer must be a configured printer")
+	}
+	if _, err := filepath.Match(c.HotFolder.Pattern, "x"); err != nil {
+		return fmt.Errorf("hot_folder: bad pattern: %w", err)
 	}
 	for i, r := range c.Routes {
 		if r.Profile <= 0 || !seen[r.Printer] {

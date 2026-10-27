@@ -45,6 +45,12 @@ Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll
 refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
 label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead).
 
+### Hot folder
+
+With `hot_folder` enabled in the config, `serve` prints every new `label_*.pdf` that lands in
+`~/Downloads` (Part-DB's label download name) on the configured printer, then moves it to
+`printed/` (or `failed/`). Files older than 60 s, e.g. ones already there at startup, are never printed.
+
 Add `--dry-run job.bin` to any print command to write the printer byte stream instead.
 Printers (and optionally Part-DB instances with a `token:`) live in a YAML config:
 see `config.example.yaml`; copy it to `config.local.yaml` (gitignored) to customise.

@@ -86,14 +86,16 @@ printers:
 	}
 
 	for name, bad := range map[string]string{
-		"no id":      "printers: [{driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad driver": "printers: [{id: a, driver: zpl, transport: {kind: tcp, host: x}}]",
-		"no host":    "printers: [{id: a, driver: brother-ql, transport: {kind: tcp}}]",
-		"duplicate":  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad yaml":   "printers: [",
-		"bad url":    "instances: [{id: h, base_url: partdb.local}]",
-		"plain http": "instances: [{id: h, base_url: http://partdb.lan}]",
-		"bad route":  "routes: [{profile: 2, printer: nope}]",
+		"no id":                      "printers: [{driver: brother-ql, transport: {kind: tcp, host: x}}]",
+		"bad driver":                 "printers: [{id: a, driver: zpl, transport: {kind: tcp, host: x}}]",
+		"no host":                    "printers: [{id: a, driver: brother-ql, transport: {kind: tcp}}]",
+		"duplicate":                  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
+		"bad yaml":                   "printers: [",
+		"bad url":                    "instances: [{id: h, base_url: partdb.local}]",
+		"plain http":                 "instances: [{id: h, base_url: http://partdb.lan}]",
+		"bad route":                  "routes: [{profile: 2, printer: nope}]",
+		"hot folder without printer": "hot_folder: {enabled: true}",
+		"hot folder bad pattern":     "hot_folder: {pattern: \"[\"}",
 	} {
 		if _, err := Load(write(bad), true); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -183,6 +185,19 @@ func TestRoutePrefersExactInstance(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("Route(%q, %d) = %q, want %q", tc.instance, tc.profile, got, tc.want)
+		}
+	}
+}
+
+func TestHotFolderPath(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	for in, want := range map[string]string{
+		"":            filepath.Join(home, "Downloads"),
+		"~/Labels":    filepath.Join(home, "Labels"),
+		"/tmp/labels": "/tmp/labels",
+	} {
+		if got, err := (HotFolder{Dir: in}).Path(); err != nil || got != want {
+			t.Errorf("Path(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
 }

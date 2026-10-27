@@ -15,3 +15,11 @@ printers:
     # snmp_community: public    # if you changed it in the printer's web settings
     # no_snmp: true             # fall back to the TCP status (network QLs don't answer it)
     # allow_scaling: true       # print labels that don't match the roll by scaling instead of refusing
+
+# Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
+# Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.
+# hot_folder:
+#   enabled: true
+#   dir: ~/Downloads          # default
+#   pattern: label_*.pdf      # Part-DB's download name
+#   printer: ql810
