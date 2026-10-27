@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -293,5 +294,19 @@ func TestGuardAllowsBoundLoopbackAddress(t *testing.T) {
 	}
 	if w := h.do("GET", "/v1/info", nil, func(r *http.Request) { r.Host = "127.0.0.3:8631" }); w.Code != http.StatusForbidden {
 		t.Errorf("other loopback address accepted: %d", w.Code)
+	}
+}
+
+func TestPrintFileRecordsJob(t *testing.T) {
+	h := newHarness(t)
+	if err := h.srv.PrintFile(context.Background(), "hot folder", "ql", "../../testdata/sample-29x46.pdf"); err != nil {
+		t.Fatal(err)
+	}
+	<-h.jobs
+	if err := h.srv.PrintFile(context.Background(), "hot folder", "ql", filepath.Join(t.TempDir(), "missing.pdf")); err == nil {
+		t.Error("missing file printed")
+	}
+	if len(h.srv.jobs) != 2 || h.srv.jobs[1].Source != "hot folder" || h.srv.jobs[1].What != "sample-29x46.pdf" || h.srv.jobs[0].Err == "" {
+		t.Errorf("history: %+v", h.srv.jobs)
 	}
 }

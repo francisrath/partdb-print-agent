@@ -11,3 +11,11 @@ printers:
     media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
     rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
     cut: per_label              # per_label | last | none
+
+# Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
+# Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.
+# hot_folder:
+#   enabled: true
+#   dir: ~/Downloads          # default
+#   pattern: label_*.pdf      # Part-DB's download name
+#   printer: ql810

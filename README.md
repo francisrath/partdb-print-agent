@@ -40,6 +40,12 @@ printers, then drag the generated bookmarklet to your bookmarks bar. On a part o
 in Part-DB, clicking it opens a small window that prints the label. The bookmarklet signs each request
 with a per-install key, so other websites can't print through the agent without a click.
 
+### Hot folder
+
+With `hot_folder` enabled in the config, `serve` prints every new `label_*.pdf` that lands in
+`~/Downloads` (Part-DB's label download name) on the configured printer, then moves it to
+`printed/` (or `failed/`). Files older than 60 s, e.g. ones already there at startup, are never printed.
+
 Add `--dry-run job.bin` to any print command to write the printer byte stream instead.
 Printers (and optionally Part-DB instances with a `token:`) live in a YAML config:
 see `config.example.yaml`; copy it to `config.local.yaml` (gitignored) to customise.
