@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# qlprint – print a Part-DB label PDF directly to the Brother QL-810W (bypasses the macOS driver)
+# Usage: qlprint label.pdf [tape]
+#   tape is optional – auto-detected from the PDF page width:
+#   12 mm → 12, 29 mm → 29, 62 mm → 62, 17×54 die-cut → 17x54, 29×90 die-cut → 29x90 (only if given explicitly)
+# Requires: brew install poppler pipx && pipx install brother_ql-next
+set -euo pipefail
+
+PRINTER="tcp://192.168.1.50:9100"
+MODEL="QL-810W"
+
+pdf="${1:?usage: qlprint label.pdf [tape]}"
+tape="${2:-}"
+
+if [[ -z "$tape" ]]; then
+  # Page size in points, e.g. "Page size:      82.205 x 130.394 pts"
+  read -r w h < <(pdfinfo "$pdf" | awk '/^Page size:/ {print $3, $5}')
+  wmm=$(awk -v p="$w" 'BEGIN{printf "%d", p*25.4/72 + 0.5}')
+  case "$wmm" in
+    12) tape=12 ;;
+    17) tape=17x54 ;;
+    29) tape=29 ;;
+    62) tape=62 ;;
+    *) echo "Can't detect tape from page width ${wmm} mm – give it explicitly (e.g. qlprint $pdf 29)" >&2; exit 1 ;;
+  esac
+  echo "Detected ${wmm} mm wide PDF → label '${tape}'"
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Render straight to the printer's printable size in dots (300 dpi), so brother_ql never has to resize
+case "$tape" in
+  12)     size=(-scale-to-x 106 -scale-to-y -1) ;;
+  29)     size=(-scale-to-x 306 -scale-to-y -1) ;;
+  62)     size=(-scale-to-x 696 -scale-to-y -1) ;;
+  17x54)  size=(-scale-to-x 165 -scale-to-y 566) ;;
+  29x90)  size=(-scale-to-x 306 -scale-to-y 991) ;;
+  *)      size=(-r 300) ;;
+esac
+pdftoppm "${size[@]}" -png "$pdf" "$tmp/p"
+
+for img in "$tmp"/p*.png; do
+  echo "Printing $(basename "$img")…"
+  brother_ql -b network -m "$MODEL" -p "$PRINTER" print -l "$tape" --rotate auto "$img"
+done

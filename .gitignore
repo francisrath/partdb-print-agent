@@ -1,0 +1,8 @@
+/dist/
+/bin/
+*.test
+*.out
+coverage.*
+.DS_Store
+/config.local.yaml
+/testdata/output/
