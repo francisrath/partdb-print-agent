@@ -139,9 +139,10 @@ func TestPrintFromPartDB(t *testing.T) {
 	defer pdb.Close()
 
 	addr, got := fakeQL(t, false)
-	cfg := writeConfig(t, addr, "instances:\n  - id: home\n    base_url: "+pdb.URL+"\n")
+	// no --printer: the route for the (only) instance "home" and profile 2 picks it
+	cfg := writeConfig(t, addr, "instances:\n  - id: home\n    base_url: "+pdb.URL+"\nroutes:\n  - instance: home\n    profile: 2\n    printer: fake\n")
 	t.Setenv("PDB_PRINT_TOKEN", "tcp_test")
-	err = run(context.Background(), []string{"--config", cfg, "print", "--profile", "2", "--ids", "32", "--type", "part", "--printer", "fake"})
+	err = run(context.Background(), []string{"--config", cfg, "print", "--profile", "2", "--ids", "32", "--type", "part"})
 	if err != nil {
 		t.Fatal(err)
 	}

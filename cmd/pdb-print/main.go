@@ -24,6 +24,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/server"
 )
 
@@ -181,7 +182,7 @@ func (a *app) render(args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown or missing media %q (see `pdb-print media`)", p.Media)
 	}
-	pdf, err := os.ReadFile(pos[0])
+	pdf, err := render.ReadFile(pos[0])
 	if err != nil {
 		return err
 	}
@@ -217,9 +218,15 @@ func (a *app) print(ctx context.Context, args []string) error {
 		return err
 	}
 	fromPartDB := *profile != 0 || *ids != ""
-	if *printerID == "" && fromPartDB {
-		if rt, ok := a.cfg.Route(*instance, *profile); ok {
-			*printerID = rt.Printer
+	var in *config.Instance
+	if fromPartDB {
+		if in, err = a.cfg.Instance(*instance); err != nil {
+			return err
+		}
+		if *printerID == "" {
+			if rt, ok := a.cfg.Route(in.ID, *profile); ok {
+				*printerID = rt.Printer
+			}
 		}
 	}
 	if *printerID == "" || fromPartDB == (len(pos) == 1) || len(pos) > 1 || (fromPartDB && (*profile <= 0 || *ids == "")) {
@@ -233,16 +240,12 @@ func (a *app) print(ctx context.Context, args []string) error {
 
 	var pdf []byte
 	if fromPartDB {
-		in, err := a.cfg.Instance(*instance)
-		if err != nil {
-			return err
-		}
 		start := time.Now()
 		if pdf, err = partdb.FromInstance(in).GenerateLabels(ctx, *profile, *ids, *elemType); err != nil {
 			return err
 		}
 		a.log.Info("fetched labels", "instance", in.ID, "profile", *profile, "ids", *ids, "bytes", len(pdf), "took", time.Since(start).Round(time.Millisecond))
-	} else if pdf, err = os.ReadFile(pos[0]); err != nil {
+	} else if pdf, err = render.ReadFile(pos[0]); err != nil {
 		return err
 	}
 	return a.printPDF(ctx, *printerID, *dryRun, printing.PDF(pdf))
