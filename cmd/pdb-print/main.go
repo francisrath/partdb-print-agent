@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"image/png"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/server"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -31,12 +34,14 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
+  serve [--addr 127.0.0.1:8631]    run the local web UI and bookmarklet endpoint
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
                                    rasterise to PNGs at printhead dots (no printing)
   print FILE.pdf --printer ID [--dry-run OUT.bin]
                                    print a local PDF
   print --profile N --ids LIST [--type part|part_lot|storelocation] [--instance ID] --printer ID
                                    fetch labels from Part-DB and print them
+                                   (--printer may be omitted when a route exists for the profile)
   printers list                    list configured printers
   printers status ID               query printer status and loaded media
   printers test ID [--dry-run OUT] print a test label sized for the loaded media
@@ -53,9 +58,10 @@ func main() {
 }
 
 type app struct {
-	cfg *config.Config
-	log *slog.Logger
-	svc *printing.Service
+	cfg     *config.Config
+	cfgPath string
+	log     *slog.Logger
+	svc     *printing.Service
 }
 
 func run(ctx context.Context, args []string) error {
@@ -101,11 +107,13 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	a := &app{cfg: cfg, log: log, svc: &printing.Service{Log: log}}
+	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
 	defer a.svc.Close()
 	a.log.Debug("config", "path", path)
 
 	switch cmd {
+	case "serve":
+		return a.serve(ctx, rest)
 	case "render":
 		return a.render(rest)
 	case "print":
@@ -196,7 +204,6 @@ func (a *app) render(args []string) error {
 	return nil
 }
 
-
 func (a *app) print(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("print", flag.ContinueOnError)
 	printerID := fs.String("printer", "", "printer id from the config")
@@ -210,6 +217,11 @@ func (a *app) print(ctx context.Context, args []string) error {
 		return err
 	}
 	fromPartDB := *profile != 0 || *ids != ""
+	if *printerID == "" && fromPartDB {
+		if rt, ok := a.cfg.Route(*instance, *profile); ok {
+			*printerID = rt.Printer
+		}
+	}
 	if *printerID == "" || fromPartDB == (len(pos) == 1) || len(pos) > 1 || (fromPartDB && (*profile <= 0 || *ids == "")) {
 		return errors.New("usage: print FILE.pdf --printer ID | print --profile N --ids LIST [--type T] --printer ID")
 	}
@@ -236,7 +248,38 @@ func (a *app) print(ctx context.Context, args []string) error {
 	return a.printPDF(ctx, *printerID, *dryRun, printing.PDF(pdf))
 }
 
-
+func (a *app) serve(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	addr := fs.String("addr", "127.0.0.1:8631", "listen address (loopback only)")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	host, _, err := net.SplitHostPort(*addr)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		// ponytail: LAN bind needs the admin password from architecture §10; not built yet.
+		return fmt.Errorf("refusing to listen on %s: only loopback addresses are supported", host)
+	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
+	}
+	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(sctx)
+	}()
+	a.log.Info("web UI ready", "url", "http://"+ln.Addr().String(), "config", a.cfgPath)
+	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {
 	p, err := a.cfg.Printer(printerID)

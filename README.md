@@ -29,6 +29,16 @@ bin/pdb-print print label.pdf --printer ql810                 # local PDF
 bin/pdb-print render label.pdf --printer ql810 -o /tmp        # PNG preview at head dots
 bin/pdb-print media                                           # known Brother QL media
 ```
+### Web UI and bookmarklet
+
+```sh
+bin/pdb-print serve            # http://127.0.0.1:8631
+```
+In the UI: connect Part-DB (the token goes to the OS keychain), add printers, map label profiles to
+printers, then drag the generated bookmarklet to your bookmarks bar. On a part or storage-location page
+in Part-DB, clicking it opens a small window that prints the label. The bookmarklet signs each request
+with a per-install key, so other websites can't print through the agent without a click.
+
 Add `--dry-run job.bin` to any print command to write the printer byte stream instead.
 Printers (and optionally Part-DB instances with a `token:`) live in a YAML config:
 see `config.example.yaml`; copy it to `config.local.yaml` (gitignored) to customise.

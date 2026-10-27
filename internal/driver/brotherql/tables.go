@@ -72,3 +72,12 @@ func LookupMedia(id string) (driver.Media, bool) {
 	m, ok := lookupMedia(id)
 	return m.Media, ok
 }
+
+// Models lists the supported model names.
+func Models() []string {
+	var out []string
+	for _, m := range models {
+		out = append(out, m.name)
+	}
+	return out
+}

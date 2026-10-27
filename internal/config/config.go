@@ -81,7 +81,17 @@ func Load(path string, mustExist bool) (*Config, error) {
 	if err := yaml.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return c, c.validate()
+	return c, c.Validate()
+}
+
+// Clone returns a deep copy.
+func (c *Config) Clone() (*Config, error) {
+	b, err := yaml.Marshal(c)
+	if err != nil {
+		return nil, err
+	}
+	n := &Config{}
+	return n, yaml.Unmarshal(b, n)
 }
 
 // Save writes the config atomically with 0600 permissions (it may hold tokens).
@@ -113,7 +123,7 @@ func (c *Config) Save(path string) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-func (c *Config) validate() error {
+func (c *Config) Validate() error {
 	ids := map[string]bool{}
 	for i, in := range c.Instances {
 		if in.ID == "" || in.BaseURL == "" {

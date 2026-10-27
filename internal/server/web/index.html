@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdb-print</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header>
+  <img src="/favicon.svg" alt="" width="40" height="40">
+  <h1>pdb-print</h1>
+  <span class="muted">{{.Version}} · {{.Addr}}</span>
+</header>
+
+{{with .Flash}}<p class="flash {{if .Err}}err{{end}}" role="status">{{.Text}}</p>{{end}}
+
+<main>
+<section>
+  <h2>Part-DB</h2>
+  {{if .Instance}}
+    <p>
+      <strong>{{.Instance.BaseURL}}</strong><br>
+      {{with .Token}}Token “{{.Name}}” of user {{.User.Name}} – {{levelName .Level}}{{end}}
+      {{with .TokenErr}}<span class="err">{{.}}</span>{{end}}
+    </p>
+    {{if .FromEnv}}<p class="muted">Connected through PDB_PRINT_URL / PDB_PRINT_TOKEN from the environment.
+    Save below (with the token) to store it in the OS keychain and enable bookmarklets.</p>{{end}}
+  {{else}}
+    <p>Not connected yet. Create a <strong>Read-Only</strong> API token in Part-DB:
+    your username (top right) → User settings → API tokens.</p>
+  {{end}}
+  <form method="post" action="/instance">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Part-DB URL <input name="base_url" type="url" required placeholder="https://partdb.example.org" value="{{with .Instance}}{{.BaseURL}}{{end}}"></label>
+    <label>API token <input name="token" type="password" autocomplete="off" {{if or (not .Instance) .FromEnv}}required{{end}} placeholder="{{if and .Instance (not .FromEnv)}}leave empty to keep the current token{{else}}tcp_…{{end}}"></label>
+    <button>Save and check</button>
+  </form>
+</section>
+
+<section>
+  <h2>Printers</h2>
+  {{if .Printers}}
+  <table>
+    <thead><tr><th>ID</th><th>Model</th><th>Address</th><th>Media</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Printers}}
+      <tr>
+        <td>{{.ID}}{{with .Name}}<br><span class="muted">{{.}}</span>{{end}}</td>
+        <td>{{.Model}}</td>
+        <td>{{.Transport.Host}}:{{.Transport.Port}}</td>
+        <td>{{if .Media}}{{.Media}}{{else}}<span class="muted">reported</span>{{end}}</td>
+        <td data-status="{{.ID}}" class="muted">…</td>
+        <td class="actions">
+          <form method="post" action="/printers/{{.ID}}/test"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Test print</button></form>
+          <form method="post" action="/printers/{{.ID}}/delete" data-confirm="Remove printer {{.ID}}?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Remove</button></form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}
+  <details {{if not .Printers}}open{{end}}>
+    <summary>Add or update a printer</summary>
+    <form method="post" action="/printers" class="grid">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>ID <input name="id" required pattern="[a-z0-9_-]+" placeholder="ql810"></label>
+      <label>Name <input name="name" placeholder="Brother QL-810W (workshop)"></label>
+      <label>Model <select name="model">{{range .Models}}<option>{{.}}</option>{{end}}</select></label>
+      <label>Host / IP <input name="host" required placeholder="192.168.1.50"></label>
+      <label>Port <input name="port" type="number" value="9100" min="1" max="65535"></label>
+      <label>Media <select name="media"><option value="">as reported by the printer</option>{{range .Media}}<option value="{{.ID}}">{{.ID}} – {{.Name}}</option>{{end}}</select></label>
+      <label>Rotate <select name="rotate"><option>auto</option><option>0</option><option>90</option><option>180</option><option>270</option></select></label>
+      <label>Cut <select name="cut"><option value="per_label">after each label</option><option value="last">after the last label</option><option value="none">never</option></select></label>
+      <button>Save printer</button>
+    </form>
+  </details>
+</section>
+
+<section>
+  <h2>Label profiles → printers</h2>
+  {{with .ProfilesErr}}<p class="err">Could not load profiles: {{.}}</p>{{end}}
+  {{if .Routes}}
+  <table>
+    <thead><tr><th>Profile</th><th>Printer</th><th>Bookmarklet</th><th></th></tr></thead>
+    <tbody>
+    {{range .Routes}}
+      <tr>
+        <td>{{.Profile}} – {{.Name}}</td>
+        <td>{{.Printer}}</td>
+        <td>{{if .Bookmarklet}}<a class="bookmarklet" href="{{.Bookmarklet}}">🏷 {{.Name}}</a>{{else}}<span class="muted">connect Part-DB first</span>{{end}}</td>
+        <td><form method="post" action="/routes/{{.Profile}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Remove</button></form></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="muted">Drag a bookmarklet to your bookmarks bar. On a part or storage-location page in Part-DB, click it to print that label.
+  Bookmarklets carry a signing key: don't share them.
+  {{if .Instance}}<form method="post" action="/instance/rotate-key" class="inline" data-confirm="Old bookmarklets stop working. Continue?"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Rotate key</button></form>{{end}}</p>
+  {{end}}
+  {{if and .Profiles .Printers}}
+  <form method="post" action="/routes" class="grid">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Profile <select name="profile">{{range .Profiles}}<option value="{{.ID}}">{{.ID}} – {{.Name}} ({{.Element}})</option>{{end}}</select></label>
+    <label>Printer <select name="printer">{{range .Printers}}<option>{{.ID}}</option>{{end}}</select></label>
+    <button>Add route</button>
+  </form>
+  {{end}}
+</section>
+
+<section>
+  <h2>Recent jobs</h2>
+  {{if .Jobs}}
+  <table>
+    <thead><tr><th>Time</th><th>From</th><th>What</th><th>Printer</th><th>Result</th></tr></thead>
+    <tbody>
+    {{range .Jobs}}
+      <tr><td>{{.Time.Format "15:04:05"}}</td><td>{{.Source}}</td><td>{{.What}}</td><td>{{.Printer}}</td>
+      <td>{{if .Err}}<span class="err">{{.Err}}</span>{{else}}{{.Result}}{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">No jobs since the agent started.</p>{{end}}
+</section>
+</main>
+</body>
+</html>

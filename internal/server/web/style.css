@@ -1,0 +1,35 @@
+:root {
+  --bg: #f6fbfc; --fg: #17303a; --muted: #5d7680; --line: #d5e6ea;
+  --accent: #1c6f7a; --accent-fg: #fff; --err: #b3261e; --card: #fff;
+  color-scheme: light dark;
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1a1e; --fg: #e3eef1; --muted: #8fa6ae; --line: #24363c; --accent: #2ab0c0; --accent-fg: #062126; --err: #ff8a80; --card: #15242a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 980px; padding: 16px; background: var(--bg); color: var(--fg); }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+header h1 { margin: 0; font-size: 1.5rem; }
+h2 { font-size: 1.1rem; margin: 0 0 12px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 16px 0; }
+.muted { color: var(--muted); }
+.err { color: var(--err); }
+.flash { padding: 10px 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+.flash.err { border-color: var(--err); }
+table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.actions { white-space: nowrap; }
+td.actions form { display: inline; }
+form.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; align-items: end; }
+form.inline { display: inline; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; color: var(--muted); }
+form:not(.grid):not(.inline) label { margin-bottom: 10px; max-width: 520px; }
+input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+button { font: inherit; padding: 6px 14px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+button.link { background: none; color: var(--accent); padding: 0; text-decoration: underline; }
+summary { cursor: pointer; margin-bottom: 10px; }
+a.bookmarklet { display: inline-block; padding: 4px 10px; border: 1px dashed var(--accent); border-radius: 6px; color: var(--accent); text-decoration: none; }
+body.handoff { max-width: 420px; text-align: center; padding-top: 32px; }
+body.handoff h1 { font-size: 1.4rem; }
