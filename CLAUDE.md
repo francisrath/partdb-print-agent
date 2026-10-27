@@ -17,7 +17,9 @@ working brief for the **MVP**.
   Everything else (ZPL, TSPL, ESC/POS, DYMO, Niimbot, Phomemo, OS queue, A4 sheets, two-colour) is phase 2,
   but keep the driver/transport interfaces general enough for them (see architecture §7).
 - Part-DB token: **read-only** API token (enough for `POST /api/labels/generate`).
-- No Part-DB changes needed for the MVP. Upstream issue is posted only **after** the local MVP is tested.
+- No Part-DB changes needed for the MVP. Upstream issue is posted only **after** the v0.1.0 release.
+- Tag inbox (print parts tagged `print-label`) was **dropped** (2026-10-27, closed PR #5): tagging a part just to
+  print it was too much hassle. Printing from a phone/remote Part-DB waits for the upstream button + PrintJob API.
 
 ## MVP milestones (do them in order, each ends with something runnable)
 1. **Skeleton** – `cmd/pdb-print` (cobra or plain flag subcommands), `internal/...` packages, config file
@@ -40,9 +42,7 @@ working brief for the **MVP**.
    profile→printer routes, test print, job history; `/v1/handoff` endpoint for a bookmarklet
    (top-level navigation, pairing key; Part-DB's CSP blocks fetch() to localhost – see architecture §1, §10).
 6. **Hot folder** – watch a folder (default `~/Downloads`) for `label_*.pdf` and print them, then move/delete.
-7. **Tag inbox** (read-only de-dup mode) – poll Part-DB for parts tagged `print-label`, print each once,
-   remember printed (part id + lastModified) locally. Clearing the tag needs an edit token → later.
-8. **Packaging** – goreleaser: darwin universal, linux amd64/arm64, windows x64; Dockerfile; Homebrew tap
+7. **Packaging** – goreleaser: darwin universal, linux amd64/arm64, windows x64; Dockerfile; Homebrew tap
    (`francisrath/tap`). Signing (Apple Developer ID via existing developer account, SignPath for Windows) comes later.
 
 ## Test environment (the author's setup)
@@ -61,7 +61,7 @@ Addresses below are placeholders; the real printer IP and Part-DB URL live in th
 ## Conventions
 - Go ≥ 1.23, `go vet` + `staticcheck` clean, table-driven tests, no global state.
 - Package layout suggestion: `internal/config`, `internal/partdb`, `internal/render`, `internal/driver/brotherql`,
-  `internal/transport/{tcp,usb}`, `internal/queue`, `internal/server`, `internal/source/{hotfolder,taginbox}`.
+  `internal/transport/{tcp,usb}`, `internal/queue`, `internal/server`, `internal/source/hotfolder`.
 - Keep the `Driver` and `Transport` interfaces from architecture §7 so phase-2 drivers drop in.
 - Never send real print jobs from tests; use the virtual printer. Hardware tests behind a build tag (`//go:build hardware`).
 - Commit messages: conventional commits.
