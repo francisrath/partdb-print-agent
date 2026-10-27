@@ -114,6 +114,7 @@
 
 <section>
   <h2>Recent jobs</h2>
+  <p class="muted">{{with .HotFolder}}Hot folder: printing new {{.}}{{else}}Hot folder: off (enable <code>hot_folder</code> in the config to print Part-DB downloads automatically){{end}}</p>
   {{if .Jobs}}
   <table>
     <thead><tr><th>Time</th><th>From</th><th>What</th><th>Printer</th><th>Result</th></tr></thead>

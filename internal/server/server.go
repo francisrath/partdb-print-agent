@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/zalando/go-keyring"
 )
 
@@ -256,6 +258,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		routes = append(routes, v)
 	}
 	data["Routes"] = routes
+	if hf := cfg.HotFolder; hf.Enabled {
+		dir, _ := hf.Path()
+		data["HotFolder"] = fmt.Sprintf("%s (%s) → %s", dir, defaultStr(hf.Pattern, "label_*.pdf"), hf.Printer)
+	}
 
 	s.mu.Lock()
 	data["Flash"], s.flash = s.flash, nil
@@ -455,6 +461,29 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"ok": st.Code == driver.OK, "text": text})
 	}
+}
+
+// PrintFile prints a PDF file from another job source (e.g. the hot folder) on printerID,
+// using the current config, and records it in the job history.
+func (s *Server) PrintFile(ctx context.Context, source, printerID, path string) error {
+	p, err := s.printer(printerID)
+	if err != nil {
+		return err
+	}
+	pdf, err := render.ReadFile(path)
+	var res *printing.Result
+	if err == nil {
+		res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
+	}
+	s.record(jobFor(source, filepath.Base(path), p.ID, res, err))
+	return err
+}
+
+func defaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func jobFor(source, what, printer string, res *printing.Result, err error) Job {
