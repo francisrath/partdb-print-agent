@@ -12,7 +12,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
+
+// TestMain isolates the CLI tests from the developer's machine: no env from a loaded
+// .env, no real OS keychain. Tests only ever print to fake printers on localhost.
+func TestMain(m *testing.M) {
+	for _, v := range []string{"PDB_PRINT_TOKEN", "PDB_PRINT_URL", "PDB_PRINT_CONFIG", "PDB_PRINT_ALLOW_HTTP"} {
+		os.Unsetenv(v)
+	}
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
 
 func status(statusType byte, err2 byte) []byte {
 	b := make([]byte, 32)

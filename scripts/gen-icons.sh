@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 GO_WINRES=github.com/tc-hib/go-winres@v0.3.3
 
-for tool in rsvg-convert magick go; do
+for tool in rsvg-convert magick perl go; do
   command -v "$tool" >/dev/null || { echo "missing $tool – see header of $0" >&2; exit 1; }
 done
 

@@ -36,6 +36,10 @@ func New(baseURL, token string) *Client {
 			if req.URL.Scheme != "https" && via[0].URL.Scheme == "https" {
 				return errors.New("refusing https → http redirect (would expose the API token)")
 			}
+			// Go forwards Authorization to subdomains too; keep the token on the configured host.
+			if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+				return fmt.Errorf("refusing redirect to another host (%s)", req.URL.Host)
+			}
 			return nil
 		},
 	}}
@@ -151,12 +155,11 @@ type ldProfile struct {
 }
 
 func (c *Client) getJSON(ctx context.Context, path, accept string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", accept)
-	req.Header.Set("Authorization", "Bearer "+c.Token)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err

@@ -268,9 +268,12 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// let in-flight prints finish, so the printer never gets a partial job
+		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		_ = hs.Shutdown(sctx)
 	}()
@@ -278,6 +281,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-stopped // Serve returns as soon as Shutdown starts; wait for it to finish
 	return nil
 }
 
