@@ -564,7 +564,14 @@ All PRs follow the `BrowserPluginSettings` pattern: a Settings class, **default 
 | **PR3** Push transport [P3] | Mercure publishing for `PrintJob` (private, per-agent topic). Subscriber JWT issuance on heartbeat. `rel="mercure"` discovery. Docs for the FrankenPHP image (set `MERCURE_*_JWT_KEY`) and an Apache-image sidecar compose snippet. Optional capped long-poll behind a setting. | ~200–350 LOC + docs | Instant (<300 ms) delivery. |
 | **PR4** Printer hints on label profiles [P3] | A nullable JSON column `print_hints` on `LabelOptions` (free-form key/value editor in the profile form, documented as "interpreted by external print agents"). Optional `default_printer` FK on `LabelProfile` (nullable) for routing. Passed through in PrintJob and the label profile API. | ~150 LOC + migration | Per-profile printer/media/cut defaults without Part-DB knowing what they mean. |
 
-**Generic shape (2026-10-27).** Printing is the first user of the channel, not the only one, so PR2/PR3 are worded generically: an *agent* with *agent jobs* that carry a `type` (`print` first), and Mercure as a general event channel rather than a print-only push. Further job types (e.g. pick-by-light, Part-DB issues #948/#274) then need no new server API, and the same hub gives Part-DB live UI updates via Turbo Streams (`symfony/ux-turbo` is already a dependency) and NAT-friendly event subscriptions (issue #1339). See §21.
+**Proposed generic shape (2026-10-27, not agreed upstream yet).** Printing is the first user of the channel, not the only one, so the proposal (§21) words PR2/PR3 generically: an *agent* with *agent jobs* that carry a `type` (`print` first), and Mercure as a general event channel rather than a print-only push. *If* the job payload stays opaque JSON and the lifecycle (queued → claimed → done/failed) and permission checks are defined per job rather than per printer, further job types (e.g. pick-by-light, Part-DB issues #948/#274) need no new endpoints, only a new `type` and a button that creates it. The print-specific model in §5.3 and the PR table above stay the concrete MVP of that design. The same hub could also give Part-DB live UI updates via Turbo Streams (`symfony/ux-turbo` is already a dependency) and NAT-friendly event subscriptions (issue #1339); those need their own topics and authorisation, see "Event topics" below.
+
+**Event topics (sketch, to agree with the maintainer before any code).** Kept separate from the agent job channel until authorisation is defined:
+* *Agent topic* `…/agents/{id}`: private Mercure updates carrying only a job id; the subscriber JWT is issued to the agent's own token and scoped to that one topic (as in §10).
+* *Entity topics* `…/parts/{id}`, `…/part_lots/{id}`, `…/storage_locations/{id}` (and collection topics such as `…/parts`): private updates; payload = id + change type only, never entity data, so a subscriber re-fetches through the normal API with its own permissions.
+* *Subscriber JWTs* are issued per user session or per API token and list only the topics whose entities that user/token may **read** (Part-DB's existing `read` voter per entity type); no wildcard topics for users without the corresponding list permission.
+* *Revocation:* Mercure has no revoke call, but the hub closes a subscription at or before its token's `exp` (Mercure 1.x docs, "Authorization"). So subscriber JWTs are short-lived (≈10 min) and every refresh re-runs the permission check against the *current* session/token: a logged-out session, deleted API token or removed permission gets no new JWT, and its stream ends within one token lifetime. Until then it can still see entity ids and change types (never entity data, which is always refetched through the permission-checked API). Agent topics follow the same rule: deleting an agent's token stops its JWT refresh.
+* Event types map to Part-DB permissions (`config/permissions.yaml`, v2.20.4): part and lot changes are published only to subscribers allowed `parts.read` (lots are read as part of their part; `parts_stock` only has write operations), location changes to `storelocations.read`. Turbo Streams in the Part-DB UI use the same rules.
 
 **What stays out of Part-DB:** drivers, DPI, media catalogues, rasterisation, vendor names, Bluetooth/USB, discovery, installers.
 
@@ -797,6 +804,8 @@ gantt
 > - Would you like the agent repo under the Part-DB GitHub organisation (we'd maintain it), or linked from the docs as a third-party tool?
 >
 > A full architecture write-up (diagrams, data model, security, roadmap) is in the repo's `docs/architecture.md`. We're happy to adjust anything to fit Part-DB's conventions. Thanks!
+
+*Note added after posting:* only the Brother QL family is implemented in v0.1.0; Zebra/ZPL, TSPL, DYMO, Niimbot, Phomemo and A4 label sheets are **planned** – "the driver layer is built for" them means the driver/transport interfaces are designed to take them (§7), not that they ship today.
 
 ---
 
