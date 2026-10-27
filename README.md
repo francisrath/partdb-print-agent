@@ -12,7 +12,8 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 
 - Works with Part-DB as it is today (read-only API token).
 - Planned: Zebra/ZPL, TSPL, ESC/POS, DYMO, Niimbot, Phomemo, normal printers and A4 label sheets;
-  instant printing from any device through NAT via an optional Part-DB extension.
+  instant printing from any device through NAT via an optional Part-DB extension, proposed upstream in
+  [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625).
 
 ## Install
 
