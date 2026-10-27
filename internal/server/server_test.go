@@ -148,7 +148,15 @@ func TestGuard(t *testing.T) {
 	if w := h.do("POST", "/routes", url.Values{"profile": {"2"}, "printer": {"ql"}}); w.Code != http.StatusForbidden {
 		t.Errorf("POST without CSRF: %d", w.Code)
 	}
-	form := url.Values{"csrf": {h.srv.csrf}}
+	form := url.Values{"csrf": {h.srv.csrf}, "profile": {"2"}, "printer": {"ql"}}
+	// what a browser sends for a form on our own page
+	browser := func(r *http.Request) { r.Header.Set("Origin", "http://"+h.host) }
+	if w := h.do("POST", "/routes", form, browser); w.Code != http.StatusSeeOther {
+		t.Errorf("same-origin browser POST: %d %s", w.Code, w.Body)
+	}
+	if w := h.do("GET", "/", nil); w.Header().Get("Referrer-Policy") == "no-referrer" {
+		t.Error(`"no-referrer" makes browsers send "Origin: null" and breaks every form`)
+	}
 	if w := h.do("POST", "/routes", form, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }); w.Code != http.StatusForbidden {
 		t.Errorf("cross-origin POST: %d", w.Code)
 	}

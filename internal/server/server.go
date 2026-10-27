@@ -134,13 +134,15 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Referrer-Policy", "same-origin") // "no-referrer" makes browsers send Origin: null on POST
 		h.Set("Cache-Control", "no-store")
 		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
-			if (origin != "" && origin != "http://"+r.Host) ||
-				subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) != 1 {
+			originOK := origin == "" || origin == "http://"+r.Host
+			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) == 1
+			if !originOK || !tokenOK {
+				s.Log.Warn("rejected POST", "path", r.URL.Path, "origin", origin, "origin_ok", originOK, "csrf_ok", tokenOK)
 				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)
 				return
 			}
