@@ -1,0 +1,74 @@
+# GoReleaser v2 config. Release: push a tag vX.Y.Z (see .github/workflows/release.yml).
+# Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean
+version: 2
+project_name: pdb-print
+
+# ponytail: the committed Windows resource (cmd/pdb-print/rsrc_*.syso) keeps file version
+# 0.0.0.0; `pdb-print version` reports the real one. Stamping it at release time would
+# rewrite tracked files on every run.
+
+builds:
+  - id: pdb-print
+    main: ./cmd/pdb-print
+    binary: pdb-print
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+universal_binaries:
+  - replace: true
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
+    files: [LICENSE, README.md, config.example.yaml]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude: ["^docs", "^test", "^ci", "^chore"]
+
+dockers_v2:
+  - images: ["ghcr.io/francisrath/partdb-print-agent"]
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}" # empty tags are skipped: pre-releases don't move latest
+    platforms: [linux/amd64, linux/arm64]
+    extra_files: [packaging/docker/config-dir.keep]
+    labels:
+      org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.version: "{{ .Version }}"
+
+homebrew_casks:
+  - name: pdb-print
+    binaries: [pdb-print]
+    skip_upload: auto # pre-releases don't update the tap
+    homepage: https://github.com/francisrath/partdb-print-agent
+    description: Direct label printing for Part-DB
+    license: MIT
+    repository:
+      owner: francisrath
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # ponytail: the binary isn't signed/notarised yet, so clear the quarantine flag
+    # (GoReleaser docs, homebrew_casks); drop this once Developer ID signing is in place.
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pdb-print"]
+          end
