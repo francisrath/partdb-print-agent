@@ -213,14 +213,21 @@ func (c *Config) findInstance(id string) (*Instance, error) {
 	return nil, fmt.Errorf("no instance %q in config", id)
 }
 
-// Route returns the printer route for a label profile.
+// Route returns the printer route for a label profile on an instance. A route for that
+// exact instance wins over a route without an instance (which applies to all of them).
 func (c *Config) Route(instance string, profile int) (*Route, bool) {
-	for i, r := range c.Routes {
-		if r.Profile == profile && (r.Instance == "" || instance == "" || r.Instance == instance) {
-			return &c.Routes[i], true
+	var fallback *Route
+	for i := range c.Routes {
+		r := &c.Routes[i]
+		switch {
+		case r.Profile != profile:
+		case r.Instance == instance:
+			return r, true
+		case r.Instance == "" && fallback == nil:
+			fallback = r
 		}
 	}
-	return nil, false
+	return fallback, fallback != nil
 }
 
 func (in *Instance) validate() error {

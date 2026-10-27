@@ -218,9 +218,15 @@ func (a *app) print(ctx context.Context, args []string) error {
 		return err
 	}
 	fromPartDB := *profile != 0 || *ids != ""
-	if *printerID == "" && fromPartDB {
-		if rt, ok := a.cfg.Route(*instance, *profile); ok {
-			*printerID = rt.Printer
+	var in *config.Instance
+	if fromPartDB {
+		if in, err = a.cfg.Instance(*instance); err != nil {
+			return err
+		}
+		if *printerID == "" {
+			if rt, ok := a.cfg.Route(in.ID, *profile); ok {
+				*printerID = rt.Printer
+			}
 		}
 	}
 	if *printerID == "" || fromPartDB == (len(pos) == 1) || len(pos) > 1 || (fromPartDB && (*profile <= 0 || *ids == "")) {
@@ -234,10 +240,6 @@ func (a *app) print(ctx context.Context, args []string) error {
 
 	var pdf []byte
 	if fromPartDB {
-		in, err := a.cfg.Instance(*instance)
-		if err != nil {
-			return err
-		}
 		start := time.Now()
 		if pdf, err = partdb.FromInstance(in).GenerateLabels(ctx, *profile, *ids, *elemType); err != nil {
 			return err

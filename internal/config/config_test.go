@@ -158,3 +158,31 @@ func TestPlainHTTP(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutePrefersExactInstance(t *testing.T) {
+	c := &Config{Routes: []Route{
+		{Profile: 2, Printer: "default-ql"},                    // any instance
+		{Instance: "branch", Profile: 2, Printer: "branch-ql"}, // only "branch"
+		{Instance: "home", Profile: 3, Printer: "home-ql"},
+	}}
+	for _, tc := range []struct {
+		instance string
+		profile  int
+		want     string
+	}{
+		{"branch", 2, "branch-ql"}, // exact beats the earlier catch-all
+		{"home", 2, "default-ql"},
+		{"", 2, "default-ql"},
+		{"home", 3, "home-ql"},
+		{"branch", 3, ""}, // another instance's route doesn't apply
+	} {
+		r, ok := c.Route(tc.instance, tc.profile)
+		got := ""
+		if ok {
+			got = r.Printer
+		}
+		if got != tc.want {
+			t.Errorf("Route(%q, %d) = %q, want %q", tc.instance, tc.profile, got, tc.want)
+		}
+	}
+}
