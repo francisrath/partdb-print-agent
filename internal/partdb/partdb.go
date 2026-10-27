@@ -34,6 +34,10 @@ func New(baseURL, token string) *Client {
 			if req.URL.Scheme != "https" && via[0].URL.Scheme == "https" {
 				return errors.New("refusing https → http redirect (would expose the API token)")
 			}
+			// Go forwards Authorization to subdomains too; keep the token on the configured host.
+			if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+				return fmt.Errorf("refusing redirect to another host (%s)", req.URL.Host)
+			}
 			return nil
 		},
 	}}
