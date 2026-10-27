@@ -18,12 +18,20 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 
 ```sh
 go build -o bin/pdb-print ./cmd/pdb-print
-pdb-print --config config.example.yaml printers status ql810    # model, errors, loaded roll
-pdb-print --config config.example.yaml render label.pdf --printer ql810 -o /tmp   # PNG preview at head dots
-pdb-print --config config.example.yaml print label.pdf --printer ql810
-pdb-print --config config.example.yaml print label.pdf --printer ql810 --dry-run job.bin
-pdb-print media                                                  # known Brother QL media
+cp .env.example .env          # fill in PDB_PRINT_TOKEN (Read-Only API token), then:
+set -a; . ./.env; set +a      # loads PDB_PRINT_URL / PDB_PRINT_TOKEN / PDB_PRINT_CONFIG
+
+bin/pdb-print printers status ql810                           # model, errors, loaded roll
+bin/pdb-print printers test ql810                             # test label sized for the media
+bin/pdb-print print --profile 2 --ids 32 --printer ql810      # fetch from Part-DB and print
+bin/pdb-print print --profile 2 --ids 32,112-125 --type part --printer ql810
+bin/pdb-print print label.pdf --printer ql810                 # local PDF
+bin/pdb-print render label.pdf --printer ql810 -o /tmp        # PNG preview at head dots
+bin/pdb-print media                                           # known Brother QL media
 ```
+Add `--dry-run job.bin` to any print command to write the printer byte stream instead.
+Printers (and optionally Part-DB instances with a `token:`) live in a YAML config:
+see `config.example.yaml`; copy it to `config.local.yaml` (gitignored) to customise.
 
 Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 `go test ./... -update` rewrites golden files – inspect the diff first.

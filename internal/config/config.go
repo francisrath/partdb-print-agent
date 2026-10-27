@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -12,8 +13,18 @@ import (
 )
 
 type Config struct {
-	LogLevel string    `yaml:"log_level"` // debug|info|warn|error
-	Printers []Printer `yaml:"printers"`
+	LogLevel  string     `yaml:"log_level"` // debug|info|warn|error
+	Instances []Instance `yaml:"instances"`
+	Printers  []Printer  `yaml:"printers"`
+}
+
+// Instance is a Part-DB server.
+type Instance struct {
+	ID      string `yaml:"id"`
+	BaseURL string `yaml:"base_url"` // https://partdb.example.org
+	// Token is a Read-Only API token. PDB_PRINT_TOKEN overrides it.
+	// ponytail: plain config field; OS keychain storage comes with the web UI setup.
+	Token string `yaml:"token"`
 }
 
 type Printer struct {
@@ -60,6 +71,19 @@ func Load(path string, mustExist bool) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	ids := map[string]bool{}
+	for i, in := range c.Instances {
+		if in.ID == "" || in.BaseURL == "" {
+			return fmt.Errorf("instances[%d]: id and base_url are required", i)
+		}
+		if ids[in.ID] {
+			return fmt.Errorf("instance %q defined twice", in.ID)
+		}
+		ids[in.ID] = true
+		if err := in.validate(); err != nil {
+			return fmt.Errorf("instance %q: %w", in.ID, err)
+		}
+	}
 	seen := map[string]bool{}
 	for i := range c.Printers {
 		p := &c.Printers[i]
@@ -79,6 +103,48 @@ func (c *Config) validate() error {
 		if p.Transport.Port == 0 {
 			p.Transport.Port = 9100
 		}
+	}
+	return nil
+}
+
+// Instance returns the instance with id, or the only one when id is empty.
+// With no instances configured, PDB_PRINT_URL defines one.
+// The token is taken from PDB_PRINT_TOKEN when set.
+func (c *Config) Instance(id string) (*Instance, error) {
+	var in *Instance
+	switch {
+	case len(c.Instances) == 0 && os.Getenv("PDB_PRINT_URL") != "":
+		in = &Instance{ID: "env", BaseURL: os.Getenv("PDB_PRINT_URL")}
+		if err := in.validate(); err != nil {
+			return nil, fmt.Errorf("PDB_PRINT_URL: %w", err)
+		}
+	case id == "" && len(c.Instances) == 1:
+		in = &c.Instances[0]
+	case id == "":
+		return nil, fmt.Errorf("%d Part-DB instances configured: pick one with --instance", len(c.Instances))
+	default:
+		for i := range c.Instances {
+			if c.Instances[i].ID == id {
+				in = &c.Instances[i]
+			}
+		}
+		if in == nil {
+			return nil, fmt.Errorf("no instance %q in config", id)
+		}
+	}
+	if t := os.Getenv("PDB_PRINT_TOKEN"); t != "" {
+		in.Token = t
+	}
+	if in.Token == "" {
+		return nil, fmt.Errorf("instance %q has no API token: set token in the config or PDB_PRINT_TOKEN", in.ID)
+	}
+	return in, nil
+}
+
+func (in *Instance) validate() error {
+	u, err := url.Parse(in.BaseURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return errors.New("base_url must be an http(s) URL")
 	}
 	return nil
 }

@@ -11,16 +11,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/klippa-app/go-pdfium/enums"
 )
 
 var update = flag.Bool("update", false, "rewrite golden PNGs")
 
 // testPDF builds a one-page PDF of wMM×hMM with a border, a 21×21 QR-like grid
-// of 1 mm modules and Helvetica text. Content stream units are mm.
+// of 1 mm modules and Helvetica text.
 func testPDF(wMM, hMM float64, text string) []byte {
 	var c strings.Builder
-	fmt.Fprintf(&c, "2.8346 0 0 2.8346 0 0 cm 0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n", wMM-1, hMM-1)
+	fmt.Fprintf(&c, "0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n", wMM-1, hMM-1)
 	for y := 0; y < 21; y++ {
 		for x := 0; x < 21; x++ {
 			if (x*7+y*13+x*y)%3 == 0 || (x < 7 && y < 7 && (x == 0 || y == 0 || x == 6 || y == 6 || (x > 1 && x < 5 && y > 1 && y < 5))) {
@@ -29,29 +30,7 @@ func testPDF(wMM, hMM float64, text string) []byte {
 		}
 	}
 	fmt.Fprintf(&c, "BT /F1 3 Tf 2 2 Td (%s) Tj ET\n", text)
-	content := c.String()
-
-	objs := []string{
-		"<< /Type /Catalog /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.3f %.3f] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>", wMM/25.4*72, hMM/25.4*72),
-		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-	}
-	var b bytes.Buffer
-	b.WriteString("%PDF-1.4\n")
-	var offs []int
-	for i, o := range objs {
-		offs = append(offs, b.Len())
-		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
-	}
-	xref := b.Len()
-	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
-	for _, o := range offs {
-		fmt.Fprintf(&b, "%010d 00000 n \n", o)
-	}
-	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
-	return b.Bytes()
+	return pdfgen.Page(wMM, hMM, c.String())
 }
 
 func TestRenderGolden(t *testing.T) {

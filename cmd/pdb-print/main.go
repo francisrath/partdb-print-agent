@@ -23,6 +23,8 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
+	"github.com/francisrath/partdb-print-agent/internal/partdb"
+	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
 )
@@ -38,8 +40,11 @@ commands:
                                    rasterise to PNGs at printhead dots (no printing)
   print FILE.pdf --printer ID [--dry-run OUT.bin]
                                    print a local PDF
+  print --profile N --ids LIST [--type part|part_lot|storelocation] [--instance ID] --printer ID
+                                   fetch labels from Part-DB and print them
   printers list                    list configured printers
   printers status ID               query printer status and loaded media
+  printers test ID [--dry-run OUT] print a test label sized for the loaded media
   media                            list known Brother QL media
 `
 
@@ -60,7 +65,7 @@ type app struct {
 func run(ctx context.Context, args []string) error {
 	g := flag.NewFlagSet("pdb-print", flag.ContinueOnError)
 	g.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	cfgPath := g.String("config", "", "config file (default: OS config dir)/pdb-print/config.yaml")
+	cfgPath := g.String("config", "", "config file (default: $PDB_PRINT_CONFIG, else <OS config dir>/pdb-print/config.yaml)")
 	logLevel := g.String("log-level", "", "debug|info|warn|error")
 	if err := g.Parse(args); err != nil {
 		return err
@@ -75,6 +80,9 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	if *cfgPath == "" {
+		*cfgPath = os.Getenv("PDB_PRINT_CONFIG")
+	}
 	path, explicit := *cfgPath, *cfgPath != ""
 	if !explicit {
 		var err error
@@ -167,7 +175,11 @@ func (a *app) render(args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown or missing media %q (see `pdb-print media`)", p.Media)
 	}
-	pages, err := renderFile(pos[0], p, &m)
+	pdf, err := os.ReadFile(pos[0])
+	if err != nil {
+		return err
+	}
+	pages, err := renderPDF(pdf, p, &m)
 	if err != nil {
 		return err
 	}
@@ -186,11 +198,7 @@ func (a *app) render(args []string) error {
 	return nil
 }
 
-func renderFile(path string, p *config.Printer, m *driver.Media) ([]*image.Gray, error) {
-	pdf, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
+func renderPDF(pdf []byte, p *config.Printer, m *driver.Media) ([]*image.Gray, error) {
 	r, err := render.New()
 	if err != nil {
 		return nil, err
@@ -209,14 +217,45 @@ func (a *app) print(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("print", flag.ContinueOnError)
 	printerID := fs.String("printer", "", "printer id from the config")
 	dryRun := fs.String("dry-run", "", "write the printer byte stream to this file instead of printing")
+	profile := fs.Int("profile", 0, "Part-DB label profile id")
+	ids := fs.String("ids", "", `element ids, Part-DB range syntax ("32,112-125")`)
+	elemType := fs.String("type", "", "part | part_lot | storelocation (default: the profile's)")
+	instance := fs.String("instance", "", "Part-DB instance id (default: the only one)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
-	if len(pos) != 1 || *printerID == "" {
-		return errors.New("usage: print FILE.pdf --printer ID")
+	fromPartDB := *profile != 0 || *ids != ""
+	if *printerID == "" || fromPartDB == (len(pos) == 1) || len(pos) > 1 || (fromPartDB && (*profile <= 0 || *ids == "")) {
+		return errors.New("usage: print FILE.pdf --printer ID | print --profile N --ids LIST [--type T] --printer ID")
 	}
-	p, err := a.cfg.Printer(*printerID)
+	switch *elemType {
+	case "", "part", "part_lot", "storelocation":
+	default:
+		return fmt.Errorf("--type must be part, part_lot or storelocation")
+	}
+
+	var pdf []byte
+	if fromPartDB {
+		in, err := a.cfg.Instance(*instance)
+		if err != nil {
+			return err
+		}
+		start := time.Now()
+		if pdf, err = partdb.New(in.BaseURL, in.Token).GenerateLabels(ctx, *profile, *ids, *elemType); err != nil {
+			return err
+		}
+		a.log.Info("fetched labels", "instance", in.ID, "profile", *profile, "ids", *ids, "bytes", len(pdf), "took", time.Since(start).Round(time.Millisecond))
+	} else if pdf, err = os.ReadFile(pos[0]); err != nil {
+		return err
+	}
+	return a.printPDF(ctx, *printerID, *dryRun, func(*driver.Media) ([]byte, error) { return pdf, nil })
+}
+
+// printPDF opens the printer, settles the media (config or reported), gets the PDF
+// for that media from source, then renders, encodes and sends it (or writes dryRun).
+func (a *app) printPDF(ctx context.Context, printerID, dryRun string, source func(*driver.Media) ([]byte, error)) error {
+	p, err := a.cfg.Printer(printerID)
 	if err != nil {
 		return err
 	}
@@ -231,7 +270,7 @@ func (a *app) print(ctx context.Context, args []string) error {
 	if p.Media != "" && !ok {
 		return fmt.Errorf("unknown media %q", p.Media)
 	}
-	if *dryRun == "" {
+	if dryRun == "" {
 		t = tcp.New(net.JoinHostPort(p.Transport.Host, strconv.Itoa(p.Transport.Port)))
 		if err := t.Open(ctx); err != nil {
 			return fmt.Errorf("%w: %v", &driver.Error{Code: driver.CommsError}, err)
@@ -262,8 +301,12 @@ func (a *app) print(ctx context.Context, args []string) error {
 		return errors.New("media unknown: set `media:` for this printer in the config")
 	}
 
+	pdf, err := source(&media)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
-	pages, err := renderFile(pos[0], p, &media)
+	pages, err := renderPDF(pdf, p, &media)
 	if err != nil {
 		return &driver.Error{Code: driver.RenderError, Detail: err.Error()}
 	}
@@ -273,8 +316,8 @@ func (a *app) print(ctx context.Context, args []string) error {
 	if err := drv.Encode(ctx, &job, pages, &driver.Job{Cut: p.Cut}, &media); err != nil {
 		return err
 	}
-	if *dryRun != "" {
-		return os.WriteFile(*dryRun, job.Bytes(), 0o644)
+	if dryRun != "" {
+		return os.WriteFile(dryRun, job.Bytes(), 0o644)
 	}
 	if _, err := t.Write(job.Bytes()); err != nil {
 		return fmt.Errorf("%w: %v", &driver.Error{Code: driver.CommsError}, err)
@@ -332,6 +375,29 @@ func (a *app) printers(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("model:  %s\nstatus: %s %s\nmedia:  %s\n", st.Model, st.Code, st.Detail, mediaName(st.Media))
 		return nil
+	case len(args) >= 2 && args[0] == "test":
+		fs := flag.NewFlagSet("printers test", flag.ContinueOnError)
+		dryRun := fs.String("dry-run", "", "write the printer byte stream to this file instead of printing")
+		pos, err := parse(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		if len(pos) != 1 {
+			break
+		}
+		p, err := a.cfg.Printer(pos[0])
+		if err != nil {
+			return err
+		}
+		return a.printPDF(ctx, p.ID, *dryRun, func(m *driver.Media) ([]byte, error) {
+			length := m.LengthMM
+			if length == 0 {
+				length = 40 // continuous: any length will do
+			}
+			return pdfgen.TestCard(m.WidthMM, length, []string{
+				"pdb-print test", p.Model, m.ID, fmt.Sprintf("%d dots", m.PrintableWidthDots), appVersion(),
+			}), nil
+		})
 	}
-	return errors.New("usage: printers list | printers status ID")
+	return errors.New("usage: printers list | printers status ID | printers test ID [--dry-run OUT.bin]")
 }
