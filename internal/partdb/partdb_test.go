@@ -55,10 +55,56 @@ func TestGenerateLabels(t *testing.T) {
 	}
 }
 
+func TestTokenAndProfiles(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tcp_good" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/tokens/current":
+			w.Write([]byte(`{"name":"agent","user":{"id":2,"name":"fran"},"level":1}`))
+		case "/api/label_profiles":
+			if r.Header.Get("Accept") != "application/ld+json" {
+				w.Write([]byte(`[{"name":"no ids in plain json"}]`))
+				return
+			}
+			switch r.URL.Query().Get("options.supported_element") {
+			case "part":
+				w.Write([]byte(`{"hydra:member":[{"@id":"/api/label_profiles/2","name":"bag"},{"@id":"/api/label_profiles/1","name":"lid"}]}`))
+			case "storelocation":
+				w.Write([]byte(`{"hydra:member":[{"@id":"/api/label_profiles/4","name":"drawer"}]}`))
+			default:
+				w.Write([]byte(`{"hydra:member":[]}`))
+			}
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tcp_good")
+	tok, err := c.TokenInfo(context.Background())
+	if err != nil || tok.Level != 1 || tok.User.Name != "fran" {
+		t.Errorf("token: %+v %v", tok, err)
+	}
+	ps, err := c.Profiles(context.Background())
+	if err != nil || len(ps) != 3 || ps[0].ID != 1 || ps[2].Element != "storelocation" {
+		t.Errorf("profiles: %+v %v", ps, err)
+	}
+	if _, err := New(srv.URL, "tcp_bad").TokenInfo(context.Background()); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("bad token: %v", err)
+	}
+}
+
 func TestRefusesPlainHTTPAndDowngrade(t *testing.T) {
 	ctx := context.Background()
-	if _, err := New("http://partdb.lan", "tcp_x").GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "plain http") {
+	lan := New("http://partdb.lan", "tcp_x")
+	if _, err := lan.GenerateLabels(ctx, 1, "1", ""); err == nil || !strings.Contains(err.Error(), "plain http") {
 		t.Errorf("plain http to a LAN host: %v", err)
+	}
+	if _, err := lan.TokenInfo(ctx); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("TokenInfo over plain http: %v", err)
+	}
+	if _, err := lan.Profiles(ctx); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("Profiles over plain http: %v", err)
 	}
 	// https → http redirect must not follow (it would resend the token in clear text)
 	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

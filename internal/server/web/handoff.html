@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdb-print</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body class="handoff" {{if .AutoClose}}data-autoclose="3000"{{end}}>
+<img src="/favicon.svg" alt="" width="56" height="56">
+{{if .Err}}
+  <h1 class="err">Not printed</h1>
+  <p>{{.Err}}</p>
+{{else if .Done}}
+  <h1>Printed ✓</h1>
+  <p>{{.What}} → {{.Printer}}<br><span class="muted">{{.Result}}</span></p>
+{{else}}
+  <h1>Print this label?</h1>
+  <p>{{.What}} → {{.Printer}}</p>
+  <p class="muted">{{.Why}}</p>
+  <form method="post" action="/v1/handoff">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}
+    <button autofocus>Print</button>
+  </form>
+{{end}}
+</body>
+</html>
