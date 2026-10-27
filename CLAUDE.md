@@ -46,6 +46,8 @@ working brief for the **MVP**.
    (`francisrath/tap`). Signing (Apple Developer ID via existing developer account, SignPath for Windows) comes later.
 
 ## Test environment (the author's setup)
+Addresses below are placeholders; the real printer IP and Part-DB URL live in the gitignored
+`config.local.yaml` and `.env`. Never commit them.
 - Printer: **Brother QL-810W**, `tcp://192.168.1.50:9100`, roll **DK-22210 (29 mm continuous)** loaded.
   Also owns DK-22214 (12 mm) and DK-11204 (17×54 die-cut).
 - Part-DB 2.20.x at **https://partdb.example.org** (behind Traefik; multipart POSTs get HTTP 418 there – irrelevant
