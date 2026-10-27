@@ -337,7 +337,9 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range c.Printers {
 			if c.Printers[i].ID == p.ID {
-				p.Threshold = c.Printers[i].Threshold
+				// keep settings the form doesn't show
+				old := c.Printers[i]
+				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
 				c.Printers[i] = p
 				return nil
 			}
@@ -462,8 +464,13 @@ func statusText(st *driver.Status, p *config.Printer) (string, bool) {
 		text += " · " + st.Detail
 	}
 	ok := st.Code == driver.OK
-	if st.Media != nil && st.Media.ID != "unknown" && p.Media != "" && st.Media.ID != p.Media {
+	known := st.Media != nil && st.Media.ID != "unknown"
+	switch {
+	case known && p.Media != "" && st.Media.ID != p.Media:
 		text += fmt.Sprintf(" · jobs will be refused: config expects %s", p.Media)
+		ok = false
+	case !known && p.Media == "":
+		text += " · jobs will fail: the printer doesn't report a known roll, set media for this printer"
 		ok = false
 	}
 	return text, ok
