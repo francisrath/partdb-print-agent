@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/zalando/go-keyring"
 )
 
@@ -256,6 +258,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		routes = append(routes, v)
 	}
 	data["Routes"] = routes
+	if hf := cfg.HotFolder; hf.Enabled {
+		dir, _ := hf.Path()
+		data["HotFolder"] = fmt.Sprintf("%s (%s) → %s", dir, defaultStr(hf.Pattern, "label_*.pdf"), hf.Printer)
+	}
 
 	s.mu.Lock()
 	data["Flash"], s.flash = s.flash, nil
@@ -337,7 +343,9 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range c.Printers {
 			if c.Printers[i].ID == p.ID {
-				p.Threshold = c.Printers[i].Threshold
+				// keep settings the form doesn't show
+				old := c.Printers[i]
+				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
 				c.Printers[i] = p
 				return nil
 			}
@@ -444,17 +452,59 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	st, err := printing.Status(ctx, p)
 	switch {
+	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
+		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
 		writeJSON(w, map[string]any{"ok": true, "text": "reachable (no status over TCP)"})
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
-		text := fmt.Sprintf("%s · %s · %s", st.Code, st.Model, printing.MediaName(st.Media))
-		if st.Detail != "" {
-			text += " · " + st.Detail
-		}
-		writeJSON(w, map[string]any{"ok": st.Code == driver.OK, "text": text})
+		text, ok := statusText(st, p)
+		writeJSON(w, map[string]any{"ok": ok, "text": text})
 	}
+}
+
+// statusText summarises a printer status for the UI; ok=false also when the loaded roll
+// differs from the configured media (jobs would be refused).
+func statusText(st *driver.Status, p *config.Printer) (string, bool) {
+	text := fmt.Sprintf("%s · %s · %s loaded", st.Code, st.Model, printing.MediaName(st.Media))
+	if st.Detail != "" {
+		text += " · " + st.Detail
+	}
+	ok := st.Code == driver.OK
+	known := st.Media != nil && st.Media.ID != "unknown"
+	switch {
+	case known && p.Media != "" && st.Media.ID != p.Media:
+		text += fmt.Sprintf(" · jobs will be refused: config expects %s", p.Media)
+		ok = false
+	case !known && p.Media == "":
+		text += " · jobs will fail: the printer doesn't report a known roll, set media for this printer"
+		ok = false
+	}
+	return text, ok
+}
+
+// PrintFile prints a PDF file from another job source (e.g. the hot folder) on printerID,
+// using the current config, and records it in the job history.
+func (s *Server) PrintFile(ctx context.Context, source, printerID, path string) error {
+	p, err := s.printer(printerID)
+	if err != nil {
+		return err
+	}
+	pdf, err := render.ReadFile(path)
+	var res *printing.Result
+	if err == nil {
+		res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
+	}
+	s.record(jobFor(source, filepath.Base(path), p.ID, res, err))
+	return err
+}
+
+func defaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func jobFor(source, what, printer string, res *printing.Result, err error) Job {

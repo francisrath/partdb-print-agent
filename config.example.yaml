@@ -11,3 +11,15 @@ printers:
     media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
     rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
     cut: per_label              # per_label | last | none
+    # SNMP (UDP 161, on by default) reports the loaded roll, errors and finished prints.
+    # snmp_community: public    # if you changed it in the printer's web settings
+    # no_snmp: true             # fall back to the TCP status (network QLs don't answer it)
+    # allow_scaling: true       # print labels that don't match the roll by scaling instead of refusing
+
+# Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
+# Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.
+# hot_folder:
+#   enabled: true
+#   dir: ~/Downloads          # default
+#   pattern: label_*.pdf      # Part-DB's download name
+#   printer: ql810
