@@ -4,9 +4,13 @@ package hotfolder
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -111,8 +115,7 @@ func (f *Folder) handle(ctx context.Context, path string) {
 	}
 	dir := filepath.Join(f.Dir, dest)
 	if err := os.MkdirAll(dir, 0o700); err == nil {
-		err = os.Rename(path, filepath.Join(dir, filepath.Base(path)))
-		if err == nil {
+		if err := moveNoClobber(path, dir); err == nil {
 			return
 		}
 	}
@@ -120,4 +123,32 @@ func (f *Folder) handle(ctx context.Context, path string) {
 	if err := os.Remove(path); err != nil {
 		f.Log.Error("hot folder: can't move or delete", "file", path, "err", err)
 	}
+}
+
+// moveNoClobber moves src into dir without ever replacing a file there: the same label
+// downloaded twice is archived as "name.pdf" and "name (2).pdf".
+func moveNoClobber(src, dir string) error {
+	base := filepath.Base(src)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for i := 1; i <= 1000; i++ {
+		name := base
+		if i > 1 {
+			name = fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		}
+		dst := filepath.Join(dir, name)
+		err := os.Link(src, dst) // fails if dst exists, so nothing is ever overwritten
+		if err == nil {
+			return os.Remove(src)
+		}
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		// no hard links on this filesystem (e.g. FAT): check, then rename
+		if _, err := os.Lstat(dst); err == nil {
+			continue
+		}
+		return os.Rename(src, dst)
+	}
+	return errors.New("no free file name")
 }

@@ -3,6 +3,7 @@ package hotfolder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -147,5 +148,24 @@ func TestNeverReprintsWhenItCantMove(t *testing.T) {
 	}
 	if exists(p) {
 		t.Error("file left in place (should be deleted when it can't be moved)")
+	}
+}
+
+func TestSameNameTwiceKeepsBoth(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 2; i++ {
+		h.file("label_Part5_bag.pdf", fmt.Sprintf("%%PDF-1 copy %d", i), 0)
+		h.scan(0)
+		h.scan(100 * time.Millisecond)
+		h.scan(600 * time.Millisecond)
+		h.scan(time.Second) // gone from the folder: forget it
+	}
+	for _, name := range []string{"label_Part5_bag.pdf", "label_Part5_bag (2).pdf"} {
+		if !exists(filepath.Join(h.f.Dir, "printed", name)) {
+			t.Errorf("printed/%s missing", name)
+		}
+	}
+	if len(h.printed) != 2 {
+		t.Errorf("printed %v", h.printed)
 	}
 }

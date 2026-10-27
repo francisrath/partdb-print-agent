@@ -271,6 +271,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	var folderDone chan struct{} // closed when the hot folder has stopped
 	if hf := a.cfg.HotFolder; hf.Enabled {
 		dir, err := hf.Path()
 		if err != nil {
@@ -281,7 +282,11 @@ func (a *app) serve(ctx context.Context, args []string) error {
 			Print: func(ctx context.Context, path string) error {
 				return srv.PrintFile(ctx, "hot folder", hf.Printer, path)
 			}}
-		go folder.Run(ctx)
+		folderDone = make(chan struct{})
+		go func() {
+			defer close(folderDone)
+			_ = folder.Run(ctx)
+		}()
 	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
 	stopped := make(chan struct{})
@@ -298,6 +303,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	<-stopped // Serve returns as soon as Shutdown starts; wait for it to finish
+	if folderDone != nil {
+		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
+	}
 	return nil
 }
 
