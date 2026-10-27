@@ -12,6 +12,21 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 - Planned: Zebra/ZPL, TSPL, ESC/POS, DYMO, Niimbot, Phomemo, normal printers and A4 label sheets;
   instant printing from any device through NAT via an optional Part-DB extension.
 
+## Usage (early)
+
+```sh
+go build -o bin/pdb-print ./cmd/pdb-print
+pdb-print --config config.example.yaml printers status ql810    # model, errors, loaded roll
+pdb-print --config config.example.yaml render label.pdf --printer ql810 -o /tmp   # PNG preview at head dots
+pdb-print --config config.example.yaml print label.pdf --printer ql810
+pdb-print --config config.example.yaml print label.pdf --printer ql810 --dry-run job.bin
+pdb-print media                                                  # known Brother QL media
+```
+
+Tests: `go test ./...` (never prints; a fake printer runs on localhost).
+`go test ./... -update` rewrites golden files – inspect the diff first.
+Status-only hardware check: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
 ## License
