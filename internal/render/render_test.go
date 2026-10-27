@@ -140,3 +140,19 @@ func TestRotation(t *testing.T) {
 		t.Error("45° accepted")
 	}
 }
+func TestPixelBudget(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	r.maxPixels = 306 * 400 // less than one 29x46 page (306x485)
+	_, err = r.Render(testPDF(29, 46, "x"), Options{WidthDots: 306, MediaWidthMM: 29})
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("over budget: %v", err)
+	}
+	r.maxPixels = MaxPixels
+	if _, err := r.Render(testPDF(29, 46, "x"), Options{WidthDots: 306, MediaWidthMM: 29}); err != nil {
+		t.Errorf("within budget: %v", err)
+	}
+}

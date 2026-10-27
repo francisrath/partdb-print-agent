@@ -20,7 +20,10 @@ import (
 const (
 	MaxPDFBytes = 10 << 20
 	MaxPages    = 500
-	mmPerPt     = 25.4 / 72
+	// MaxPixels bounds the rasters one Render call may hold (1 byte per dot): 256 MiB,
+	// i.e. about 31 m of 62 mm tape. Checked before each page's bitmap is allocated.
+	MaxPixels = 256 << 20
+	mmPerPt   = 25.4 / 72
 	// A page side within this of the media width is treated as the cross-feed side.
 	widthToleranceMM = 0.6
 )
@@ -34,8 +37,9 @@ type Options struct {
 }
 
 type Renderer struct {
-	pool     pdfium.Pool
-	instance pdfium.Pdfium
+	pool      pdfium.Pool
+	instance  pdfium.Pdfium
+	maxPixels int // MaxPixels; lowered in tests
 }
 
 // New compiles the PDFium wasm module; this takes a moment, so reuse the Renderer.
@@ -52,7 +56,7 @@ func New() (*Renderer, error) {
 		_ = pool.Close()
 		return nil, fmt.Errorf("pdfium instance: %w", err)
 	}
-	return &Renderer{pool: pool, instance: inst}, nil
+	return &Renderer{pool: pool, instance: inst, maxPixels: MaxPixels}, nil
 }
 
 func (r *Renderer) Close() error {
@@ -88,8 +92,9 @@ func (r *Renderer) Render(pdf []byte, o Options) ([]*image.Gray, error) {
 		return nil, fmt.Errorf("PDF has %d pages, max %d", cnt.PageCount, MaxPages)
 	}
 	var out []*image.Gray
+	budget := r.maxPixels
 	for i := 0; i < cnt.PageCount; i++ {
-		img, err := r.renderPage(doc.Document, i, o)
+		img, err := r.renderPage(doc.Document, i, o, &budget)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", i+1, err)
 		}
@@ -98,7 +103,7 @@ func (r *Renderer) Render(pdf []byte, o Options) ([]*image.Gray, error) {
 	return out, nil
 }
 
-func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options) (*image.Gray, error) {
+func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options, budget *int) (*image.Gray, error) {
 	p := r.instance
 	size, err := p.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc, Index: index})
 	if err != nil {
@@ -120,6 +125,9 @@ func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options
 	}
 	if h <= 0 || h > 100000 {
 		return nil, fmt.Errorf("bad raster length %d", h)
+	}
+	if *budget -= w * h; *budget < 0 {
+		return nil, fmt.Errorf("PDF too large to rasterise (over %d megapixels in total)", r.maxPixels>>20)
 	}
 
 	page, err := p.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: doc, Index: index})

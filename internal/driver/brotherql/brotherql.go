@@ -64,6 +64,10 @@ func (d *Driver) Validate(pages []*image.Gray, job *driver.Job, media *driver.Me
 			return &driver.Error{Code: driver.MediaMismatch,
 				Detail: fmt.Sprintf("page %d is %d dots wide, %s prints %d", i+1, w, spec.ID, spec.PrintableWidthDots)}
 		}
+		if spec.Kind == driver.Continuous && h > maxLines {
+			return &driver.Error{Code: driver.Unsupported,
+				Detail: fmt.Sprintf("page %d is %d dots long; continuous tape allows at most %d (1 m)", i+1, h, maxLines)}
+		}
 		if h == 0 || (spec.Kind == driver.DieCut && h > spec.PrintableLengthDots) {
 			return &driver.Error{Code: driver.MediaMismatch,
 				Detail: fmt.Sprintf("page %d is %d dots long, %s allows %d", i+1, h, spec.ID, spec.PrintableLengthDots)}
@@ -211,6 +215,9 @@ func WaitDone(ctx context.Context, t driver.Transport, n int, timeout time.Durat
 	for done := 0; done < n; {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if !time.Now().Before(deadline) {
+			return driver.ErrNoReadback // printer keeps talking but never reports completion
 		}
 		s, err := readStatus(t)
 		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) && time.Now().Before(deadline) {

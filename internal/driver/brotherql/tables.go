@@ -20,8 +20,9 @@ const (
 	headPins    = 720 // 90 bytes per raster line
 	lineBytes   = headPins / 8
 	invalidateN = 400
-	feedMargin  = 35  // dots (~3 mm) lead/trail on continuous tape
-	minLines    = 150 // shortest raster the QL-8xx accepts
+	feedMargin  = 35    // dots (~3 mm) lead/trail on continuous tape
+	minLines    = 150   // continuous tape: 12.7 mm minimum (raster reference §2.3.4)
+	maxLines    = 11811 // continuous tape: 1000 mm maximum
 )
 
 type mediaSpec struct {
