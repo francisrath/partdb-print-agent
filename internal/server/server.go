@@ -256,6 +256,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		routes = append(routes, v)
 	}
 	data["Routes"] = routes
+	if ti := cfg.TagInbox; ti.Enabled {
+		data["TagInbox"] = fmt.Sprintf("parts tagged %q → profile %d", ti.TagOrDefault(), ti.Profile)
+	}
 
 	s.mu.Lock()
 	data["Flash"], s.flash = s.flash, nil
@@ -457,6 +460,43 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// TaggedParts lists the parts tagged tag on an instance, using the current config.
+func (s *Server) TaggedParts(ctx context.Context, instanceID, tag string) ([]partdb.TaggedPart, error) {
+	in, err := s.config().Instance(instanceID)
+	if err != nil {
+		return nil, err
+	}
+	return partdb.FromInstance(in).TaggedParts(ctx, tag)
+}
+
+// PrintLabels fetches labels for ids (Part-DB range syntax) from an instance with a label
+// profile and prints them, recording the job (including failures) under source. With an
+// empty printerID the profile's route picks the printer.
+func (s *Server) PrintLabels(ctx context.Context, source, what, instanceID string, profile int, typ, ids, printerID string) (*printing.Result, error) {
+	cfg := s.config()
+	var res *printing.Result
+	in, err := cfg.Instance(instanceID)
+	if err == nil && printerID == "" {
+		if rt, ok := cfg.Route(in.ID, profile); ok {
+			printerID = rt.Printer
+		} else {
+			err = fmt.Errorf("no printer for label profile %d: set one or add a route", profile)
+		}
+	}
+	var p *config.Printer
+	if err == nil {
+		p, err = s.printer(printerID)
+	}
+	if err == nil {
+		var pdf []byte
+		if pdf, err = partdb.FromInstance(in).GenerateLabels(ctx, profile, ids, typ); err == nil {
+			res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
+		}
+	}
+	s.record(jobFor(source, what, printerID, res, err))
+	return res, err
+}
+
 func jobFor(source, what, printer string, res *printing.Result, err error) Job {
 	j := Job{Source: source, What: what, Printer: printer}
 	if err != nil {
@@ -563,19 +603,8 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	p, err := s.printer(rt.Printer)
-	if err == nil {
-		var full *config.Instance
-		if full, err = cfg.Instance(in.ID); err == nil {
-			var pdf []byte
-			if pdf, err = partdb.FromInstance(full).GenerateLabels(r.Context(), profile, ids, typ); err == nil {
-				var res *printing.Result
-				res, err = s.Svc.Print(r.Context(), p, "", printing.PDF(pdf))
-				v.Result = resultText(res)
-				s.record(jobFor("bookmarklet", v.What, p.ID, res, err))
-			}
-		}
-	}
+	res, err := s.PrintLabels(r.Context(), "bookmarklet", v.What, in.ID, profile, typ, ids, rt.Printer)
+	v.Result = resultText(res)
 	if err != nil {
 		v.Err = err.Error()
 		return

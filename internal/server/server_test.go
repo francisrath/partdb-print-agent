@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -293,5 +294,23 @@ func TestGuardAllowsBoundLoopbackAddress(t *testing.T) {
 	}
 	if w := h.do("GET", "/v1/info", nil, func(r *http.Request) { r.Host = "127.0.0.3:8631" }); w.Code != http.StatusForbidden {
 		t.Errorf("other loopback address accepted: %d", w.Code)
+	}
+}
+
+func TestPrintLabelsUsesRouteAndRecordsFailures(t *testing.T) {
+	h := newHarness(t)
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	ctx := context.Background()
+	// no printer given and no route yet: fails before printing, but is still in the history
+	if _, err := h.srv.PrintLabels(ctx, "tag inbox", "parts 32", "", 2, "part", "32", ""); err == nil || !strings.Contains(err.Error(), "no printer") {
+		t.Fatalf("without a route: %v", err)
+	}
+	h.post("/routes", url.Values{"profile": {"2"}, "printer": {"ql"}})
+	if _, err := h.srv.PrintLabels(ctx, "tag inbox", "parts 32", "", 2, "part", "32", ""); err != nil {
+		t.Fatalf("via route: %v", err)
+	}
+	<-h.jobs
+	if len(h.srv.jobs) != 2 || h.srv.jobs[0].Printer != "ql" || h.srv.jobs[1].Err == "" || h.srv.jobs[0].Source != "tag inbox" {
+		t.Errorf("history: %+v", h.srv.jobs)
 	}
 }

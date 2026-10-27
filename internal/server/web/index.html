@@ -114,6 +114,7 @@
 
 <section>
   <h2>Recent jobs</h2>
+  <p class="muted">{{with .TagInbox}}Tag inbox: printing {{.}}{{else}}Tag inbox: off (enable <code>tag_inbox</code> in the config to print parts you tag in Part-DB){{end}}</p>
   {{if .Jobs}}
   <table>
     <thead><tr><th>Time</th><th>From</th><th>What</th><th>Printer</th><th>Result</th></tr></thead>

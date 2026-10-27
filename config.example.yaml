@@ -11,3 +11,14 @@ printers:
     media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
     rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
     cut: per_label              # per_label | last | none
+
+# Print labels for parts you tag in Part-DB, from any device (runs inside `pdb-print serve`,
+# polls Part-DB outbound, so it works through NAT). The token is read-only, so the tag stays:
+# a part prints again when it changes (e.g. re-tagged). Remove the tag after printing to avoid
+# reprints when you edit the part. On the very first run, already-tagged parts are skipped.
+# tag_inbox:
+#   enabled: true
+#   tag: print-label          # default
+#   profile: 2                # Part-DB label profile id for parts
+#   printer: ql810            # default: the route for that profile
+#   interval_s: 10            # default; minimum 5

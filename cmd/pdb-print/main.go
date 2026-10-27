@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/server"
+	"github.com/francisrath/partdb-print-agent/internal/source/taginbox"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -270,6 +272,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	inboxDone, err := a.startTagInbox(ctx, srv)
+	if err != nil {
+		return err
+	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
 	stopped := make(chan struct{})
 	go func() {
@@ -285,7 +291,49 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	<-stopped // Serve returns as soon as Shutdown starts; wait for it to finish
+	if inboxDone != nil {
+		<-inboxDone // a tag-inbox print in progress finishes before we exit
+	}
 	return nil
+}
+
+// startTagInbox runs the tag inbox when enabled; the returned channel closes when it stops.
+func (a *app) startTagInbox(ctx context.Context, srv *server.Server) (chan struct{}, error) {
+	ti := a.cfg.TagInbox
+	if !ti.Enabled {
+		return nil, nil
+	}
+	in, err := a.cfg.Instance(ti.Instance)
+	if err != nil {
+		return nil, fmt.Errorf("tag_inbox: %w", err)
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	tag := ti.TagOrDefault()
+	// ponytail: read once at startup; changing tag_inbox needs a restart
+	inbox := &taginbox.Inbox{
+		Key: in.ID + "/" + tag, Interval: time.Duration(ti.IntervalS) * time.Second,
+		State: filepath.Join(dir, "pdb-print", "taginbox.json"), Log: a.log,
+		Fetch: func(ctx context.Context) ([]partdb.TaggedPart, error) { return srv.TaggedParts(ctx, in.ID, tag) },
+		Print: func(ctx context.Context, ids []int) error {
+			list := make([]string, len(ids))
+			for i, id := range ids {
+				list[i] = strconv.Itoa(id)
+			}
+			joined := strings.Join(list, ",")
+			_, err := srv.PrintLabels(ctx, "tag inbox", "parts "+joined, in.ID, ti.Profile, "part", joined, ti.Printer)
+			return err
+		},
+	}
+	a.log.Info("tag inbox: watching", "instance", in.ID, "tag", tag, "profile", ti.Profile)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = inbox.Run(ctx)
+	}()
+	return done, nil
 }
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {

@@ -3,6 +3,7 @@ package partdb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,5 +127,25 @@ func TestRefusesCrossHostRedirect(t *testing.T) {
 	defer srv.Close()
 	if _, err := New(srv.URL, "tcp_x").GenerateLabels(context.Background(), 1, "1", ""); err == nil || !strings.Contains(err.Error(), "another host") {
 		t.Errorf("cross-host redirect: %v", err)
+	}
+}
+
+func TestTaggedParts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api/parts" || q.Get("tags") != "print-label" || len(q["properties[]"]) != 2 {
+			http.Error(w, "bad query "+r.URL.RawQuery, http.StatusBadRequest)
+			return
+		}
+		if q.Get("page") == "" {
+			fmt.Fprint(w, `{"hydra:member":[{"id":32,"lastModified":"2026-10-27T10:00:00+00:00"}],"hydra:view":{"hydra:next":"/api/parts?tags=print-label&properties%5B%5D=id&properties%5B%5D=lastModified&page=2"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"hydra:member":[{"id":7,"lastModified":"2026-10-27T11:00:00+00:00"}],"hydra:view":{}}`)
+	}))
+	defer srv.Close()
+	got, err := New(srv.URL, "tcp_x").TaggedParts(context.Background(), "print-label")
+	if err != nil || len(got) != 2 || got[0].ID != 32 || got[1].ID != 7 || got[1].LastModified == "" {
+		t.Errorf("got %+v, %v", got, err)
 	}
 }

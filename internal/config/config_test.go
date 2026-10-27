@@ -86,14 +86,16 @@ printers:
 	}
 
 	for name, bad := range map[string]string{
-		"no id":      "printers: [{driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad driver": "printers: [{id: a, driver: zpl, transport: {kind: tcp, host: x}}]",
-		"no host":    "printers: [{id: a, driver: brother-ql, transport: {kind: tcp}}]",
-		"duplicate":  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad yaml":   "printers: [",
-		"bad url":    "instances: [{id: h, base_url: partdb.local}]",
-		"plain http": "instances: [{id: h, base_url: http://partdb.lan}]",
-		"bad route":  "routes: [{profile: 2, printer: nope}]",
+		"no id":                      "printers: [{driver: brother-ql, transport: {kind: tcp, host: x}}]",
+		"bad driver":                 "printers: [{id: a, driver: zpl, transport: {kind: tcp, host: x}}]",
+		"no host":                    "printers: [{id: a, driver: brother-ql, transport: {kind: tcp}}]",
+		"duplicate":                  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
+		"bad yaml":                   "printers: [",
+		"bad url":                    "instances: [{id: h, base_url: partdb.local}]",
+		"plain http":                 "instances: [{id: h, base_url: http://partdb.lan}]",
+		"bad route":                  "routes: [{profile: 2, printer: nope}]",
+		"tag inbox without profile":  "tag_inbox: {enabled: true}",
+		"tag inbox polling too fast": "tag_inbox: {enabled: true, profile: 2, interval_s: 1}",
 	} {
 		if _, err := Load(write(bad), true); err == nil {
 			t.Errorf("%s: accepted", name)

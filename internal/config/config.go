@@ -19,6 +19,25 @@ type Config struct {
 	Instances []Instance `yaml:"instances,omitempty"`
 	Printers  []Printer  `yaml:"printers,omitempty"`
 	Routes    []Route    `yaml:"routes,omitempty"`
+	TagInbox  TagInbox   `yaml:"tag_inbox,omitempty"`
+}
+
+// TagInbox prints labels for parts tagged in Part-DB (read-only: the tag stays; the
+// agent remembers what it printed and prints again when the part changes).
+type TagInbox struct {
+	Enabled   bool   `yaml:"enabled"`
+	Instance  string `yaml:"instance,omitempty"` // default: the only instance
+	Tag       string `yaml:"tag,omitempty"`      // default print-label
+	Profile   int    `yaml:"profile"`            // label profile for parts
+	Printer   string `yaml:"printer,omitempty"`  // default: the profile's route
+	IntervalS int    `yaml:"interval_s,omitempty"`
+}
+
+func (t TagInbox) TagOrDefault() string {
+	if t.Tag == "" {
+		return "print-label"
+	}
+	return t.Tag
 }
 
 // Instance is a Part-DB server.
@@ -159,6 +178,18 @@ func (c *Config) Validate() error {
 		}
 		if p.Transport.Port == 0 {
 			p.Transport.Port = 9100
+		}
+	}
+	if t := c.TagInbox; t.Enabled {
+		switch {
+		case t.Profile <= 0:
+			return errors.New("tag_inbox: profile (a Part-DB label profile id) is required")
+		case t.Printer != "" && !seen[t.Printer]:
+			return errors.New("tag_inbox: printer must be a configured printer")
+		case t.Instance != "" && !ids[t.Instance]:
+			return fmt.Errorf("tag_inbox: unknown instance %q", t.Instance)
+		case t.IntervalS != 0 && t.IntervalS < 5:
+			return errors.New("tag_inbox: interval_s must be at least 5")
 		}
 	}
 	for i, r := range c.Routes {

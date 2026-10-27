@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -145,6 +146,40 @@ func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// TaggedPart is a part carrying a tag, with the time it last changed.
+type TaggedPart struct {
+	ID           int    `json:"id"`
+	LastModified string `json:"lastModified"`
+}
+
+// TaggedParts lists parts tagged tag (whole-tag match), following pagination.
+func (c *Client) TaggedParts(ctx context.Context, tag string) ([]TaggedPart, error) {
+	q := url.Values{"tags": {tag}, "itemsPerPage": {"100"}, "properties[]": {"id", "lastModified"}}
+	path := "/api/parts?" + q.Encode()
+	var out []TaggedPart
+	for page := 0; path != "" && page < 100; page++ {
+		var res struct {
+			Member      []TaggedPart `json:"hydra:member"`
+			MemberPlain []TaggedPart `json:"member"`
+			View        struct {
+				Next string `json:"hydra:next"`
+			} `json:"hydra:view"`
+			ViewPlain struct {
+				Next string `json:"next"`
+			} `json:"view"`
+		}
+		if err := c.getJSON(ctx, path, "application/ld+json", &res); err != nil {
+			return nil, err
+		}
+		out = append(append(out, res.Member...), res.MemberPlain...)
+		path = res.View.Next + res.ViewPlain.Next // a path like /api/parts?...&page=2
+		if path != "" && !strings.HasPrefix(path, "/api/") {
+			return nil, fmt.Errorf("unexpected next page %q", path)
+		}
+	}
 	return out, nil
 }
 

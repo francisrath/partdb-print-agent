@@ -40,6 +40,15 @@ printers, then drag the generated bookmarklet to your bookmarks bar. On a part o
 in Part-DB, clicking it opens a small window that prints the label. The bookmarklet signs each request
 with a per-install key, so other websites can't print through the agent without a click.
 
+### Tag inbox
+
+With `tag_inbox` enabled, `serve` polls Part-DB every 10 s for parts tagged `print-label` and
+prints each one once with the configured label profile. Tag a part on your phone, and the
+label prints at home. The agent only connects outbound, so this works through NAT. The token
+stays read-only, so the agent can't remove the tag; it remembers what it printed and prints
+again when the part changes (for example, when you re-tag it). Parts that are already tagged
+the first time the inbox runs are skipped, and at most 20 labels print per poll.
+
 Add `--dry-run job.bin` to any print command to write the printer byte stream instead.
 Printers (and optionally Part-DB instances with a `token:`) live in a YAML config:
 see `config.example.yaml`; copy it to `config.local.yaml` (gitignored) to customise.
