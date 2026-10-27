@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/zalando/go-keyring"
 )
@@ -267,5 +268,19 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	w := h.do("GET", "/printers/ql/status", nil)
 	if !strings.Contains(w.Body.String(), "no status over TCP") {
 		t.Errorf("status: %s", w.Body)
+	}
+}
+
+func TestStatusText(t *testing.T) {
+	loaded := &driver.Media{ID: "dk-11201"}
+	ready := &driver.Status{Code: driver.OK, Model: "QL-810W", Detail: "READY", Media: loaded}
+	if text, ok := statusText(ready, &config.Printer{Media: "dk-11201"}); !ok || text != "OK · QL-810W · dk-11201 loaded · READY" {
+		t.Errorf("match: %q %v", text, ok)
+	}
+	if text, ok := statusText(ready, &config.Printer{Media: "dk-22210"}); ok || !strings.Contains(text, "config expects dk-22210") {
+		t.Errorf("mismatch: %q %v", text, ok)
+	}
+	if _, ok := statusText(ready, &config.Printer{}); !ok {
+		t.Error("no configured media: any roll is fine")
 	}
 }

@@ -447,12 +447,24 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
-		text := fmt.Sprintf("%s · %s · %s", st.Code, st.Model, printing.MediaName(st.Media))
-		if st.Detail != "" {
-			text += " · " + st.Detail
-		}
-		writeJSON(w, map[string]any{"ok": st.Code == driver.OK, "text": text})
+		text, ok := statusText(st, p)
+		writeJSON(w, map[string]any{"ok": ok, "text": text})
 	}
+}
+
+// statusText summarises a printer status for the UI; ok=false also when the loaded roll
+// differs from the configured media (jobs would be refused).
+func statusText(st *driver.Status, p *config.Printer) (string, bool) {
+	text := fmt.Sprintf("%s · %s · %s loaded", st.Code, st.Model, printing.MediaName(st.Media))
+	if st.Detail != "" {
+		text += " · " + st.Detail
+	}
+	ok := st.Code == driver.OK
+	if st.Media != nil && st.Media.ID != "unknown" && p.Media != "" && st.Media.ID != p.Media {
+		text += fmt.Sprintf(" · jobs will be refused: config expects %s", p.Media)
+		ok = false
+	}
+	return text, ok
 }
 
 func jobFor(source, what, printer string, res *printing.Result, err error) Job {
