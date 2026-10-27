@@ -754,7 +754,7 @@ gantt
 
 ## 21. Draft GitHub issue for Part-DB
 
-*Updated after v0.1.0 (2026-10-27). Post only after showing the final text to the author.*
+*Posted 2026-10-27 as [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625). The text below is what was posted.*
 
 > **Title:** Proposal: an outbound "agent" channel for Part-DB – starting with direct label printing (external app works today; small opt-in API additions)
 >
