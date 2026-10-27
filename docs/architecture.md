@@ -564,6 +564,8 @@ All PRs follow the `BrowserPluginSettings` pattern: a Settings class, **default 
 | **PR3** Push transport [P3] | Mercure publishing for `PrintJob` (private, per-agent topic). Subscriber JWT issuance on heartbeat. `rel="mercure"` discovery. Docs for the FrankenPHP image (set `MERCURE_*_JWT_KEY`) and an Apache-image sidecar compose snippet. Optional capped long-poll behind a setting. | ~200–350 LOC + docs | Instant (<300 ms) delivery. |
 | **PR4** Printer hints on label profiles [P3] | A nullable JSON column `print_hints` on `LabelOptions` (free-form key/value editor in the profile form, documented as "interpreted by external print agents"). Optional `default_printer` FK on `LabelProfile` (nullable) for routing. Passed through in PrintJob and the label profile API. | ~150 LOC + migration | Per-profile printer/media/cut defaults without Part-DB knowing what they mean. |
 
+**Generic shape (2026-10-27).** Printing is the first user of the channel, not the only one, so PR2/PR3 are worded generically: an *agent* with *agent jobs* that carry a `type` (`print` first), and Mercure as a general event channel rather than a print-only push. Further job types (e.g. pick-by-light, Part-DB issues #948/#274) then need no new server API, and the same hub gives Part-DB live UI updates via Turbo Streams (`symfony/ux-turbo` is already a dependency) and NAT-friendly event subscriptions (issue #1339). See §21.
+
 **What stays out of Part-DB:** drivers, DPI, media catalogues, rasterisation, vendor names, Bluetooth/USB, discovery, installers.
 
 ---
@@ -752,34 +754,49 @@ gantt
 
 ## 21. Draft GitHub issue for Part-DB
 
-> **Title:** Proposal: optional "print agent" companion for direct label printing (external app, small opt-in API additions)
+*Updated after v0.1.0 (2026-10-27). Post only after showing the final text to the author.*
+
+> **Title:** Proposal: an outbound "agent" channel for Part-DB – starting with direct label printing (external app works today; small opt-in API additions)
 >
-> Hi @jbtronics, and thanks for Part-DB and for how open you are to outside PRs.
+> Hi @jbtronics, and thanks for Part-DB!
 >
-> Direct label printing comes up often (#489, #746, #946, discussion #1195). People currently build Tampermonkey scripts with local Python servers, separate EPL labellers, or CUPS setups. In #489 you said direct printing would need "a browser plugin or companion app". We'd like to build exactly that, **as a separate project**, and keep Part-DB's side as small as possible.
+> Direct label printing comes up regularly (#489, discussions #746, #946 and #1195). In #489 you wrote that it would need "a browser plugin or companion app". We built that companion app as a separate project, and it works with Part-DB as it is today:
 >
-> **What we're building (outside Part-DB, separate repo, MIT):**
-> A small cross-platform agent (Go, single binary; Windows/macOS/Linux/Docker) that runs near the printer. It takes the label PDF that Part-DB already generates, rasterises it at the printer's native resolution (no driver scaling, crisp QR codes even at 203 dpi), and sends it to Brother QL/PT, Zebra ZPL/EPL, TSPL, ESC/POS, DYMO, Niimbot/Phomemo (BLE) or a normal office printer (including A4 label sheets with offsets). **Part-DB's HTML/Twig → PDF stays the only template system.** We're not proposing ZPL templates or anything printer-specific inside Part-DB.
+> **[partdb-print-agent](https://github.com/francisrath/partdb-print-agent)** (MIT, Go, single binary, [v0.1.0](https://github.com/francisrath/partdb-print-agent/releases/tag/v0.1.0)) takes the label PDF that Part-DB already generates, rasterises it at the printer's native resolution (no driver scaling, crisp QR codes) and sends it straight to the printer. It uses the `POST /api/labels/generate` endpoint from #1234 (thanks @MayNiklas, who wrote that he wanted exactly this) with a **read-only** API token. Part-DB's HTML/Twig → PDF stays the only template system.
 >
-> The first version needs **no changes to Part-DB**: it uses `POST /api/labels/generate` with a read-only token (thanks to PR #1234), plus a bookmarklet/userscript or a hot folder.
+> What works today, verified on a Brother QL-810W with 29 mm continuous and 29×90 mm die-cut rolls:
+> - a local web UI, plus a signed bookmarklet: one click on a part or storage-location page prints its label;
+> - a hot folder: "Download" in the label dialog prints automatically;
+> - a CLI (`pdb-print print --profile 2 --ids 32`);
+> - printer status over SNMP: the loaded roll is checked before printing, a label whose size doesn't fit the roll is refused, and completion is confirmed;
+> - installs via `brew install --cask pdb-print` (tap `francisrath/tap`), Docker (`ghcr.io/francisrath/partdb-print-agent`) or a download for Windows, macOS and Linux.
 >
-> **What we'd like to contribute upstream (small, sequential, all default-off like the browser plugin setting):**
-> 1. **"Send to print agent" button** in the label dialog plus a setting for the agent URL. It opens the local agent via a normal navigation, so no CSP change is needed. (~200 LOC)
-> 2. **`PrintJob` API resource + agent/printer registration**, so a print clicked on any device (e.g. a phone, with Part-DB hosted remotely) can be picked up by an agent that connects *outbound* to Part-DB. This works through NAT with plain polling. The agent uses a read-only token and can only see its own jobs. Printer/media data is stored as opaque JSON, so Part-DB doesn't need to know printer brands.
-> 3. **Optional push** via Mercure (API Platform's built-in integration) for instant delivery. The FrankenPHP image already runs a hub. For the Apache image it would be an optional sidecar. Polling remains the fallback, and nothing in PHP keeps connections open.
-> 4. **Optional `print_hints` JSON field / default printer on label profiles**, passed through to the agent without Part-DB interpreting it.
+> Brother QL is the first printer family; the driver layer is built for Zebra/ZPL, TSPL, DYMO, Niimbot, Phomemo and office printers with A4 label sheets.
 >
-> We'd write the PRs with tests, docs and translations, keep each one reviewable on its own, and maintain them afterwards.
+> **The gap:** everything above needs the browser and the agent on the same network, or the PDF to pass through the user's machine. Printing from a phone, or from a hosted Part-DB to a printer at home, needs Part-DB to hand work to an agent that connects *outbound*, because Part-DB can't reach into the user's LAN. We'd like to propose a small, opt-in, vendor-neutral way to do that, written and maintained by us, in separate PRs:
+>
+> 1. **"Send to agent" button** in the label dialog, plus a setting for the agent URL. It opens the local agent with a normal navigation, so no CSP change is needed (~200 LOC). This alone replaces the bookmarklet.
+> 2. **Agent registration and an `AgentJob` API.** An agent registers with a read-only token and only ever sees its own jobs. Jobs carry a `type`, starting with `print`; printer and media data are opaque JSON, so Part-DB never needs to know printer brands. This works through NAT with plain polling.
+> 3. **Optional push via Mercure**, for instant delivery. The FrankenPHP image already runs a hub; for the Apache image it's an optional sidecar. Polling stays the fallback, and nothing in PHP holds connections open.
+> 4. **Optional `print_hints` / default printer on label profiles**, passed through without Part-DB interpreting them.
+>
+> **Why this is more than a print feature.** Printing is the first user of the channel, not the only one:
+> - **Live UI with no agent at all:** Part-DB already depends on `symfony/ux-turbo`, and Turbo Streams over the same Mercure hub could show stock and part changes live to other users (helpful in multi-user setups like #1588), and report progress for long-running tasks such as the bulk info-provider import or the update manager.
+> - **Pick-by-light** (#948, #274): lighting the bin of a storage location from an ESP32 or WLED strip hits exactly the same wall. Part-DB (hosted, or served over HTTPS) can't reliably call a device on the user's LAN, and a link from the browser runs into mixed-content and local-network restrictions. With agent jobs, Part-DB creates a `locate` job and the agent drives WLED locally, with no new server API.
+> - **Event subscriptions that work through NAT** (#1339): webhooks need Part-DB to reach the receiver, which fails for a hosted instance and a home network. A Mercure subscription is opened from the home side instead. #1339's stated goal ("print a label when I add/modify a part") is a direct example.
+> - **Later, bench hardware:** counting a lot by weight on a scale attached to the agent (Part-DB already stores part mass and supports stocktaking), or a scanner station that opens the scanned part in your browser.
+>
+> We'd keep every PR small and default-off, following the `BrowserPluginSettings` pattern (settings class, env override, HTTP 451 when disabled), with tests, docs and translations, and maintain them afterwards.
 >
 > **Questions before we write any upstream code:**
-> - Are you open to this direction in general, and to the PR split above? Would you rather stop after (1), or after (2)?
-> - For (2): should a job store the **rendered PDF** (rendered as the user who clicked, deleted after printing), or just `{profile, element ids}` and let the agent render via the existing endpoint?
-> - Is a new permission group `print` (submit / manage agents) OK? Should agent tokens be ordinary read-only API tokens restricted by a voter, or would you prefer a dedicated token scope?
-> - For (3): is adding `symfony/mercure-bundle` acceptable, or would you prefer a tiny HttpClient publisher? Is the FrankenPHP image something you want to promote here?
-> - Would you like the agent repo under the Part-DB GitHub org (we'd maintain it), or linked from the docs as a third-party tool?
-> - Any naming/UI preferences (where the button goes, settings location)?
+> - Are you open to this direction, and to the PR split above? Would you rather stop after (1) or after (2)?
+> - For (2): should a print job store the **rendered PDF** (rendered as the user who clicked, deleted after printing), or just `{profile, element ids}`, with the agent rendering through the existing endpoint?
+> - Is a generic `AgentJob` with a `type` OK, or would you prefer a print-only `PrintJob` to start with?
+> - Is a new permission group (submit jobs / manage agents) OK? Should agent tokens be ordinary read-only API tokens restricted by a voter, or a dedicated token scope?
+> - For (3): is adding `symfony/mercure-bundle` acceptable, or would you prefer a tiny HttpClient publisher? Do you want to promote the FrankenPHP image for this?
+> - Would you like the agent repo under the Part-DB GitHub organisation (we'd maintain it), or linked from the docs as a third-party tool?
 >
-> A full architecture write-up (diagrams, data model, security, roadmap) is available, and we're happy to adjust anything to fit Part-DB's conventions. Thanks!
+> A full architecture write-up (diagrams, data model, security, roadmap) is in the repo's `docs/architecture.md`. We're happy to adjust anything to fit Part-DB's conventions. Thanks!
 
 ---
 
