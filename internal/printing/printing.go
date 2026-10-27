@@ -275,11 +275,15 @@ func (s *Service) waitSNMP(ctx context.Context, p *config.Printer, timeout time.
 	const poll = 250 * time.Millisecond
 	deadline := time.Now().Add(timeout)
 	active, idle := false, 0
-	for time.Now().Before(deadline) {
+	for first := true; time.Now().Before(deadline); first = false {
+		wait := poll
+		if first {
+			wait = 0 // a short job can finish within one poll interval
+		}
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-time.After(poll):
+		case <-time.After(wait):
 		}
 		ss, err := querySNMP(ctx, p)
 		if err != nil {
