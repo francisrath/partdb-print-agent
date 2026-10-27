@@ -91,7 +91,7 @@ func newHarness(t *testing.T) *harness {
 	qlAddr, jobs := fakeQL(t)
 	qlHost, qlPort, _ := net.SplitHostPort(qlAddr)
 	port, _ := strconv.Atoi(qlPort)
-	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210",
+	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
 		Transport: config.Transport{Kind: "tcp", Host: qlHost, Port: port}}}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := &printing.Service{Log: log}

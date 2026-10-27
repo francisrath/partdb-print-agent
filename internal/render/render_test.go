@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"image"
@@ -138,5 +139,34 @@ func TestRotation(t *testing.T) {
 	}
 	if _, err := rotation("45", 1, 1, 1); err == nil {
 		t.Error("45° accepted")
+	}
+}
+
+func TestCheckSize(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	tests := []struct {
+		name          string
+		wMM, hMM      float64
+		mediaW, media float64 // media width, die-cut length (0 = continuous)
+		ok            bool
+	}{
+		{"29x46 on 29 mm", 29, 46, 29, 0, true},
+		{"50x29 rotated onto 29 mm", 50, 29, 29, 0, true},
+		{"12x16 lid label on 29 mm", 12, 16, 29, 0, false},
+		{"62 mm label on 29 mm", 62, 100, 29, 0, false},
+		{"54x17 on 17x54 die-cut", 54, 17, 17, 54, true},
+		{"29x90 label on 17x54 die-cut", 29, 90, 17, 54, false},
+		{"17x40 on 17x54 die-cut (too short)", 17, 40, 17, 54, false},
+	}
+	for _, tc := range tests {
+		_, err := r.Render(testPDF(tc.wMM, tc.hMM, "x"), Options{WidthDots: 165, LengthDots: 100,
+			MediaWidthMM: tc.mediaW, MediaLengthMM: tc.media, CheckSize: true})
+		if (err == nil) != tc.ok || (err != nil && !errors.Is(err, ErrSize)) {
+			t.Errorf("%s: %v", tc.name, err)
+		}
 	}
 }

@@ -55,6 +55,12 @@ type Printer struct {
 	Rotate    string    `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
 	Cut       string    `yaml:"cut"`    // per_label (default) | last | none
 	Threshold uint8     `yaml:"threshold"`
+	// SNMP (UDP 161) reports the loaded roll and errors; network QLs give no status on 9100.
+	SNMPCommunity string `yaml:"snmp_community,omitempty"` // default "public"
+	NoSNMP        bool   `yaml:"no_snmp,omitempty"`
+	// AllowScaling prints labels whose size doesn't match the media by scaling them,
+	// instead of refusing with MEDIA_MISMATCH.
+	AllowScaling bool `yaml:"allow_scaling,omitempty"`
 }
 
 type Transport struct {

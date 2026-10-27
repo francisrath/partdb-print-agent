@@ -64,7 +64,7 @@ func fakeQL(t *testing.T, coverOpen bool) (addr string, got chan []byte) {
 func writeConfig(t *testing.T, addr string, extra ...string) string {
 	host, port, _ := net.SplitHostPort(addr)
 	p := filepath.Join(t.TempDir(), "config.yaml")
-	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    driver: brother-ql\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n", host, port)
+	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    driver: brother-ql\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n    no_snmp: true\n", host, port)
 	if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}

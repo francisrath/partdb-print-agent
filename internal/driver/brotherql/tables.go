@@ -81,3 +81,9 @@ func Models() []string {
 	}
 	return out
 }
+
+// MediaFor maps a reported roll (kind and size in mm) to a known media.
+func MediaFor(kind driver.MediaKind, widthMM, lengthMM int) (driver.Media, bool) {
+	m, ok := mediaBySize(kind, widthMM, lengthMM)
+	return m.Media, ok
+}
