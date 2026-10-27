@@ -66,14 +66,16 @@ func Query(ctx context.Context, host, community string, timeout time.Duration) (
 	if s.Model == "" {
 		return nil, fmt.Errorf("snmp %s: no printer data (wrong community?)", host)
 	}
-	// GETNEXT walk: the QL-810W doesn't answer GETBULK
-	err = g.Walk(oidAlertCodes, func(v gosnmp.SnmpPDU) error {
+	// GETNEXT walk (the QL-810W doesn't answer GETBULK). Best effort: one lost UDP packet
+	// here mustn't discard the state from the Get above; Problem() still reports a down
+	// printer without its alert code.
+	_ = g.Walk(oidAlertCodes, func(v gosnmp.SnmpPDU) error {
 		if c := num(v); c != 0 {
 			s.Alerts = append(s.Alerts, c)
 		}
 		return nil
 	})
-	return s, err
+	return s, nil
 }
 
 func str(v gosnmp.SnmpPDU) string {

@@ -216,3 +216,29 @@ func TestReadFile(t *testing.T) {
 		t.Error("oversized file accepted")
 	}
 }
+
+// The test card's text must stay inside the label even for the widest glyphs: render it
+// and check the strip just inside the right border stays white.
+func TestTestCardTextFitsRendered(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	card := pdfgen.TestCard(29, 90, []string{"WWWWWWWWWWWWWWWWWWWW", "MMMMMMMMMMMMMMMMMMMMMMMMM"})
+	pages, err := r.Render(card, Options{WidthDots: 306, MediaWidthMM: 29})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := pages[0]
+	k := 306.0 / 29 // dots per mm
+	// columns 27.4–28.2 mm: right of any text margin, left of the border line at 28.5 mm;
+	// rows below the top ruler and above the bottom border
+	for y := int(3.5 * k); y < img.Bounds().Dy()-int(0.8*k); y++ {
+		for x := int(27.4 * k); x <= int(28.2*k); x++ {
+			if img.GrayAt(x, y).Y < 128 {
+				t.Fatalf("text reaches the border at (%d,%d)", x, y)
+			}
+		}
+	}
+}

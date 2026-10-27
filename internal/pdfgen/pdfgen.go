@@ -4,6 +4,7 @@ package pdfgen
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -83,8 +84,8 @@ func TestCard(wMM, hMM float64, lines []string) []byte {
 	size := min(max(wMM/10, 1.2), 3.2)
 	y := hMM - 3 - size
 	for _, s := range lines {
-		// shrink long lines to fit the width (Helvetica averages well under 0.6 em per glyph)
-		fs := min(size, (wMM-4.5)/(0.6*float64(max(len(s), 1))))
+		// shrink long lines to fit the width; rounded down because Tf is written with 2 decimals
+		fs := math.Floor(min(size, (wMM-4.5)/max(textWidthEm(s), 0.001))*100) / 100
 		fmt.Fprintf(&c, "BT /F1 %.2f Tf 3 %.2f Td (%s) Tj ET\n", fs, y, Text(s))
 		y -= size * 1.3
 	}
@@ -97,4 +98,27 @@ func TestCard(wMM, hMM float64, lines []string) []byte {
 		}
 	}
 	return Page(wMM, hMM, c.String())
+}
+
+// helveticaWidths are the advance widths (1/1000 em) of ASCII 32–126 in Helvetica,
+// from Adobe's Core 14 font metrics (Helvetica.afm).
+var helveticaWidths = [95]int{
+	278, 278, 355, 556, 556, 889, 667, 222, 333, 333, 389, 584, 278, 333, 278, 278,
+	556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556,
+	1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778,
+	667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556,
+	222, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556,
+	556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+}
+
+// textWidthEm is the width of s in Helvetica, in em. Text turns anything outside ASCII into '?'.
+func textWidthEm(s string) float64 {
+	w := 0
+	for _, r := range s {
+		if r < 32 || r > 126 {
+			r = '?'
+		}
+		w += helveticaWidths[r-32]
+	}
+	return float64(w) / 1000
 }
