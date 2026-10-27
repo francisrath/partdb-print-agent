@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -60,6 +62,80 @@ func (c *Client) GenerateLabels(ctx context.Context, profileID int, ids, element
 		return nil, fmt.Errorf("Part-DB did not return a PDF (Content-Type %q)", resp.Header.Get("Content-Type"))
 	}
 	return data, nil
+}
+
+// TokenInfo is GET /api/tokens/current. Level: 1 read-only, 2 edit, 3 admin, 4 full.
+type TokenInfo struct {
+	Name  string `json:"name"`
+	Level int    `json:"level"`
+	User  struct {
+		Name string `json:"name"`
+	} `json:"user"`
+	ValidUntil string `json:"valid_until"`
+}
+
+func (c *Client) TokenInfo(ctx context.Context) (*TokenInfo, error) {
+	var t TokenInfo
+	return &t, c.getJSON(ctx, "/api/tokens/current", "application/json", &t)
+}
+
+type Profile struct {
+	ID      int
+	Name    string
+	Comment string
+	Element string // part | part_lot | storelocation
+}
+
+// Profiles lists label profiles with their element type. Part-DB's plain JSON omits
+// ids and options, so this uses JSON-LD @id and the supported_element filter.
+func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
+	var out []Profile
+	for _, el := range []string{"part", "part_lot", "storelocation"} {
+		var res struct {
+			Member      []ldProfile `json:"hydra:member"`
+			MemberPlain []ldProfile `json:"member"`
+		}
+		if err := c.getJSON(ctx, "/api/label_profiles?options.supported_element="+el, "application/ld+json", &res); err != nil {
+			return nil, err
+		}
+		for _, m := range append(res.Member, res.MemberPlain...) {
+			id, err := strconv.Atoi(m.ID[strings.LastIndexByte(m.ID, '/')+1:])
+			if err != nil {
+				return nil, fmt.Errorf("unexpected profile @id %q", m.ID)
+			}
+			out = append(out, Profile{ID: id, Name: m.Name, Comment: m.Comment, Element: el})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+type ldProfile struct {
+	ID      string `json:"@id"`
+	Name    string `json:"name"`
+	Comment string `json:"comment"`
+}
+
+func (c *Client) getJSON(ctx context.Context, path, accept string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", accept)
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return apiError(resp.StatusCode, data)
+	}
+	return json.Unmarshal(data, v)
 }
 
 // apiError extracts the message from API Platform's error body (problem+json, JSON-LD or JSON).

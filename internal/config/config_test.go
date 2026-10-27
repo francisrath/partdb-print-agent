@@ -3,10 +3,15 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 func TestLoad(t *testing.T) {
+	keyring.MockInit()
 	dir := t.TempDir()
 	write := func(s string) string {
 		p := filepath.Join(dir, "c.yaml")
@@ -55,6 +60,9 @@ printers:
 	if _, err := c.Instance("nope"); err == nil {
 		t.Error("unknown instance accepted")
 	}
+	if c.Instances[0].Token != "tcp_fromfile" {
+		t.Error("Instance() leaked the env token into the config")
+	}
 
 	empty := &Config{}
 	t.Setenv("PDB_PRINT_URL", "https://env.example.org")
@@ -73,9 +81,49 @@ printers:
 		"duplicate":  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
 		"bad yaml":   "printers: [",
 		"bad url":    "instances: [{id: h, base_url: partdb.local}]",
+		"bad route":  "routes: [{profile: 2, printer: nope}]",
 	} {
 		if _, err := Load(write(bad), true); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestKeychainAndSave(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("PDB_PRINT_TOKEN", "")
+	t.Setenv("PDB_PRINT_URL", "")
+	c := &Config{
+		Instances: []Instance{{ID: "home", BaseURL: "https://partdb.example.org", PairingKey: "ab"}},
+		Printers:  []Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Transport: Transport{Kind: "tcp", Host: "h", Port: 9100}}},
+		Routes:    []Route{{Profile: 2, Printer: "ql", Name: "bag"}},
+	}
+	if _, err := c.Instance("home"); err == nil {
+		t.Error("instance without any token accepted")
+	}
+	if err := keyring.Set(KeyringService, "home", "tcp_keychain"); err != nil {
+		t.Fatal(err)
+	}
+	if in, err := c.Instance("home"); err != nil || in.Token != "tcp_keychain" {
+		t.Errorf("keychain token: %+v %v", in, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "sub", "config.yaml")
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", fi.Mode().Perm())
+	}
+	b, _ := os.ReadFile(path)
+	if strings.Contains(string(b), "tcp_") {
+		t.Errorf("token written to config:\n%s", b)
+	}
+	got, err := Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := got.Route("", 2); !ok || r.Printer != "ql" || got.Instances[0].PairingKey != "ab" {
+		t.Errorf("round trip: %+v", got)
 	}
 }
