@@ -279,15 +279,19 @@ func (a *app) print(ctx context.Context, args []string) error {
 	if _, err := t.Write(job.Bytes()); err != nil {
 		return fmt.Errorf("%w: %v", &driver.Error{Code: driver.CommsError}, err)
 	}
+	msg := "sent (unconfirmed: printer gives no status)"
 	if readback {
 		err := brotherql.WaitDone(ctx, t, len(pages), 30*time.Second+time.Duration(len(pages))*5*time.Second)
-		if errors.Is(err, driver.ErrNoReadback) {
-			a.log.Warn("no completion status received")
-		} else if err != nil {
+		switch {
+		case errors.Is(err, driver.ErrNoReadback):
+			msg = "sent (unconfirmed: no completion status received)"
+		case err != nil:
 			return err
+		default:
+			msg = "printed"
 		}
 	}
-	a.log.Info("printed", "pages", len(pages), "bytes", job.Len(), "took", time.Since(start).Round(time.Millisecond))
+	a.log.Info(msg, "pages", len(pages), "bytes", job.Len(), "took", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
