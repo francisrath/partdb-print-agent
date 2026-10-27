@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="Labelbot, the pdb-print mascot" width="160"></p>
+<p align="center"><img src="assets/icon/social-preview.png" alt="pdb-print – Labelbot, direct label printing for Part-DB" width="100%"></p>
 
 # partdb-print-agent
 
