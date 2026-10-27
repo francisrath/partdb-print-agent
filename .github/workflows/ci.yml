@@ -42,6 +42,12 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./... # 2026.2.2
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: check
       - name: cross-compile without cgo
         run: |
           for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do

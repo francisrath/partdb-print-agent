@@ -14,6 +14,28 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 - Planned: Zebra/ZPL, TSPL, ESC/POS, DYMO, Niimbot, Phomemo, normal printers and A4 label sheets;
   instant printing from any device through NAT via an optional Part-DB extension.
 
+## Install
+
+**macOS / Linux (Homebrew):**
+```sh
+brew tap francisrath/tap
+brew trust francisrath/tap      # Homebrew 7 only loads casks from trusted taps
+brew install --cask pdb-print
+```
+The macOS binary isn't signed yet; the cask clears the quarantine flag on install.
+
+**Docker** (Linux amd64/arm64):
+```sh
+docker run --rm --network host \
+  -v pdb-print:/home/nonroot/.config/pdb-print \
+  ghcr.io/francisrath/partdb-print-agent:latest
+```
+The web UI binds loopback only, so `--network host` makes it reachable at `http://127.0.0.1:8631`
+on the host. In a container there is no OS keychain: the token is kept in the config file (0600).
+
+**Anything else:** archives for macOS (universal), Linux and Windows are on the
+[releases page](https://github.com/francisrath/partdb-print-agent/releases).
+
 ## Usage (early)
 
 ```sh
