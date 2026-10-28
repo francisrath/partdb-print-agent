@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/server"
+	"github.com/francisrath/partdb-print-agent/internal/source/agentjobs"
 	"github.com/francisrath/partdb-print-agent/internal/source/hotfolder"
 )
 
@@ -290,6 +292,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 			_ = folder.Run(ctx)
 		}()
 	}
+	jobsDone := a.startAgentJobs(ctx, srv)
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
 	stopped := make(chan struct{})
 	go func() {
@@ -308,7 +311,42 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if folderDone != nil {
 		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
 	}
+	jobsDone.Wait() // same for a print job from Part-DB
 	return nil
+}
+
+// startAgentJobs fetches print jobs from every Part-DB instance that has a token (and the print agent API).
+// ponytail: instances and tokens are read once at startup; changing them in the UI needs a restart.
+func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	agentID, err := srv.EnsureAgentID()
+	if err != nil {
+		a.log.Warn("print jobs disabled: can't save the agent id", "err", err)
+		return &wg
+	}
+	name, _ := os.Hostname()
+	ids := []string{""} // only PDB_PRINT_URL/PDB_PRINT_TOKEN
+	if len(a.cfg.Instances) > 0 {
+		ids = nil
+		for _, in := range a.cfg.Instances {
+			ids = append(ids, in.ID)
+		}
+	}
+	for _, id := range ids {
+		in, err := a.cfg.Instance(id)
+		if err != nil {
+			continue // not connected yet, or no token
+		}
+		loop := &agentjobs.Loop{Client: partdb.FromInstance(in), AgentID: agentID, Name: name, Version: appVersion(),
+			Printers: srv.AgentPrinters, Log: a.log.With("instance", in.ID),
+			Print: func(ctx context.Context, job partdb.Job) (string, error) { return srv.PrintJob(ctx, in.ID, job) }}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = loop.Run(ctx)
+		}()
+	}
+	return &wg
 }
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {
