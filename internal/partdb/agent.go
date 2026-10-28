@@ -80,7 +80,10 @@ func (c *Client) ReportJob(ctx context.Context, id int, ok bool, message string)
 	if ok {
 		body.Status = "done"
 	}
-	_, err := c.agentCall(ctx, http.MethodPost, fmt.Sprintf("/jobs/%d/result", id), body, nil)
+	status, err := c.agentCall(ctx, http.MethodPost, fmt.Sprintf("/jobs/%d/result", id), body, nil)
+	if status == http.StatusConflict || status == http.StatusNotFound {
+		return nil // cancelled or removed meanwhile: there is nobody to tell, so don't retry
+	}
 	return err
 }
 
