@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	defaultPoll = 30 * time.Second
-	noAPIRetry  = time.Hour // Part-DB without the agent API: check again later (it may be upgraded)
+	defaultPoll  = 30 * time.Second
+	minPoll      = 5 * time.Second
+	maxPoll      = 10 * time.Minute
+	noAPIRetry   = time.Hour       // Part-DB without the agent API: check again later (it may be upgraded)
+	printTimeout = 2 * time.Minute // a claimed job finishes even during shutdown, like the HTTP server's prints
 )
 
 type Loop struct {
@@ -27,6 +30,13 @@ type Loop struct {
 	Log   *slog.Logger
 
 	noAPILogged bool
+	unreported  []report // results Part-DB didn't accept yet; retried every round
+}
+
+type report struct {
+	id      int
+	ok      bool
+	message string
 }
 
 // Run polls until ctx is done.
@@ -63,8 +73,9 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 	}
 	wait := defaultPoll
 	if poll > 0 {
-		wait = time.Duration(poll) * time.Second
+		wait = min(max(time.Duration(poll)*time.Second, minPoll), maxPoll)
 	}
+	l.retryReports(ctx)
 
 	jobs, err := l.Client.PendingJobs(ctx, l.AgentID)
 	if err != nil {
@@ -89,9 +100,13 @@ func (l *Loop) handle(ctx context.Context, job partdb.Job) {
 		}
 		return
 	}
+	// From here on the job is ours: finish it even if we're shutting down, or a printed label would be
+	// reported as failed and might get printed again.
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), printTimeout)
+	defer cancel()
 	var result string
 	if job.Type == "print" {
-		result, err = l.Print(ctx, job)
+		result, err = l.Print(pctx, job)
 	} else {
 		err = fmt.Errorf("unsupported job type %q", job.Type)
 	}
@@ -101,10 +116,22 @@ func (l *Loop) handle(ctx context.Context, job partdb.Job) {
 	} else {
 		l.Log.Info("print job done", "job", job.ID, "result", result)
 	}
-	// Report even when shutting down, so a printed job doesn't stay "claimed".
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	if rerr := l.Client.ReportJob(rctx, job.ID, err == nil, result); rerr != nil {
-		l.Log.Warn("print jobs: reporting the result failed", "job", job.ID, "err", rerr)
+	l.unreported = append(l.unreported, report{job.ID, err == nil, result})
+	l.retryReports(pctx) // report even when shutting down, so a printed job doesn't stay "claimed"
+}
+
+// retryReports sends the results Part-DB hasn't accepted yet and keeps the ones that fail again.
+// ponytail: kept in memory only; after a restart Part-DB shows such a job as "unknown".
+func (l *Loop) retryReports(ctx context.Context) {
+	var failed []report
+	for _, r := range l.unreported {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		err := l.Client.ReportJob(rctx, r.id, r.ok, r.message)
+		cancel()
+		if err != nil {
+			l.Log.Warn("print jobs: reporting the result failed, will retry", "job", r.id, "err", err)
+			failed = append(failed, r)
+		}
 	}
+	l.unreported = failed
 }

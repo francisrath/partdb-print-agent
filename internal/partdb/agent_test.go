@@ -29,6 +29,8 @@ func TestAgentAPI(t *testing.T) {
 			w.WriteHeader(http.StatusConflict)
 		case "/en/agent-api/v1/jobs/7/result":
 			w.WriteHeader(http.StatusNoContent)
+		case "/en/agent-api/v1/jobs/8/result":
+			w.WriteHeader(http.StatusConflict) // cancelled meanwhile
 		default:
 			http.NotFound(w, r)
 		}
@@ -61,6 +63,10 @@ func TestAgentAPI(t *testing.T) {
 	}
 	if want := `POST /en/agent-api/v1/jobs/7/result {"status":"failed","message":"cover open"}`; got[len(got)-1] != want {
 		t.Errorf("report body:\n got %s\nwant %s", got[len(got)-1], want)
+	}
+
+	if err := c.ReportJob(ctx, 8, true, ""); err != nil {
+		t.Errorf("a job Part-DB no longer expects a result for is not an error to retry: %v", err)
 	}
 
 	if _, err := c.Heartbeat(ctx, "unknown", Heartbeat{}); !errors.Is(err, ErrNoAgentAPI) {
