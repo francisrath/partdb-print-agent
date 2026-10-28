@@ -21,6 +21,8 @@ type Config struct {
 	Printers  []Printer  `yaml:"printers,omitempty"`
 	Routes    []Route    `yaml:"routes,omitempty"`
 	HotFolder HotFolder  `yaml:"hot_folder,omitempty"`
+	// AgentID identifies this agent to Part-DB's print job API (a random UUID, generated once).
+	AgentID string `yaml:"agent_id,omitempty"`
 }
 
 // HotFolder prints label PDFs that land in a folder (Part-DB downloads label_*.pdf).
