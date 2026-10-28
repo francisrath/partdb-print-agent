@@ -629,7 +629,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 				var res *printing.Result
 				res, err = s.Svc.Print(r.Context(), p, "", printing.PDF(pdf))
 				v.Result = resultText(res)
-				s.record(jobFor("bookmarklet", v.What, p.ID, res, err))
+				s.record(jobFor("browser", v.What, p.ID, res, err))
 			}
 		}
 	}
