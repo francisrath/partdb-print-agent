@@ -224,8 +224,12 @@ func TestSetupRouteAndHandoff(t *testing.T) {
 			v[k] = vv
 		}
 		mod(v)
-		if body := h.do("GET", "/v1/handoff?"+v.Encode(), nil).Body.String(); !strings.Contains(body, "Print this label?") {
+		body := h.do("GET", "/v1/handoff?"+v.Encode(), nil).Body.String()
+		if !strings.Contains(body, "Print this label?") {
 			t.Errorf("%s: expected a confirm page:\n%s", name, body)
+		}
+		if name != "expired" && !strings.Contains(body, "Part-DB") {
+			t.Errorf("%s: the reason should cover Part-DB's print button too:\n%s", name, body)
 		}
 	}
 	if body := h.do("GET", "/v1/handoff?"+strings.Replace(q.Encode(), "127.0.0.1", "evil.example", 1), nil).Body.String(); !strings.Contains(body, "not a configured Part-DB instance") {
@@ -380,7 +384,10 @@ func TestConnectLinkAndLongIDs(t *testing.T) {
 		t.Fatalf("300 ids:\n%s", body)
 	}
 	<-h.jobs
-	if body := handoff(strings.Repeat("1,", 5000) + "1"); !strings.Contains(body, "Invalid element ids.") {
-		t.Errorf("10 kB of ids accepted:\n%s", body)
+	if body := handoff(strings.Repeat("1,", 5000) + "1"); !strings.Contains(body, "Too many labels for one request") {
+		t.Errorf("10 kB of ids:\n%s", body)
+	}
+	if body := handoff("3,,5"); !strings.Contains(body, "Invalid element ids.") {
+		t.Errorf("malformed ids:\n%s", body)
 	}
 }
