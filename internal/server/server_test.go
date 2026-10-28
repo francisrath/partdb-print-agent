@@ -384,6 +384,9 @@ func TestConnectLinkAndLongIDs(t *testing.T) {
 		t.Fatalf("300 ids:\n%s", body)
 	}
 	<-h.jobs
+	if src := h.srv.jobs[0].Source; src != "browser" { // bookmarklet or Part-DB's print button
+		t.Errorf("job source %q", src)
+	}
 	if body := handoff(strings.Repeat("1,", 5000) + "1"); !strings.Contains(body, "Too many labels for one request") {
 		t.Errorf("10 kB of ids:\n%s", body)
 	}
