@@ -28,6 +28,8 @@
       {{with .Token}}Token “{{.Name}}” of user {{.User.Name}} – {{levelName .Level}}{{end}}
       {{with .TokenErr}}<span class="err">{{.}}</span>{{end}}
     </p>
+    {{with .ConnectURL}}<p><a href="{{.}}" target="_blank" rel="noopener">Connect Part-DB's print button to this agent</a>
+    <span class="muted">(needs a Part-DB version with the print agent page)</span></p>{{end}}
     {{if .FromEnv}}<p class="muted">Connected through PDB_PRINT_URL / PDB_PRINT_TOKEN from the environment.
     Save below (with the token) to store it in the OS keychain and enable bookmarklets.</p>{{end}}
   {{else}}
