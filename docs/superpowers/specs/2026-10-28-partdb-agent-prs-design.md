@@ -82,16 +82,17 @@ The dialog's Print uses the dialog's current profile and ids; an unsaved custom 
 - `AgentJob`: id, agent, printer (string id), type (`print`), payload (JSON:
   `profile_id`, `element_type`, `element_ids`), status (`pending`, `claimed`, `done`,
   `failed`, `cancelled`), message, created_by (User), created_at, updated_at.
-- `LabelProfile`: optional `default_agent` (FK, SET NULL) + `default_printer` (string).
+- `LabelProfile`: optional `default_printer` (string, a printer id as reported by agents). Each user's own
+  agent reporting that id is used, so one shared profile works for every user's printer.
 
-**Agent API** (`ApiResource` + processors, read-only token suffices):
+**Agent API** (plain JSON controller under `/agent-api/v1`, like the KiCad API; read-only token suffices):
 
-- `POST /api/agent/heartbeat` `{uuid, name, version, printers}` → upserts the `Agent`
+- `POST /agent-api/v1/agents/{uuid}/heartbeat` `{name, version, printers}` → upserts the `Agent`
   (owner = the token's user, uuid); returns `{agent_id, poll_seconds}` (PR 3 adds `mercure`).
-- `GET /api/agent/jobs` → this agent's `pending` jobs.
-- `POST /api/agent/jobs/{id}/claim` → atomic `pending`→`claimed` (conditional UPDATE),
+- `GET /agent-api/v1/agents/{uuid}/jobs` → this agent's `pending` jobs.
+- `POST /agent-api/v1/jobs/{id}/claim` → atomic `pending`→`claimed` (conditional UPDATE),
   409 if not pending.
-- `POST /api/agent/jobs/{id}/result` `{status: done|failed, message}`.
+- `POST /agent-api/v1/jobs/{id}/result` `{status: done|failed, message}`.
 
 An agent only ever sees its own jobs, and only its owner can send jobs to it, so the
 labels the agent fetches with the owner's token never show the sender more than they
@@ -103,8 +104,8 @@ Printer ids in the heartbeat are the agent's own printer ids. A `claimed` job wi
 as "unknown" in the UI; it is never re-queued automatically. Finished jobs older than 30
 days are pruned on insert.
 
-**Permissions:** new group `print_agents`: `use` (register your agents and send jobs to
-them; apiTokenRole READ_ONLY), `manage` (see and delete everyone's agents).
+**Permissions:** none new. Registering an agent and sending it jobs needs `@labels.create_labels`
+(apiTokenRole READ_ONLY), which avoids a permission schema upgrade. Agents are only visible to their owner.
 
 **UI:**
 
