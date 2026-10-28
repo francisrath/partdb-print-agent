@@ -231,6 +231,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	if in != nil {
 		data["Instance"] = in
+		if in.PairingKey != "" {
+			// Part-DB's print button setup (docs/usage/labels.md there); the fragment never reaches Part-DB's server
+			data["ConnectURL"] = strings.TrimSuffix(in.BaseURL, "/") + "/label/agent#url=" + url.QueryEscape("http://"+s.Addr) + "&key=" + in.PairingKey
+		}
 		if full, err := cfg.Instance(in.ID); err != nil {
 			data["TokenErr"] = err.Error()
 		} else {
@@ -592,7 +596,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 	case typ != "part" && typ != "part_lot" && typ != "storelocation":
 		v.Err = "Unsupported element type."
 		return
-	case !idsRe.MatchString(ids) || len(ids) > 200:
+	case !idsRe.MatchString(ids) || len(ids) > 8192: // Part-DB's bulk print lists every id
 		v.Err = "Invalid element ids."
 		return
 	case perr != nil:

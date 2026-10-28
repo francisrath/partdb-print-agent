@@ -349,3 +349,38 @@ func TestPrintFileRecordsJob(t *testing.T) {
 		t.Errorf("history: %+v", h.srv.jobs)
 	}
 }
+
+func TestConnectLinkAndLongIDs(t *testing.T) {
+	h := newHarness(t)
+	if page := h.do("GET", "/", nil).Body.String(); strings.Contains(page, "/label/agent#") {
+		t.Fatal("connect link without a Part-DB instance")
+	}
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	h.post("/routes", url.Values{"profile": {"2"}, "printer": {"ql"}})
+	key := h.srv.config().Instances[0].PairingKey
+
+	page := h.do("GET", "/", nil).Body.String()
+	want := `href="` + h.partdb.URL + `/label/agent#url=http%3a%2f%2f127.0.0.1%3a8631&amp;key=` + key + `"`
+	if !strings.Contains(strings.ToLower(page), strings.ToLower(want)) {
+		t.Fatalf("no connect link %s on page:\n%s", want, page)
+	}
+
+	// bulk prints from Part-DB's table action list every id: 300 parts must fit
+	var ids []string
+	for i := 1; i <= 300; i++ {
+		ids = append(ids, strconv.Itoa(i))
+	}
+	handoff := func(ids string) string {
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		q := url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {ids}, "profile": {"2"}, "ts": {ts}}
+		q.Set("sig", sign(key, canonical(h.partdb.URL, "part", ids, "2", ts)))
+		return h.do("GET", "/v1/handoff?"+q.Encode(), nil).Body.String()
+	}
+	if body := handoff(strings.Join(ids, ",")); !strings.Contains(body, "Printed ✓") {
+		t.Fatalf("300 ids:\n%s", body)
+	}
+	<-h.jobs
+	if body := handoff(strings.Repeat("1,", 5000) + "1"); !strings.Contains(body, "Invalid element ids.") {
+		t.Errorf("10 kB of ids accepted:\n%s", body)
+	}
+}
