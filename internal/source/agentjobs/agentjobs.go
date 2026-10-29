@@ -53,7 +53,8 @@ func (l *Loop) Run(ctx context.Context) error {
 
 // tick does one round and returns how long to wait before the next one.
 func (l *Loop) tick(ctx context.Context) time.Duration {
-	poll, err := l.Client.Heartbeat(ctx, l.AgentID, partdb.Heartbeat{Name: l.Name, Version: l.Version, Printers: l.Printers()})
+	reply, err := l.Client.Heartbeat(ctx, l.AgentID, partdb.Heartbeat{Name: l.Name, Version: l.Version, Printers: l.Printers()})
+	poll := reply.PollSeconds
 	switch {
 	case errors.Is(err, partdb.ErrNoAgentAPI):
 		if !l.noAPILogged {
