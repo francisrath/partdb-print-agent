@@ -282,3 +282,18 @@ func TestPushStopsOnCancel(t *testing.T) {
 	cancel()
 	waitFor(t, "Run to return", done)
 }
+
+func TestPushFailureIsWarnedOnce(t *testing.T) {
+	f := &fakePartDB{jobs: "[]", push: make(chan string), hubStatus: http.StatusUnauthorized}
+	l := newLoop(t, f, nil)
+	var logs strings.Builder
+	l.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	ended := make(chan bool, 1)
+	for range 3 {
+		l.subscribe(context.Background(), partdb.Mercure{Hub: f.url + "/.well-known/mercure", Topic: "urn:part-db:agent:1:jobs", Token: "t"}, nil, ended)
+		<-ended
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 {
+		t.Errorf("%d warnings for a hub that keeps rejecting us, want 1:\n%s", n, logs.String())
+	}
+}
