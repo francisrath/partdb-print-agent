@@ -67,3 +67,20 @@ func TestSubscribeRefusesPlainHTTPHub(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestSubscribeGivesUpOnASilentStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // a dead connection: not even the hub's keep-alive comments arrive
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tcp_x")
+	c.sseIdle = 200 * time.Millisecond
+
+	start := time.Now()
+	err := c.Subscribe(context.Background(), hubOffer(srv.URL), func() {})
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("err %v after %v", err, time.Since(start))
+	}
+}

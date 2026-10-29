@@ -24,6 +24,8 @@ type Client struct {
 	Token     string // API token; Read-Only is enough for labels
 	AllowHTTP bool   // permit plain http to a non-loopback host (token sent unencrypted)
 	HTTP      *http.Client
+
+	sseIdle time.Duration // Subscribe gives up after this long without data (default sseIdleTimeout)
 }
 
 func New(baseURL, token string) *Client {

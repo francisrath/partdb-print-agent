@@ -32,6 +32,7 @@ type Loop struct {
 	noAPILogged bool
 	unreported  []report        // results Part-DB didn't accept yet; retried every round
 	offer       *partdb.Mercure // push subscription from the last heartbeat, nil without push
+	pushFailing bool            // the last subscription failed; logged once until one works again
 
 	minSubscription time.Duration // a subscription ending sooner counts as failed (tests shorten it; default minPoll)
 }
@@ -92,10 +93,18 @@ func (l *Loop) subscribe(ctx context.Context, m partdb.Mercure, wake chan<- stru
 		minLife = minPoll
 	}
 	ok := time.Since(start) >= minLife
-	if ctx.Err() == nil && (err != nil || !ok) {
-		l.Log.Warn("print jobs: Mercure subscription failed; polling until the next try", "err", err)
+	ok = ok && err == nil
+	switch {
+	case ctx.Err() != nil:
+	case !ok && !l.pushFailing:
+		l.Log.Warn("print jobs: Mercure subscription failed; polling until it works again", "err", err)
+		l.pushFailing = true
+	case !ok:
+		l.Log.Debug("print jobs: Mercure subscription failed again", "err", err)
+	default:
+		l.pushFailing = false
 	}
-	ended <- ok && err == nil
+	ended <- ok
 }
 
 // tick does one round and returns how long to wait before the next one.
