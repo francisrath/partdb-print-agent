@@ -30,6 +30,8 @@ type fakePartDB struct {
 	push       chan string // each value is sent as one event; close it to end the stream
 	hubStatus  int         // answer subscriptions with this status instead (e.g. 401)
 	heartbeats int
+	lists      int
+	pending    *int // "pending" in the heartbeat answer; nil leaves it out like an older Part-DB
 	subscribes int
 	subscribed chan struct{} // receives once per subscription that got a stream
 }
@@ -55,8 +57,12 @@ func (f *fakePartDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.push != nil {
 			mercure = fmt.Sprintf(`, "mercure": {"hub": %q, "topic": "urn:part-db:agent:1:jobs", "token": "t"}`, f.url+"/.well-known/mercure")
 		}
+		if f.pending != nil {
+			mercure += fmt.Sprintf(`, "pending": %d`, *f.pending)
+		}
 		_, _ = fmt.Fprintf(w, `{"agent_id": 1, "poll_seconds": %d%s}`, poll, mercure)
 	case strings.HasSuffix(r.URL.Path, "/jobs"):
+		f.lists++
 		_, _ = io.WriteString(w, f.jobs)
 	case strings.HasSuffix(r.URL.Path, "/9/claim"):
 		w.WriteHeader(http.StatusConflict)
@@ -295,5 +301,38 @@ func TestPushFailureIsWarnedOnce(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "level=WARN"); n != 1 {
 		t.Errorf("%d warnings for a hub that keeps rejecting us, want 1:\n%s", n, logs.String())
+	}
+}
+
+func TestListsJobsOnlyWhenSomeArePending(t *testing.T) {
+	none, two := 0, 2
+	f := &fakePartDB{jobs: "[]", pending: &none}
+	l := newLoop(t, f, nil)
+	l.tick(context.Background())
+	if f.lists != 0 {
+		t.Errorf("listed jobs although Part-DB reported none pending")
+	}
+	f.pending = &two
+	l.tick(context.Background())
+	if f.lists != 1 {
+		t.Errorf("%d lists, want 1 when jobs are pending", f.lists)
+	}
+}
+
+func TestPollWait(t *testing.T) {
+	for _, c := range []struct {
+		poll int
+		live bool
+		want time.Duration
+	}{
+		{30, false, 30 * time.Second},
+		{30, true, 60 * time.Second}, // push works: check in less often, still within Part-DB's two-minute online window
+		{90, true, 90 * time.Second},
+		{1, false, 5 * time.Second},
+		{86400, true, 10 * time.Minute},
+	} {
+		if got := pollWait(c.poll, c.live); got != c.want {
+			t.Errorf("pollWait(%d, %v) = %v, want %v", c.poll, c.live, got, c.want)
+		}
 	}
 }

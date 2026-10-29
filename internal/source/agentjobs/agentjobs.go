@@ -16,6 +16,7 @@ const (
 	defaultPoll  = 30 * time.Second
 	minPoll      = 5 * time.Second
 	maxPoll      = 10 * time.Minute
+	livePoll     = time.Minute     // while push works, heartbeats only keep us shown online (Part-DB: 2 minutes)
 	noAPIRetry   = time.Hour       // Part-DB without the agent API: check again later (it may be upgraded)
 	printTimeout = 2 * time.Minute // a claimed job finishes even during shutdown, like the HTTP server's prints
 )
@@ -33,6 +34,7 @@ type Loop struct {
 	unreported  []report        // results Part-DB didn't accept yet; retried every round
 	offer       *partdb.Mercure // push subscription from the last heartbeat, nil without push
 	pushFailing bool            // the last subscription failed; logged once until one works again
+	live        bool            // a push subscription is running (set by Run before each round)
 
 	minSubscription time.Duration // a subscription ending sooner counts as failed (tests shorten it; default minPoll)
 }
@@ -50,6 +52,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	ended := make(chan bool, 1)    // the subscription ended; true if it lasted long enough to count as working
 	subscribed := false
 	for {
+		l.live = subscribed
 		wait := l.tick(ctx)
 		if l.offer != nil && !subscribed && ctx.Err() == nil {
 			subscribed = true
@@ -78,6 +81,19 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// pollWait is how long to wait before the next round: Part-DB's interval within limits, and at least
+// livePoll while a push subscription runs.
+func pollWait(pollSeconds int, live bool) time.Duration {
+	wait := defaultPoll
+	if pollSeconds > 0 {
+		wait = min(max(time.Duration(pollSeconds)*time.Second, minPoll), maxPoll)
+	}
+	if live {
+		wait = max(wait, livePoll)
+	}
+	return wait
 }
 
 func (l *Loop) subscribe(ctx context.Context, m partdb.Mercure, wake chan<- struct{}, ended chan<- bool) {
@@ -129,11 +145,11 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		l.Log.Info("Part-DB print agent API available; fetching print jobs")
 		l.noAPILogged = false
 	}
-	wait := defaultPoll
-	if poll > 0 {
-		wait = min(max(time.Duration(poll)*time.Second, minPoll), maxPoll)
-	}
+	wait := pollWait(poll, l.live)
 	l.retryReports(ctx)
+	if reply.Pending != nil && *reply.Pending == 0 {
+		return wait
+	}
 
 	jobs, err := l.Client.PendingJobs(ctx, l.AgentID)
 	if err != nil {
