@@ -24,9 +24,21 @@ type fakePartDB struct {
 	noAPI   bool
 	poll    int // poll_seconds in the heartbeat answer (default 7)
 	failRes int // fail this many result reports with 500
+
+	// Mercure hub at /.well-known/mercure, offered in the heartbeat when push is set
+	url        string
+	push       chan string // each value is sent as one event; close it to end the stream
+	hubStatus  int         // answer subscriptions with this status instead (e.g. 401)
+	heartbeats int
+	subscribes int
+	subscribed chan struct{} // receives once per subscription that got a stream
 }
 
 func (f *fakePartDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/.well-known/mercure" {
+		f.serveHub(w, r)
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	body, _ := io.ReadAll(r.Body)
@@ -34,11 +46,16 @@ func (f *fakePartDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case f.noAPI:
 		http.NotFound(w, r)
 	case strings.HasSuffix(r.URL.Path, "/heartbeat"):
+		f.heartbeats++
 		poll := f.poll
 		if poll == 0 {
 			poll = 7
 		}
-		_, _ = fmt.Fprintf(w, `{"agent_id": 1, "poll_seconds": %d}`, poll)
+		mercure := ""
+		if f.push != nil {
+			mercure = fmt.Sprintf(`, "mercure": {"hub": %q, "topic": "urn:part-db:agent:1:jobs", "token": "t"}`, f.url+"/.well-known/mercure")
+		}
+		_, _ = fmt.Fprintf(w, `{"agent_id": 1, "poll_seconds": %d%s}`, poll, mercure)
 	case strings.HasSuffix(r.URL.Path, "/jobs"):
 		_, _ = io.WriteString(w, f.jobs)
 	case strings.HasSuffix(r.URL.Path, "/9/claim"):
@@ -54,8 +71,45 @@ func (f *fakePartDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (f *fakePartDB) serveHub(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.subscribes++
+	status, push := f.hubStatus, f.push
+	f.mu.Unlock()
+	if r.URL.Query().Get("match") != "urn:part-db:agent:1:jobs" || r.Header.Get("Authorization") != "Bearer t" {
+		status = http.StatusBadRequest
+	}
+	if status != 0 {
+		w.WriteHeader(status)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.(http.Flusher).Flush()
+	f.subscribed <- struct{}{}
+	for {
+		select {
+		case data, ok := <-push:
+			if !ok {
+				return
+			}
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (f *fakePartDB) count() (heartbeats, subscribes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heartbeats, f.subscribes
+}
+
 func newLoop(t *testing.T, f *fakePartDB, print func(context.Context, partdb.Job) (string, error)) *Loop {
 	srv := httptest.NewServer(f)
+	f.url = srv.URL
+	f.subscribed = make(chan struct{}, 10)
 	t.Cleanup(srv.Close)
 	return &Loop{
 		Client: partdb.New(srv.URL, "tcp_x"), AgentID: "u-1", Name: "pc", Version: "test",
@@ -158,4 +212,73 @@ func TestPollIntervalIsClamped(t *testing.T) {
 			t.Errorf("poll_seconds %d: wait %v, want %v", poll, got, want)
 		}
 	}
+}
+
+// runLoop runs l until the test ends.
+func runLoop(t *testing.T, l *Loop) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = l.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+}
+
+func waitFor(t *testing.T, what string, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func TestPushWakesLoop(t *testing.T) {
+	f := &fakePartDB{jobs: "[]", push: make(chan string)}
+	printed := make(chan struct{}, 1)
+	l := newLoop(t, f, func(context.Context, partdb.Job) (string, error) { printed <- struct{}{}; return "ok", nil })
+	runLoop(t, l)
+	waitFor(t, "subscription", f.subscribed)
+
+	f.mu.Lock()
+	f.jobs = jobs(j(7, "print"))
+	f.mu.Unlock()
+	f.push <- `{"job_id":7}`
+	waitFor(t, "the pushed job to print (poll is 7 s)", printed)
+}
+
+func TestPushReconnectRelists(t *testing.T) {
+	f := &fakePartDB{jobs: "[]", push: make(chan string)}
+	l := newLoop(t, f, nil)
+	l.minSubscription = 50 * time.Millisecond
+	runLoop(t, l)
+	waitFor(t, "subscription", f.subscribed)
+	time.Sleep(100 * time.Millisecond)
+
+	f.mu.Lock()
+	close(f.push) // token expired: the hub ends the stream
+	f.push = make(chan string)
+	f.mu.Unlock()
+	waitFor(t, "a new subscription", f.subscribed)
+	if hb, _ := f.count(); hb < 2 {
+		t.Errorf("%d heartbeats: the loop must fetch a fresh token and re-list jobs after the stream ends", hb)
+	}
+}
+
+func TestPushHubRejectsFallsBackToPolling(t *testing.T) {
+	f := &fakePartDB{jobs: "[]", push: make(chan string), hubStatus: http.StatusUnauthorized}
+	runLoop(t, newLoop(t, f, nil))
+	time.Sleep(1500 * time.Millisecond)
+	if hb, subs := f.count(); hb > 2 || subs > 1 {
+		t.Errorf("%d heartbeats, %d subscribe attempts in 1.5 s: a rejecting hub must not cause a tight loop", hb, subs)
+	}
+}
+
+func TestPushStopsOnCancel(t *testing.T) {
+	f := &fakePartDB{jobs: "[]", push: make(chan string)}
+	l := newLoop(t, f, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = l.Run(ctx); close(done) }()
+	waitFor(t, "subscription", f.subscribed)
+	cancel()
+	waitFor(t, "Run to return", done)
 }

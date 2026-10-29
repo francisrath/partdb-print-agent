@@ -30,7 +30,10 @@ type Loop struct {
 	Log   *slog.Logger
 
 	noAPILogged bool
-	unreported  []report // results Part-DB didn't accept yet; retried every round
+	unreported  []report        // results Part-DB didn't accept yet; retried every round
+	offer       *partdb.Mercure // push subscription from the last heartbeat, nil without push
+
+	minSubscription time.Duration // a subscription ending sooner counts as failed (tests shorten it; default minPoll)
 }
 
 type report struct {
@@ -39,22 +42,67 @@ type report struct {
 	message string
 }
 
-// Run polls until ctx is done.
+// Run polls until ctx is done. If Part-DB offers a Mercure subscription, an event starts a round right away;
+// polling continues as the fallback.
 func (l *Loop) Run(ctx context.Context) error {
+	wake := make(chan struct{}, 1) // events; a burst collapses into one round
+	ended := make(chan bool, 1)    // the subscription ended; true if it lasted long enough to count as working
+	subscribed := false
 	for {
 		wait := l.tick(ctx)
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(wait):
+		if l.offer != nil && !subscribed && ctx.Err() == nil {
+			subscribed = true
+			go l.subscribe(ctx, *l.offer, wake, ended)
+		}
+		timer := time.NewTimer(wait)
+	waiting:
+		for {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+				break waiting
+			case <-wake:
+				timer.Stop()
+				break waiting
+			case ok := <-ended:
+				subscribed = false
+				if ok {
+					// usually the token expired: fetch a new one and list the jobs we may have missed
+					timer.Stop()
+					break waiting
+				}
+				// the hub rejects us or is down: try again with the next regular poll, not in a tight loop
+			}
 		}
 	}
+}
+
+func (l *Loop) subscribe(ctx context.Context, m partdb.Mercure, wake chan<- struct{}, ended chan<- bool) {
+	start := time.Now()
+	err := l.Client.Subscribe(ctx, m, func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	})
+	minLife := l.minSubscription
+	if minLife == 0 {
+		minLife = minPoll
+	}
+	ok := time.Since(start) >= minLife
+	if ctx.Err() == nil && (err != nil || !ok) {
+		l.Log.Warn("print jobs: Mercure subscription failed; polling until the next try", "err", err)
+	}
+	ended <- ok && err == nil
 }
 
 // tick does one round and returns how long to wait before the next one.
 func (l *Loop) tick(ctx context.Context) time.Duration {
 	reply, err := l.Client.Heartbeat(ctx, l.AgentID, partdb.Heartbeat{Name: l.Name, Version: l.Version, Printers: l.Printers()})
 	poll := reply.PollSeconds
+	l.offer = reply.Mercure
 	switch {
 	case errors.Is(err, partdb.ErrNoAgentAPI):
 		if !l.noAPILogged {
