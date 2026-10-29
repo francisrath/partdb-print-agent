@@ -38,9 +38,9 @@ func TestAgentAPI(t *testing.T) {
 	defer srv.Close()
 	c, ctx := New(srv.URL, "tcp_x"), context.Background()
 
-	poll, err := c.Heartbeat(ctx, "u-1", Heartbeat{Name: "pc", Version: "1.0", Printers: []AgentPrinter{{ID: "ql", Name: "QL", Media: "dk-22210"}}})
-	if err != nil || poll != 15 {
-		t.Fatalf("heartbeat: %d %v", poll, err)
+	reply, err := c.Heartbeat(ctx, "u-1", Heartbeat{Name: "pc", Version: "1.0", Printers: []AgentPrinter{{ID: "ql", Name: "QL", Media: "dk-22210"}}})
+	if err != nil || reply.PollSeconds != 15 || reply.Mercure != nil {
+		t.Fatalf("heartbeat: %+v %v", reply, err)
 	}
 	var hb map[string]any
 	if err := json.Unmarshal([]byte(got[0][len("POST /en/agent-api/v1/agents/u-1/heartbeat "):]), &hb); err != nil || hb["printers"].([]any)[0].(map[string]any)["media"] != "dk-22210" {
@@ -71,5 +71,18 @@ func TestAgentAPI(t *testing.T) {
 
 	if _, err := c.Heartbeat(ctx, "unknown", Heartbeat{}); !errors.Is(err, ErrNoAgentAPI) {
 		t.Errorf("Part-DB without the agent API: %v", err)
+	}
+}
+
+func TestHeartbeatMercureOffer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"agent_id": 3, "poll_seconds": 30, "mercure": {"hub": "https://pdb.test/.well-known/mercure", "topic": "urn:part-db:agent:3:jobs", "token": "t"}}`)
+	}))
+	defer srv.Close()
+
+	reply, err := New(srv.URL, "tcp_x").Heartbeat(context.Background(), "u-1", Heartbeat{})
+	want := Mercure{Hub: "https://pdb.test/.well-known/mercure", Topic: "urn:part-db:agent:3:jobs", Token: "t"}
+	if err != nil || reply.Mercure == nil || *reply.Mercure != want {
+		t.Fatalf("got %+v %v", reply.Mercure, err)
 	}
 }

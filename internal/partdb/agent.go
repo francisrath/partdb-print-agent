@@ -43,16 +43,20 @@ type Job struct {
 	} `json:"payload"`
 }
 
+// HeartbeatReply is Part-DB's answer to a heartbeat.
+type HeartbeatReply struct {
+	PollSeconds int      `json:"poll_seconds"`
+	Mercure     *Mercure `json:"mercure"` // nil unless Part-DB pushes jobs through a Mercure hub
+}
+
 // Heartbeat registers or updates this agent and returns how often to poll.
-func (c *Client) Heartbeat(ctx context.Context, uuid string, hb Heartbeat) (pollSeconds int, err error) {
-	var res struct {
-		PollSeconds int `json:"poll_seconds"`
-	}
+func (c *Client) Heartbeat(ctx context.Context, uuid string, hb Heartbeat) (HeartbeatReply, error) {
+	var res HeartbeatReply
 	status, err := c.agentCall(ctx, http.MethodPost, "/agents/"+url.PathEscape(uuid)+"/heartbeat", hb, &res)
 	if status == http.StatusNotFound {
-		return 0, ErrNoAgentAPI
+		return HeartbeatReply{}, ErrNoAgentAPI
 	}
-	return res.PollSeconds, err
+	return res, err
 }
 
 // PendingJobs lists this agent's pending jobs, oldest first.
