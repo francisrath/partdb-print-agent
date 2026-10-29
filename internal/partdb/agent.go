@@ -46,6 +46,7 @@ type Job struct {
 // HeartbeatReply is Part-DB's answer to a heartbeat.
 type HeartbeatReply struct {
 	PollSeconds int      `json:"poll_seconds"`
+	Pending     *int     `json:"pending"` // number of pending jobs; nil from a Part-DB that doesn't report it
 	Mercure     *Mercure `json:"mercure"` // nil unless Part-DB pushes jobs through a Mercure hub
 }
 

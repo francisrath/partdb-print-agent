@@ -39,7 +39,7 @@ func TestAgentAPI(t *testing.T) {
 	c, ctx := New(srv.URL, "tcp_x"), context.Background()
 
 	reply, err := c.Heartbeat(ctx, "u-1", Heartbeat{Name: "pc", Version: "1.0", Printers: []AgentPrinter{{ID: "ql", Name: "QL", Media: "dk-22210"}}})
-	if err != nil || reply.PollSeconds != 15 || reply.Mercure != nil {
+	if err != nil || reply.PollSeconds != 15 || reply.Mercure != nil || reply.Pending != nil {
 		t.Fatalf("heartbeat: %+v %v", reply, err)
 	}
 	var hb map[string]any
@@ -76,13 +76,13 @@ func TestAgentAPI(t *testing.T) {
 
 func TestHeartbeatMercureOffer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"agent_id": 3, "poll_seconds": 30, "mercure": {"hub": "https://pdb.test/.well-known/mercure", "topic": "urn:part-db:agent:3:jobs", "token": "t"}}`)
+		_, _ = io.WriteString(w, `{"agent_id": 3, "poll_seconds": 30, "pending": 2, "mercure": {"hub": "https://pdb.test/.well-known/mercure", "topic": "urn:part-db:agent:3:jobs", "token": "t"}}`)
 	}))
 	defer srv.Close()
 
 	reply, err := New(srv.URL, "tcp_x").Heartbeat(context.Background(), "u-1", Heartbeat{})
 	want := Mercure{Hub: "https://pdb.test/.well-known/mercure", Topic: "urn:part-db:agent:3:jobs", Token: "t"}
-	if err != nil || reply.Mercure == nil || *reply.Mercure != want {
+	if err != nil || reply.Mercure == nil || *reply.Mercure != want || reply.Pending == nil || *reply.Pending != 2 {
 		t.Fatalf("got %+v %v", reply.Mercure, err)
 	}
 }
