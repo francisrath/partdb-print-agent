@@ -71,6 +71,7 @@ A proposed Part-DB change adds a Print button and printer icons to Part-DB itsel
 With a Part-DB that has the proposed print job API, `serve` also fetches print jobs from Part-DB: it reports
 its printers every 30 s, and Part-DB's Print buttons (from any device, also a phone) send jobs to them. Nothing
 to set up beyond the API token; the agent identifies itself with a random `agent_id` saved in the config.
+If Part-DB has a Mercure hub set up, jobs arrive within a second; otherwise they wait for the next 30 s poll.
 With an older Part-DB this stays off.
 
 Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll, errors
