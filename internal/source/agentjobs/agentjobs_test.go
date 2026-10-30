@@ -278,6 +278,31 @@ func TestPushHubRejectsFallsBackToPolling(t *testing.T) {
 	}
 }
 
+func TestPushFailingDuringLiveWaitPollsAtRegularInterval(t *testing.T) {
+	t.Parallel() // waits for real: one regular round (5 s) to get into the 1-minute live wait, then one more
+	f := &fakePartDB{jobs: "[]", push: make(chan string), poll: 5}
+	l := newLoop(t, f, nil)
+	l.minSubscription = time.Hour // any end of the stream counts as failed
+	runLoop(t, l)
+	waitFor(t, "subscription", f.subscribed)
+	deadline := time.Now().Add(6 * time.Second)
+	for hb, _ := f.count(); hb < 2; hb, _ = f.count() {
+		if time.Now().After(deadline) {
+			t.Fatal("no second heartbeat")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	f.mu.Lock()
+	close(f.push) // the hub goes away while we wait a whole minute
+	f.push = make(chan string)
+	f.mu.Unlock()
+	time.Sleep(5500 * time.Millisecond)
+	if hb, _ := f.count(); hb < 3 {
+		t.Errorf("%d heartbeats: after push fails, polling must return to the regular 5 s, not finish the 1-minute wait", hb)
+	}
+}
+
 func TestPushStopsOnCancel(t *testing.T) {
 	f := &fakePartDB{jobs: "[]", push: make(chan string)}
 	l := newLoop(t, f, nil)

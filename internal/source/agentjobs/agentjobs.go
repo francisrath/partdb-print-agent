@@ -35,6 +35,7 @@ type Loop struct {
 	offer       *partdb.Mercure // push subscription from the last heartbeat, nil without push
 	pushFailing bool            // the last subscription failed; logged once until one works again
 	live        bool            // a push subscription is running (set by Run before each round)
+	pollSeconds int             // Part-DB's poll interval from the last heartbeat
 
 	minSubscription time.Duration // a subscription ending sooner counts as failed (tests shorten it; default minPoll)
 }
@@ -77,7 +78,9 @@ func (l *Loop) Run(ctx context.Context) error {
 					timer.Stop()
 					break waiting
 				}
-				// the hub rejects us or is down: try again with the next regular poll, not in a tight loop
+				// the hub rejects us or is down: try again with the next regular poll, not in a tight loop,
+				// and don't sit out the longer wait we chose while push worked
+				timer.Reset(pollWait(l.pollSeconds, false))
 			}
 		}
 	}
@@ -127,6 +130,7 @@ func (l *Loop) subscribe(ctx context.Context, m partdb.Mercure, wake chan<- stru
 func (l *Loop) tick(ctx context.Context) time.Duration {
 	reply, err := l.Client.Heartbeat(ctx, l.AgentID, partdb.Heartbeat{Name: l.Name, Version: l.Version, Printers: l.Printers()})
 	poll := reply.PollSeconds
+	l.pollSeconds = poll
 	l.offer = reply.Mercure
 	switch {
 	case errors.Is(err, partdb.ErrNoAgentAPI):
