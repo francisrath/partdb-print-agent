@@ -84,6 +84,9 @@ The dialog's Print uses the dialog's current profile and ids; an unsaved custom 
   `failed`, `cancelled`), message, created_by (User), created_at, updated_at.
 - `LabelProfile`: optional `default_printer` (string, a printer id as reported by agents). Each user's own
   agent reporting that id is used, so one shared profile works for every user's printer.
+  Trade-off: if two of one user's agents report the same printer id, the first one wins, so
+  printer ids should be unique among one user's agents. Naming the agent as well would break the
+  shared profile across users.
 
 **Agent API** (plain JSON controller under `/agent-api/v1`, like the KiCad API; read-only token suffices):
 

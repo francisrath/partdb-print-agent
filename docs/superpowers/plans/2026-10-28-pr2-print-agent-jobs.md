@@ -53,7 +53,7 @@
 **Files:** Create `src/Controller/AgentApiController.php`. Test: `tests/Controller/AgentApiControllerTest.php`.
 
 **Interfaces:**
-- `POST /agent-api/v1/agents/{uuid}/heartbeat` body `{name, version, printers: [{id, name, ...}]}` → 200 `{"agent_id": int, "poll_seconds": 30}`. Creates or updates the `Agent` for (token user, uuid); stores `printers` as given (each must be an object with string `id` ≤ 255 and optional string `name`; ≤ 50 printers; else 400). `uuid` must match `^[0-9a-fA-F-]{8,36}$`.
+- `POST /agent-api/v1/agents/{uuid}/heartbeat` body `{name, version, printers: [{id, name, ...}]}` → 200 `{"agent_id": int, "poll_seconds": 30}`. Creates or updates the `Agent` for (token user, uuid); stores `printers` as given (each must be an object with string `id` ≤ 255 and optional string `name` ≤ 255; ≤ 50 printers; `name` and `version` ≤ 255; request body ≤ 64 KiB; else 400). `uuid` must match `^[0-9a-fA-F-]{8,36}$`.
 - `GET /agent-api/v1/agents/{uuid}/jobs` → 200 `[{id, type, printer, payload, created_at}]` pending jobs of that agent, oldest first, max 20. Also updates `lastSeenAt`.
 - `POST /agent-api/v1/jobs/{id}/claim` → 200 job JSON / 409 / 404.
 - `POST /agent-api/v1/jobs/{id}/result` body `{status: "done"|"failed", message?: string ≤ 2000}` → 204; only from `claimed`, else 409.
@@ -106,7 +106,7 @@
 **Interfaces:**
 - `partdb.Client`: `Heartbeat(ctx, uuid string, hb Heartbeat) (pollSeconds int, err error)`; `PendingJobs(ctx, uuid) ([]Job, error)`; `ClaimJob(ctx, id int) (bool, error)` (false on 409); `ReportJob(ctx, id int, ok bool, message string) error`. `ErrNoAgentAPI` when the heartbeat returns 404. Types `Heartbeat{Name, Version string; Printers []AgentPrinter}`, `AgentPrinter{ID, Name, Model, Media string}`, `Job{ID int; Type, Printer string; Payload struct{ProfileID int "profile_id"; ElementType string "element_type"; ElementIDs string "element_ids"}}`.
 - `agentjobs.Loop{Client, AgentID, Name, Version, Printers func() []partdb.AgentPrinter, Print func(ctx, printerID string, profile int, ids, typ string) (string, error), Log}` with `Run(ctx) error`: heartbeat → list → for each job: claim; if claimed, print, report `done` with the result text or `failed` with the error; sleep `poll` seconds. `ErrNoAgentAPI` → log once at info, retry hourly. Unknown job type → `failed` "unsupported job type".
-- `server.(*Server).PrintLabels(ctx, instanceID, printerID string, profile int, ids, typ, source string) (string, error)` used by both handoff and the loop; records the job in the UI history (source `"Part-DB job"`).
+- `server.(*Server).PrintJob(ctx, instanceID string, job partdb.Job) (string, error)` for the loop, sharing the fetch-and-print code with the handoff; each records the job in the UI history with its own source: `"Part-DB job"` for the loop, `"browser"` for handoffs (as before).
 
 - [ ] **Step 1:** Tests: partdb client against an httptest Part-DB (paths, auth header, JSON, 404 → ErrNoAgentAPI, 409 → false); loop against a fake Part-DB with one job → claim, print func called with the payload, result `done` posted; print error → `failed` with message; a job claimed elsewhere (409) → not printed; no agent API → no prints and no crash. Run → FAIL.
 - [ ] **Step 2:** Implement; wire in `serve` for every instance with a token. Run `go test ./...`, vet, staticcheck → PASS. Commit `feat: fetch print jobs from Part-DB`.
