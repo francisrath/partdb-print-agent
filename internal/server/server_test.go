@@ -224,8 +224,12 @@ func TestSetupRouteAndHandoff(t *testing.T) {
 			v[k] = vv
 		}
 		mod(v)
-		if body := h.do("GET", "/v1/handoff?"+v.Encode(), nil).Body.String(); !strings.Contains(body, "Print this label?") {
+		body := h.do("GET", "/v1/handoff?"+v.Encode(), nil).Body.String()
+		if !strings.Contains(body, "Print this label?") {
 			t.Errorf("%s: expected a confirm page:\n%s", name, body)
+		}
+		if name != "expired" && !strings.Contains(body, "Part-DB") {
+			t.Errorf("%s: the reason should cover Part-DB's print button too:\n%s", name, body)
 		}
 	}
 	if body := h.do("GET", "/v1/handoff?"+strings.Replace(q.Encode(), "127.0.0.1", "evil.example", 1), nil).Body.String(); !strings.Contains(body, "not a configured Part-DB instance") {
@@ -347,5 +351,46 @@ func TestPrintFileRecordsJob(t *testing.T) {
 	}
 	if len(h.srv.jobs) != 2 || h.srv.jobs[1].Source != "hot folder" || h.srv.jobs[1].What != "sample-29x46.pdf" || h.srv.jobs[0].Err == "" {
 		t.Errorf("history: %+v", h.srv.jobs)
+	}
+}
+
+func TestConnectLinkAndLongIDs(t *testing.T) {
+	h := newHarness(t)
+	if page := h.do("GET", "/", nil).Body.String(); strings.Contains(page, "/label/agent#") {
+		t.Fatal("connect link without a Part-DB instance")
+	}
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	h.post("/routes", url.Values{"profile": {"2"}, "printer": {"ql"}})
+	key := h.srv.config().Instances[0].PairingKey
+
+	page := h.do("GET", "/", nil).Body.String()
+	want := `href="` + h.partdb.URL + `/label/agent#url=http%3a%2f%2f127.0.0.1%3a8631&amp;key=` + key + `"`
+	if !strings.Contains(strings.ToLower(page), strings.ToLower(want)) {
+		t.Fatalf("no connect link %s on page:\n%s", want, page)
+	}
+
+	// bulk prints from Part-DB's table action list every id: 300 parts must fit
+	var ids []string
+	for i := 1; i <= 300; i++ {
+		ids = append(ids, strconv.Itoa(i))
+	}
+	handoff := func(ids string) string {
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		q := url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {ids}, "profile": {"2"}, "ts": {ts}}
+		q.Set("sig", sign(key, canonical(h.partdb.URL, "part", ids, "2", ts)))
+		return h.do("GET", "/v1/handoff?"+q.Encode(), nil).Body.String()
+	}
+	if body := handoff(strings.Join(ids, ",")); !strings.Contains(body, "Printed ✓") {
+		t.Fatalf("300 ids:\n%s", body)
+	}
+	<-h.jobs
+	if src := h.srv.jobs[0].Source; src != "browser" { // bookmarklet or Part-DB's print button
+		t.Errorf("job source %q", src)
+	}
+	if body := handoff(strings.Repeat("1,", 5000) + "1"); !strings.Contains(body, "Too many labels for one request") {
+		t.Errorf("10 kB of ids:\n%s", body)
+	}
+	if body := handoff("3,,5"); !strings.Contains(body, "Invalid element ids.") {
+		t.Errorf("malformed ids:\n%s", body)
 	}
 }

@@ -231,6 +231,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	if in != nil {
 		data["Instance"] = in
+		if in.PairingKey != "" {
+			// Part-DB's print button setup (docs/usage/labels.md there); the fragment never reaches Part-DB's server
+			data["ConnectURL"] = strings.TrimSuffix(in.BaseURL, "/") + "/label/agent#url=" + url.QueryEscape("http://"+s.Addr) + "&key=" + in.PairingKey
+		}
 		if full, err := cfg.Instance(in.ID); err != nil {
 			data["TokenErr"] = err.Error()
 		} else {
@@ -592,7 +596,10 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 	case typ != "part" && typ != "part_lot" && typ != "storelocation":
 		v.Err = "Unsupported element type."
 		return
-	case !idsRe.MatchString(ids) || len(ids) > 200:
+	case len(ids) > 8192: // Part-DB's bulk print lists every id
+		v.Err = "Too many labels for one request: print them in smaller batches."
+		return
+	case !idsRe.MatchString(ids):
 		v.Err = "Invalid element ids."
 		return
 	case perr != nil:
@@ -622,7 +629,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 				var res *printing.Result
 				res, err = s.Svc.Print(r.Context(), p, "", printing.PDF(pdf))
 				v.Result = resultText(res)
-				s.record(jobFor("bookmarklet", v.What, p.ID, res, err))
+				s.record(jobFor("browser", v.What, p.ID, res, err))
 			}
 		}
 	}
@@ -636,10 +643,10 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 // checkSignature returns why a GET handoff may not print without a click ("" = ok).
 func (s *Server) checkSignature(key, msg, ts, sig string) string {
 	if sig == "" || key == "" {
-		return "This request is not signed by your bookmarklet."
+		return "This request is not signed by your bookmarklet or Part-DB print button."
 	}
 	if !hmac.Equal([]byte(sign(key, msg)), []byte(strings.ToLower(sig))) {
-		return "The signature doesn't match (old bookmarklet after a key rotation?)."
+		return "The signature doesn't match: after a key rotation, drag the bookmarklets again or reconnect Part-DB's print button."
 	}
 	t, err := strconv.ParseInt(ts, 10, 64)
 	if err != nil || time.Since(time.Unix(t, 0)).Abs() > handoffWindow {

@@ -18,7 +18,9 @@ working brief for the **MVP**.
   but keep the driver/transport interfaces general enough for them (see architecture §7).
 - Part-DB token: **read-only** API token (enough for `POST /api/labels/generate`).
 - No Part-DB changes needed for the MVP. v0.1.0 released 2026-10-27; upstream proposal posted as
-  [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) – wait for the maintainer's answers before writing upstream code.
+  [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) – no answer yet, so (2026-10-28) we build three alternative draft PRs locally (Print button → local agent; server-side
+  agent jobs; Mercure push) plus the matching agent side; see `docs/superpowers/specs/2026-10-28-partdb-agent-prs-design.md`.
+  Nothing is pushed or posted upstream without the user's go-ahead.
 - Tag inbox (print parts tagged `print-label`) was **dropped** (2026-10-27, closed PR #5): tagging a part just to
   print it was too much hassle. Desktop printing works with a remote Part-DB too (bookmarklet; the agent fetches
   outbound); only printing from a phone to an agent at home waits for the upstream button + PrintJob API.
