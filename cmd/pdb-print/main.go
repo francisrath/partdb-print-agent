@@ -324,6 +324,10 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 		a.log.Warn("print jobs disabled: can't save the agent id", "err", err)
 		return &wg
 	}
+	if len(a.cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == "" {
+		a.log.Info("not fetching print jobs", "reason", "no Part-DB connected")
+		return &wg
+	}
 	name, _ := os.Hostname()
 	ids := []string{""} // only PDB_PRINT_URL/PDB_PRINT_TOKEN
 	if len(a.cfg.Instances) > 0 {
@@ -334,9 +338,11 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 	}
 	for _, id := range ids {
 		in, err := a.cfg.Instance(id)
-		if err != nil {
-			continue // not connected yet, or no token
+		if err != nil { // not connected yet, or no token
+			a.log.Info("not fetching print jobs", "instance", id, "reason", err)
+			continue
 		}
+		a.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
 		loop := &agentjobs.Loop{Client: partdb.FromInstance(in), AgentID: agentID, Name: name, Version: appVersion(),
 			Printers: srv.AgentPrinters, Log: a.log.With("instance", in.ID),
 			Print: func(ctx context.Context, job partdb.Job) (string, error) { return srv.PrintJob(ctx, in.ID, job) }}
