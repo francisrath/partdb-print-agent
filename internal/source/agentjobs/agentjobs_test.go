@@ -160,13 +160,14 @@ func TestPrintsClaimedJobsAndReportsResults(t *testing.T) {
 	}
 }
 
-func TestWithoutAgentAPIWaitsLong(t *testing.T) {
+func TestWithoutAgentAPIChecksAgainWithinMinutes(t *testing.T) {
 	l := newLoop(t, &fakePartDB{noAPI: true}, func(context.Context, partdb.Job) (string, error) {
 		t.Error("printed without an agent API")
 		return "", nil
 	})
-	if wait := l.tick(context.Background()); wait != time.Hour {
-		t.Errorf("wait %v", wait)
+	// A 404 may also come from a reverse proxy while Part-DB restarts, so don't wait long.
+	if wait := l.tick(context.Background()); wait < time.Minute || wait > 5*time.Minute {
+		t.Errorf("wait %v, want 1-5 minutes", wait)
 	}
 }
 

@@ -17,7 +17,7 @@ const (
 	minPoll      = 5 * time.Second
 	maxPoll      = 10 * time.Minute
 	livePoll     = time.Minute     // while push works, heartbeats only keep us shown online (Part-DB: 2 minutes)
-	noAPIRetry   = time.Hour       // Part-DB without the agent API: check again later (it may be upgraded)
+	noAPIRetry   = 5 * time.Minute // a 404: Part-DB without the agent API, or a proxy while Part-DB restarts
 	printTimeout = 2 * time.Minute // a claimed job finishes even during shutdown, like the HTTP server's prints
 )
 
@@ -135,7 +135,7 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 	switch {
 	case errors.Is(err, partdb.ErrNoAgentAPI):
 		if !l.noAPILogged {
-			l.Log.Info("Part-DB has no print agent API; not fetching print jobs", "retry", noAPIRetry)
+			l.Log.Info("Part-DB has no print agent API (or is restarting); checking again later", "retry", noAPIRetry)
 			l.noAPILogged = true
 		}
 		return noAPIRetry
