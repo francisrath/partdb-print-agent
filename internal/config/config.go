@@ -9,8 +9,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/zalando/go-keyring"
 	"go.yaml.in/yaml/v3"
 )
@@ -76,7 +78,7 @@ const KeyringService = "pdb-print"
 type Printer struct {
 	ID        string    `yaml:"id"`
 	Name      string    `yaml:"name"`
-	Driver    string    `yaml:"driver"` // brother-ql | brother-pt
+	Driver    string    `yaml:"driver"` // driver family (brother); old names brother-ql / brother-pt stay valid
 	Model     string    `yaml:"model"`  // QL-810W | PT-9500PC
 	Transport Transport `yaml:"transport"`
 	Media     string    `yaml:"media"`  // dk-22210, tze-24; empty = use what the printer reports
@@ -186,20 +188,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("printer %q defined twice", p.ID)
 		}
 		seen[p.ID] = true
-		switch p.Driver {
-		case "brother-ql":
-			if p.Transport.Kind != "tcp" || p.Transport.Host == "" {
-				return fmt.Errorf("printer %q: brother-ql needs transport kind tcp with a host", p.ID)
-			}
-			if p.Transport.Port == 0 {
-				p.Transport.Port = 9100
-			}
-		case "brother-pt":
-			if p.Transport.Kind != "usb" || p.Transport.Device == "" {
-				return fmt.Errorf("printer %q: brother-pt needs transport kind usb with a device (e.g. /dev/usb/lp0)", p.ID)
-			}
-		default:
-			return fmt.Errorf("printer %q: unsupported driver %q (brother-ql or brother-pt)", p.ID, p.Driver)
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("printer %q: %w", p.ID, err)
 		}
 	}
 	if c.HotFolder.Enabled && !seen[c.HotFolder.Printer] {
@@ -304,4 +294,51 @@ func (c *Config) Printer(id string) (*Printer, error) {
 		}
 	}
 	return nil, fmt.Errorf("no printer %q in config", id)
+}
+
+// oldDrivers are the driver names configs used before the device database; they stay valid
+// (and are kept when saving) so older binaries can read the file. Value: the dialect.
+var oldDrivers = map[string]string{"brother-ql": "ql", "brother-pt": "pt-cbp"}
+
+// DeviceModel returns the printer's device-database model.
+func (p *Printer) DeviceModel() (*devicedb.Model, error) {
+	m, ok := devicedb.Default().Model(p.Model)
+	if !ok {
+		return nil, fmt.Errorf("unknown model %q (see `pdb-print media`)", p.Model)
+	}
+	family, dialect := p.Driver, ""
+	if d, old := oldDrivers[p.Driver]; old {
+		family, dialect = "brother", d
+	}
+	if m.Driver != family || (dialect != "" && m.Dialect != dialect) {
+		return nil, fmt.Errorf("model %s isn't a %s printer", p.Model, p.Driver)
+	}
+	return m, nil
+}
+
+func (p *Printer) validate() error {
+	m, err := p.DeviceModel()
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(m.Transports, p.Transport.Kind) {
+		return fmt.Errorf("%s connects over %s, not transport kind %q", m.ID, strings.Join(m.Transports, " or "), p.Transport.Kind)
+	}
+	if p.Media != "" && !slices.Contains(m.Media, p.Media) {
+		return fmt.Errorf("media %s doesn't fit %s (see `pdb-print media`)", p.Media, m.ID)
+	}
+	switch p.Transport.Kind {
+	case "tcp":
+		if p.Transport.Host == "" {
+			return errors.New("transport kind tcp needs a host")
+		}
+		if p.Transport.Port == 0 {
+			p.Transport.Port = 9100
+		}
+	case "usb":
+		if p.Transport.Device == "" {
+			return errors.New("transport kind usb needs a device (e.g. /dev/usb/lp0)")
+		}
+	}
+	return nil
 }

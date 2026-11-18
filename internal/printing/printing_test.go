@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 )
 
@@ -314,7 +314,7 @@ func blackCols(img *image.Gray, y int) int {
 // (512 dots) and the unprintable 4.5 mm edges are trimmed, so 18 mm stay 18 mm.
 func TestPTRendersAtTapeWidth(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	pages, err := s.Render(pdfgen.Page(36, 20, "0 g 9 0 18 20 re f"), ptPrinter("tze-36", ""), &m)
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +332,7 @@ func TestPTRendersAtTapeWidth(t *testing.T) {
 
 func TestPTWarnsWhenEdgeInked(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	if _, err := s.Render(pdfgen.Page(36, 20, "0 g 0 0 36 20 re f"), ptPrinter("tze-36", ""), &m); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestPTWarnsWhenEdgeInked(t *testing.T) {
 
 func TestPTTestCardFitsPrintArea(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	pdf, err := TestCard("PT-9500PC", "test")(&m)
 	if err != nil {
 		t.Fatal(err)

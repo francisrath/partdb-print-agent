@@ -22,9 +22,8 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
@@ -128,14 +127,16 @@ func run(ctx context.Context, args []string) error {
 	case "printers":
 		return a.printers(ctx, rest)
 	case "media":
-		ql, _ := brotherql.New().Capabilities("QL-810W")
-		pt, _ := brotherpt.New().Capabilities("PT-9500PC")
-		for _, d := range []struct {
-			id    string
-			media []driver.Media
-		}{{"brother-ql", ql.Media}, {"brother-pt", pt.Media}} {
-			for _, m := range d.media {
-				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", d.id, m.ID, m.Name, m.PrintableWidthDots, m.PrintableLengthDots)
+		db := devicedb.Default()
+		for _, f := range driver.Families() {
+			seen := map[string]bool{}
+			for _, m := range db.Models(f) {
+				for _, md := range db.MediaFor(m) {
+					if !seen[md.ID] {
+						seen[md.ID] = true
+						fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", m.Dialect, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
+					}
+				}
 			}
 		}
 		return nil

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +30,8 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/assets"
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
@@ -216,10 +217,12 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config()
 	data := map[string]any{
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
-		"Printers": cfg.Printers, "Models": brotherql.Models(),
+		"Printers": cfg.Printers, "Models": formModels(),
 	}
-	caps, _ := brotherql.New().Capabilities(brotherql.Models()[0])
-	data["Media"] = caps.Media
+	if ms := formModels(); len(ms) > 0 {
+		m, _ := devicedb.Default().Model(ms[0])
+		data["Media"] = devicedb.Default().MediaFor(m)
+	}
 
 	var in *config.Instance
 	if len(cfg.Instances) > 0 {
@@ -345,10 +348,10 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, old.Driver)
 			}
 		}
-		if _, err := brotherql.New().Capabilities(p.Model); err != nil {
-			return err
+		if !slices.Contains(formModels(), p.Model) {
+			return fmt.Errorf("unknown Brother QL model %s", p.Model)
 		}
-		if _, ok := brotherql.LookupMedia(p.Media); p.Media != "" && !ok {
+		if _, ok := printing.LookupMedia(&p, p.Media); p.Media != "" && !ok {
 			return fmt.Errorf("unknown media %q", p.Media)
 		}
 		for i := range c.Printers {
@@ -587,6 +590,9 @@ func resultText(res *printing.Result) string {
 	if !res.Confirmed {
 		s += ", sent (unconfirmed)"
 	}
+	if len(res.Warnings) > 0 {
+		s += "; warning: " + strings.Join(res.Warnings, "; ")
+	}
 	return s
 }
 
@@ -728,4 +734,16 @@ func sameOrigin(a, b string) bool {
 	ua, err1 := url.Parse(a)
 	ub, err2 := url.Parse(b)
 	return err1 == nil && err2 == nil && ua.Scheme != "" && ua.Scheme == ub.Scheme && strings.EqualFold(ua.Host, ub.Host)
+}
+
+// formModels are the models the web form can set up: network Brother QLs. Other printers
+// are configured in the config file until the setup wizard.
+func formModels() []string {
+	var out []string
+	for _, m := range devicedb.Default().Models("brother") {
+		if slices.Contains(m.Transports, "tcp") {
+			out = append(out, m.ID)
+		}
+	}
+	return out
 }

@@ -470,3 +470,11 @@ func TestPTStatusWithoutReplyIsNotOK(t *testing.T) {
 		t.Errorf("silent PT: %s", body)
 	}
 }
+
+func TestResultTextCarriesWarnings(t *testing.T) {
+	got := resultText(&printing.Result{Pages: 1, Media: "tze-36", Confirmed: true,
+		Warnings: []string{"label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"}})
+	if want := "1 page(s) on tze-36; warning: label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"; got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}

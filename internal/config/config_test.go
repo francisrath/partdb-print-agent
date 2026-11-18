@@ -208,3 +208,43 @@ func TestHotFolderPath(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateModelDriver(t *testing.T) {
+	write := func(y string) string {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(p, []byte(y), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	ok := map[string]string{
+		"old QL name": "printers: [{id: a, driver: brother-ql, model: QL-810W, transport: {kind: tcp, host: x}}]",
+		"old PT name": "printers: [{id: a, driver: brother-pt, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}}]",
+		"family name": "printers: [{id: a, driver: brother, model: QL-820NWB, transport: {kind: tcp, host: x}, media: dk-11204}]",
+		"pt media":    "printers: [{id: a, driver: brother, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}, media: tze-24}]",
+	}
+	for name, y := range ok {
+		if _, err := Load(write(y), true); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	bad := map[string][]string{
+		"printers: [{id: a, driver: brother-pt, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0}}]": {"brother-pt", "QL-810W"},
+		"printers: [{id: a, driver: brother, model: QL-9000, transport: {kind: tcp, host: x}}]":                 {"QL-9000"},
+		"printers: [{id: a, driver: brother, model: PT-9500PC, transport: {kind: tcp, host: x}}]":               {"PT-9500PC", "tcp"},
+		"printers: [{id: a, driver: brother, model: QL-810W, transport: {kind: tcp, host: x}, media: tze-24}]":  {"tze-24", "QL-810W"},
+		"printers: [{id: a, driver: zpl, model: QL-810W, transport: {kind: tcp, host: x}}]":                     {"zpl"},
+	}
+	for y, want := range bad {
+		_, err := Load(write(y), true)
+		if err == nil {
+			t.Errorf("accepted: %s", y)
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: error %q doesn't name %q", y, err, w)
+			}
+		}
+	}
+}
