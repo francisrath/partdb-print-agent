@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
@@ -235,20 +236,31 @@ var (
 var serialKeys = map[string]bool{"SN": true, "SER": true, "SERN": true, "SERIAL": true, "SERIALNUMBER": true}
 
 // JSON renders the report; unless raw, IPv4/IPv6 addresses (host-N, the same token for the
-// same address), MAC addresses, serial numbers and this computer's name are masked. Serial
+// same address), MAC addresses, serial numbers (all but the last 4 characters of long ones)
+// and this computer's name are masked. Serial
 // fields are masked whatever their length; inside free text (replies) a serial is replaced
 // as a whole word from 3 characters on – shorter values would hit unrelated text.
 func (r *Report) JSON(raw bool) ([]byte, error) {
 	if raw {
 		return json.MarshalIndent(r, "", "  ")
 	}
-	tokens := map[string]string{} // serial → serial-N
+	// serial → its mask: long serials keep their last 4 characters (the part that differs
+	// between units, so the same printer is recognisable across reports without revealing
+	// the serial); short ones, and a second serial ending alike, become serial-N
+	tokens := map[string]string{}
+	used := map[string]bool{}
 	token := func(v string) string {
 		if v == "" {
 			return ""
 		}
 		if tokens[v] == "" {
-			tokens[v] = fmt.Sprintf("serial-%d", len(tokens)+1)
+			t := fmt.Sprintf("serial-%d", len(tokens)+1)
+			if len(v) >= 8 {
+				if tail := strings.Repeat("x", len(v)-4) + v[len(v)-4:]; !used[tail] {
+					t = tail
+				}
+			}
+			tokens[v], used[t] = t, true
 		}
 		return tokens[v]
 	}

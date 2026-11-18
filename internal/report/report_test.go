@@ -147,7 +147,7 @@ func TestRedactShortSerialFields(t *testing.T) {
 	if c := back.Candidates[0]; c.Serial == "Q" || c.IEEE1284["SN"] == "AB" {
 		t.Errorf("short serial fields not masked: %+v", c)
 	}
-	if q := back.Queries[0]; q.Reply != "ABC took 1 ms, sn serial-3" || q.TookMS != 1 {
+	if q := back.Queries[0]; q.Reply != "ABC took 1 ms, sn xxxx2Z9X" || q.TookMS != 1 {
 		t.Errorf("free text: %+v", q)
 	}
 }
@@ -167,5 +167,24 @@ func TestRedactNumericSerial(t *testing.T) {
 	}
 	if back.Candidates[1].Port != 9100 || back.Candidates[0].Serial == "9100" || back.Queries[0].Reply != "serial serial-1" {
 		t.Errorf("%+v %+v", back.Candidates, back.Queries)
+	}
+}
+
+// Long serials keep their last 4 characters (recognisable across reports, not revealing);
+// short ones become serial-N; two serials ending alike stay distinguishable.
+func TestRedactSerialKeepsLast4(t *testing.T) {
+	r := &Report{Candidates: []discovery.Candidate{
+		{Kind: "usb", Device: "/dev/usb/lp0", Serial: "D7G751568"},
+		{Kind: "usb", Device: "/dev/usb/lp1", Serial: "Q8X221568"},
+		{Kind: "usb", Device: "/dev/usb/lp2", Serial: "AB12"},
+	}, Queries: []Query{{Target: "x", Name: "q", Reply: "sn D7G751568"}}}
+	b, _ := r.JSON(false)
+	var back Report
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	got := []string{back.Candidates[0].Serial, back.Candidates[1].Serial, back.Candidates[2].Serial}
+	if got[0] != "xxxxx1568" || got[1] == got[0] || strings.Contains(got[1], "Q8X2") || got[2] != "serial-3" || back.Queries[0].Reply != "sn xxxxx1568" {
+		t.Errorf("serials %q, reply %q", got, back.Queries[0].Reply)
 	}
 }
