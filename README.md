@@ -52,7 +52,7 @@ bin/pdb-print print --profile 2 --ids 32 --printer ql810      # fetch from Part-
 bin/pdb-print print --profile 2 --ids 32,112-125 --type part --printer ql810
 bin/pdb-print print label.pdf --printer ql810                 # local PDF
 bin/pdb-print render label.pdf --printer ql810 -o /tmp        # PNG preview at head dots
-bin/pdb-print media                                           # known Brother QL media
+bin/pdb-print media                                           # known Brother QL media and PT tapes
 ```
 ### Web UI and bookmarklet
 
@@ -79,6 +79,18 @@ Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll
 refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
 label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead).
 
+### Brother P-touch PT-9500PC (USB, Linux)
+
+`driver: brother-pt` drives a PT-9500PC tape printer over USB through Linux's `usblp` driver
+(`/dev/usb/lp0`; add the user to group `lp`). It reads the loaded tape and errors before each job,
+sends a batch label by label and waits for each to be printed. By default a batch on laminated tape gets
+half cuts between labels and one full cut at the end. See `config.example.yaml`.
+
+On a Raspberry Pi: use the `linux_armv6` release on 32-bit Raspberry Pi OS (Pi 1, Zero, Pi 2 v1.1) or
+`linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve` from a systemd
+unit with the API token in an `EnvironmentFile` (`PDB_PRINT_TOKEN=…`), since a headless Pi has no keychain.
+The web UI stays on `127.0.0.1:8631`: reach it with `ssh -L 8631:127.0.0.1:8631 pi-host`.
+
 ### Hot folder
 
 With `hot_folder` enabled in the config, `serve` prints every new `label_*.pdf` that lands in
@@ -94,7 +106,8 @@ Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen-icons.sh`
 (needs `brew install librsvg imagemagick`, plus `iconutil` from macOS); the output is committed.
 
-Status-only hardware check: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`.
+Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`,
+`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brotherpt`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 

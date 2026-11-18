@@ -346,6 +346,10 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("unknown media %q", p.Media)
 		}
 		for i := range c.Printers {
+			if c.Printers[i].ID == p.ID && c.Printers[i].Driver != "brother-ql" {
+				// the form only knows QL over TCP
+				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, c.Printers[i].Driver)
+			}
 			if c.Printers[i].ID == p.ID {
 				// keep settings the form doesn't show
 				old := c.Printers[i]

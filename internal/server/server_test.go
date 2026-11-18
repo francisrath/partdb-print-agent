@@ -432,3 +432,19 @@ func TestAgentJobsHooks(t *testing.T) {
 		t.Errorf("unknown printer: %v", err)
 	}
 }
+
+func TestSavePrinterKeepsNonQL(t *testing.T) {
+	h := newHarness(t)
+	pt := config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}}
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, pt)
+	h.post("/printers", url.Values{"id": {"pt"}, "model": {"QL-810W"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-22210"}})
+	if !strings.Contains(h.flash(), "config file") {
+		t.Errorf("flash %q", h.flash())
+	}
+	if p, err := h.srv.config().Printer("pt"); err != nil || p.Driver != "brother-pt" || p.Transport.Device != "/dev/usb/lp0" {
+		t.Errorf("non-QL printer overwritten from the UI: %+v %v", p, err)
+	}
+	if w := h.do("GET", "/", nil); !strings.Contains(w.Body.String(), "/dev/usb/lp0") {
+		t.Error("printer table doesn't show the USB device")
+	}
+}

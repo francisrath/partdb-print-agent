@@ -15,6 +15,15 @@ printers:
     # snmp_community: public    # if you changed it in the printer's web settings
     # no_snmp: true             # fall back to the TCP status (network QLs don't answer it)
     # allow_scaling: true       # print labels that don't match the roll by scaling instead of refusing
+  # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
+  # - id: pt9500
+  #   name: Brother PT-9500PC
+  #   driver: brother-pt
+  #   model: PT-9500PC
+  #   transport: {kind: usb, device: /dev/usb/lp0}
+  #   media: tze-24             # tze-6 … tze-36; omit to use the tape the printer reports
+  #   cut: half                 # default: half cut between labels of a batch on laminated tape,
+  #                             # one full cut at the end; per_label | last | none
 
 # Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
 # Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.
