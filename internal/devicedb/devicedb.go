@@ -73,6 +73,12 @@ func (m *Model) Quirk(key string, def int) int {
 	return def
 }
 
+// QuirkBool reports a boolean quirk (false when unset).
+func (m *Model) QuirkBool(key string) bool {
+	b, _ := m.Quirks[key].(bool)
+	return b
+}
+
 // QuirkString returns a string quirk, or "".
 func (m *Model) QuirkString(key string) string {
 	s, _ := m.Quirks[key].(string)
@@ -183,6 +189,16 @@ func (db *DB) Models(driver string) []*Model {
 	}
 	slices.SortFunc(out, func(a, b *Model) int { return strings.Compare(a.ID, b.ID) })
 	return out
+}
+
+// ModelIDs lists every model id, sorted.
+func (db *DB) ModelIDs() []string {
+	ids := make([]string, 0, len(db.models))
+	for id := range db.models {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 func (db *DB) Media(id string) (Media, bool) {

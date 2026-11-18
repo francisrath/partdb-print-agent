@@ -17,6 +17,7 @@ models:
       pin_order: reversed
       pacing: per_page
       status_while_printing: busy
+      needs_status: true # paces labels on its replies, so it can't print blind
       cut_modes:
         chain: [0x40, 0x00]
         per_label: [0x40, 0x08]

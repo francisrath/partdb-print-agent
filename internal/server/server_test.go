@@ -478,3 +478,15 @@ func TestResultTextCarriesWarnings(t *testing.T) {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
 }
+
+// A QL configured with the family name (driver: brother) can still be edited in the form.
+func TestSavePrinterAcceptsQLWithFamilyName(t *testing.T) {
+	h := newHarness(t)
+	for i := range h.srv.cfg.Printers {
+		h.srv.cfg.Printers[i].Driver = "brother"
+	}
+	h.post("/printers", url.Values{"id": {"ql"}, "model": {"QL-810W"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-22205"}})
+	if p, _ := h.srv.config().Printer("ql"); p.Media != "dk-22205" {
+		t.Errorf("not saved: %q, printer %+v", h.flash(), p)
+	}
+}

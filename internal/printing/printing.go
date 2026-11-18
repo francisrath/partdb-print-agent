@@ -266,7 +266,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	lock.Lock()
 	defer lock.Unlock()
 
-	_, drv, err := printer(p)
+	model, drv, err := printer(p)
 	if err != nil {
 		return nil, err
 	}
@@ -283,11 +283,17 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		defer t.Close()
 		st, err = drv.Status(ctx, t)
 		switch {
+		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
+			return nil, &driver.Error{Code: driver.CommsError, Detail: "printer sent no status reply"}
 		case errors.Is(err, driver.ErrNoReadback):
 			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
 			st = nil
 		case err != nil:
 			return nil, commsError(err)
+		}
+		// connect now, before fetching and rendering, even if the status came over SNMP
+		if err := t.open(); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
 		if st != nil {
 			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "type", st.MediaType, "via", st.Via)

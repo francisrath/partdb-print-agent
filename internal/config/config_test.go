@@ -230,7 +230,7 @@ func TestValidateModelDriver(t *testing.T) {
 	}
 	bad := map[string][]string{
 		"printers: [{id: a, driver: brother-pt, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0}}]": {"brother-pt", "QL-810W"},
-		"printers: [{id: a, driver: brother, model: QL-9000, transport: {kind: tcp, host: x}}]":                 {"QL-9000"},
+		"printers: [{id: a, driver: brother, model: QL-9000, transport: {kind: tcp, host: x}}]":                 {"QL-9000", "QL-810W", "PT-9500PC"},
 		"printers: [{id: a, driver: brother, model: PT-9500PC, transport: {kind: tcp, host: x}}]":               {"PT-9500PC", "tcp"},
 		"printers: [{id: a, driver: brother, model: QL-810W, transport: {kind: tcp, host: x}, media: tze-24}]":  {"tze-24", "QL-810W"},
 		"printers: [{id: a, driver: zpl, model: QL-810W, transport: {kind: tcp, host: x}}]":                     {"zpl"},

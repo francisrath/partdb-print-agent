@@ -83,8 +83,8 @@ func TestLint(t *testing.T) {
 		files map[string]string
 		want  []string
 	}{
-		"duplicate usb": {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-a"), "data/b.yaml": model("B", "04f9:0001", "tape-a")}, []string{"04f9:0001", "A", "B"}},
-		"unknown media": {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-x")}, []string{"A", "tape-x"}},
+		"duplicate usb": {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-a"), "data/b.yaml": model("B", "04f9:0001", "tape-a")}, []string{"04f9:0001", "A", "B", "a.yaml", "b.yaml"}},
+		"unknown media": {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-x")}, []string{"A", "tape-x", "a.yaml"}},
 		"no dialect":    {map[string]string{"data/a.yaml": "models:\n  - {id: A, driver: brother}\n"}, []string{"A", "dialect"}},
 	} {
 		fsys := fstest.MapFS{}

@@ -76,7 +76,7 @@ func (d *ql) statusFromSNMP(ss *snmp.State) *driver.Status {
 		st.Code, st.Detail = prob.Code, prob.Detail
 	}
 	if kind, w, l, ok := ss.LoadedMedia(); ok {
-		if m, ok := qlMediaBySize(kind, w, l); ok {
+		if m, ok := qlMediaBySize(d.model, kind, w, l); ok {
 			st.Media = &m
 		} else {
 			st.Media = &driver.Media{ID: "unknown", Kind: kind, WidthMM: float64(w), LengthMM: float64(l)}
@@ -85,10 +85,15 @@ func (d *ql) statusFromSNMP(ss *snmp.State) *driver.Status {
 	return st
 }
 
-// qlMediaBySize maps a reported roll to a known DK roll.
-func qlMediaBySize(kind driver.MediaKind, w, l int) (driver.Media, bool) {
+// qlMediaBySize maps a reported roll to one the model takes; with no model known (status
+// from an unknown QL), to any QL's.
+func qlMediaBySize(model *devicedb.Model, kind driver.MediaKind, w, l int) (driver.Media, bool) {
 	db := devicedb.Default()
-	for _, m := range db.Models("brother") {
+	models := db.Models("brother")
+	if model != nil {
+		models = []*devicedb.Model{model}
+	}
+	for _, m := range models {
 		if m.Dialect != "ql" {
 			continue
 		}
@@ -335,8 +340,9 @@ func parseQLStatus(b []byte) (*driver.Status, error) {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: fmt.Sprintf("bad status reply % x", b)}
 	}
 	s := &driver.Status{Code: driver.OK, Model: fmt.Sprintf("unknown (0x%02x)", b[4])}
-	if m, ok := devicedb.Default().ModelByStatusCode("brother", int(b[4])); ok {
-		s.Model = m.ID
+	model, ok := devicedb.Default().ModelByStatusCode("brother", int(b[4]))
+	if ok {
+		s.Model = model.ID
 	}
 	e1, e2 := b[8], b[9]
 	for _, e := range []struct {
@@ -368,7 +374,7 @@ func parseQLStatus(b []byte) (*driver.Status, error) {
 		kind = driver.DieCut
 	}
 	if kind != "" {
-		if m, ok := qlMediaBySize(kind, int(b[10]), int(b[17])); ok {
+		if m, ok := qlMediaBySize(model, kind, int(b[10]), int(b[17])); ok {
 			s.Media = &m
 		} else {
 			s.Media = &driver.Media{ID: "unknown", Kind: kind, WidthMM: float64(b[10]), LengthMM: float64(b[17])}

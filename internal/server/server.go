@@ -343,10 +343,14 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.update(func(c *config.Config) error {
 		for _, old := range c.Printers {
-			if old.ID == p.ID && old.Driver != "brother-ql" {
-				// the form only knows QL over TCP
-				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, old.Driver)
+			if old.ID != p.ID {
+				continue
 			}
+			// the form only knows network QLs
+			if m, err := old.DeviceModel(); err != nil || !slices.Contains(formModels(), m.ID) || old.Transport.Kind != "tcp" {
+				return fmt.Errorf("printer %q is a %s %s: edit it in the config file", p.ID, old.Driver, old.Model)
+			}
+			p.Driver = old.Driver // keep the name the file uses
 		}
 		if !slices.Contains(formModels(), p.Model) {
 			return fmt.Errorf("unknown Brother QL model %s", p.Model)

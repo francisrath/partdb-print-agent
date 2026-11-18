@@ -300,11 +300,22 @@ func (c *Config) Printer(id string) (*Printer, error) {
 // (and are kept when saving) so older binaries can read the file. Value: the dialect.
 var oldDrivers = map[string]string{"brother-ql": "ql", "brother-pt": "pt-cbp"}
 
+// DriverName is how configs name a model's driver: the old names for the Brother dialects
+// (so files stay readable by older binaries), otherwise the family.
+func DriverName(m *devicedb.Model) string {
+	for name, dialect := range oldDrivers {
+		if m.Driver == "brother" && m.Dialect == dialect {
+			return name
+		}
+	}
+	return m.Driver
+}
+
 // DeviceModel returns the printer's device-database model.
 func (p *Printer) DeviceModel() (*devicedb.Model, error) {
 	m, ok := devicedb.Default().Model(p.Model)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q (see `pdb-print media`)", p.Model)
+		return nil, fmt.Errorf("unknown model %q (known: %s)", p.Model, strings.Join(devicedb.Default().ModelIDs(), ", "))
 	}
 	family, dialect := p.Driver, ""
 	if d, old := oldDrivers[p.Driver]; old {
