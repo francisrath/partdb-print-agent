@@ -258,6 +258,23 @@ func TestWaitPageSkipsPhaseChange(t *testing.T) {
 	}
 }
 
+// Statuses left over from an unconfirmed job must not pass for the reply to ESC i S.
+func TestStatusSkipsStaleReplies(t *testing.T) {
+	stale := [][]byte{
+		reply(func(b []byte) { b[18], b[19] = 0x06, 0x01 }),
+		reply(func(b []byte) { b[18] = 0x01 }),
+		realReply(),
+	}
+	tr := &scripted{stale}
+	s, err := New().Status(context.Background(), tr)
+	if err != nil || s.Done || s.Code != driver.OK {
+		t.Fatalf("%+v %v", s, err)
+	}
+	if len(tr.replies) != 0 {
+		t.Errorf("%d replies left: the stale ones weren't skipped", len(tr.replies))
+	}
+}
+
 func TestStatus(t *testing.T) {
 	s, err := New().Status(context.Background(), &scripted{[][]byte{realReply()}})
 	if err != nil || s.Code != driver.OK || s.Media.ID != "tze-36" {

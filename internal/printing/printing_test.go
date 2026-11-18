@@ -210,7 +210,9 @@ func TestPrintPTDeviceGone(t *testing.T) {
 	}
 }
 
-func TestStatusWaitsForJob(t *testing.T) {
+// A status check during a PT job answers "busy" at once and never sends ESC i S to a
+// printing PT (the reference forbids it); it doesn't wait for the job either.
+func TestStatusDuringPTJobIsBusy(t *testing.T) {
 	f := newFakePT()
 	f.gate, f.writing = make(chan struct{}), make(chan struct{})
 	writing := f.writing
@@ -221,24 +223,23 @@ func TestStatusWaitsForJob(t *testing.T) {
 		printed <- err
 	}()
 	<-writing // the job is sending its page
-	statusDone := make(chan struct{})
-	go func() {
-		_, _ = s.Status(context.Background(), ptPrinter("", ""))
-		close(statusDone)
-	}()
-	select {
-	case <-statusDone:
-		t.Fatal("status request sent while a job was printing")
-	case <-time.After(200 * time.Millisecond):
+	start := time.Now()
+	st, err := s.Status(context.Background(), ptPrinter("", ""))
+	if err != nil || st.Code != driver.Busy || time.Since(start) > time.Second {
+		t.Errorf("status during a job: %+v %v after %v, want BUSY at once", st, err, time.Since(start))
 	}
 	close(f.gate)
 	if err := <-printed; err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-statusDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("status never ran after the job")
+	n := 0
+	for _, w := range f.writes {
+		if bytes.HasSuffix(w, []byte{0x1b, 'i', 'S'}) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d status requests sent; only the job's own may be", n)
 	}
 }
 

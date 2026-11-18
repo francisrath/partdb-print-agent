@@ -162,12 +162,19 @@ func (d *Driver) Encode(ctx context.Context, w io.Writer, pages []*image.Gray, j
 var statusRequest = append(make([]byte, invalidateN), 0x1b, '@', 0x1b, 'i', 'S')
 
 // Status asks for the 32-byte status. Never call it while the printer is printing (p.18).
+// Statuses still queued from an earlier job (phase change, printing completed) are skipped,
+// so they can't pass for this reply or confirm a page of the next job.
 func (d *Driver) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
 	if _, err := t.Write(statusRequest); err != nil {
 		return nil, err
 	}
-	s, _, err := readStatus(t)
-	return s, err
+	for range 16 {
+		s, typ, err := readStatus(t)
+		if err != nil || typ == statusReply {
+			return s, err
+		}
+	}
+	return nil, &driver.Error{Code: driver.CommsError, Detail: "no reply to the status request among the printer's messages"}
 }
 
 func (d *Driver) Probe(ctx context.Context, t driver.Transport) (*driver.DeviceInfo, error) {

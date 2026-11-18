@@ -168,14 +168,16 @@ func (s *Service) transport(p *config.Printer) driver.Transport {
 	return tcp.New(addr(p))
 }
 
-// Status queries the printer. It waits for a running job on that printer first: a PT
-// must not get a status request while it prints. brother-ql: SNMP first, then the
-// driver's status over TCP. driver.ErrNoReadback if the printer doesn't answer.
+// Status queries the printer. A PT that is printing a job answers BUSY without being
+// asked (it must not get a status request while it prints). brother-ql: SNMP first, then
+// the driver's status over TCP. driver.ErrNoReadback if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
-	lock := s.printerLock(p.ID)
-	lock.Lock()
-	defer lock.Unlock()
 	if p.Driver == "brother-pt" {
+		lock := s.printerLock(p.ID)
+		if !lock.TryLock() {
+			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: p.Model}, nil
+		}
+		defer lock.Unlock()
 		t := s.transport(p)
 		if err := t.Open(ctx); err != nil {
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
