@@ -23,6 +23,7 @@ var ErrPdftoppm = errors.New("pdftoppm")
 
 // Pdftoppm renders with poppler's pdftoppm and pdfinfo, run as separate programs.
 // Much faster than PDFium-in-wasm where wazero can only interpret (32-bit ARM).
+// Poppler is GPL: it must only ever be executed like this, never linked or vendored.
 type Pdftoppm struct {
 	Bin, Info string        // paths of pdftoppm and pdfinfo
 	Timeout   time.Duration // per program run; 0 = 2 minutes
