@@ -85,7 +85,8 @@ label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead)
 (`/dev/usb/lp0`; add the user to group `lp`). It reads the loaded tape and errors before each job,
 sends a batch label by label and waits for each to be printed. Labels print at true size: design the
 Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm on 36 mm tape,
-about 1 mm on narrower tapes). The cutter sits ~25 mm past the print head, so by default the last label
+about 1 mm on narrower tapes; for 36 mm add `@page { margin: 5mm 2mm; }` to the profile's additional CSS,
+since Part-DB's default page margin is about 3 mm). The cutter sits ~25 mm past the print head, so by default the last label
 waits in the printer and comes out, cut, with the next print (or press the cut button); a batch on
 laminated tape comes out as one half-cut strip. `cut: per_label` feeds and cuts at once instead, at the
 cost of a blank leader per job. See `config.example.yaml`.
