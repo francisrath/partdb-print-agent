@@ -108,21 +108,28 @@ func newRenderer(dir string) (*Renderer, error) {
 	return start("")
 }
 
-func start(dir string) (*Renderer, error) {
+func start(dir string) (r *Renderer, err error) {
 	// Same features go-pdfium uses by default: its PDFium build needs exception handling.
 	rc := wazero.NewRuntimeConfig().WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
 	var cache wazero.CompilationCache
-	if dir != "" {
-		var err error
-		if cache, err = wazero.NewCompilationCacheWithDir(dir); err != nil {
-			return nil, err
-		}
-		rc = rc.WithCompilationCache(cache)
-	}
 	closeCache := func() {
 		if cache != nil {
 			_ = cache.Close(context.Background())
 		}
+	}
+	if dir != "" {
+		if cache, err = wazero.NewCompilationCacheWithDir(dir); err != nil {
+			return nil, err
+		}
+		rc = rc.WithCompilationCache(cache)
+		// A tampered cache entry can panic inside wazero's loader (v1.12.0 indexes an empty
+		// executable); turn that into an error so newRenderer wipes the cache and retries.
+		defer func() {
+			if p := recover(); p != nil {
+				closeCache()
+				r, err = nil, fmt.Errorf("load compilation cache: %v", p)
+			}
+		}()
 	}
 	pool, err := webassembly.Init(webassembly.Config{
 		MinIdle: 1, MaxIdle: 1, MaxTotal: 1,

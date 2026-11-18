@@ -249,13 +249,16 @@ func TestCompilationCache(t *testing.T) {
 	}
 	dir := t.TempDir()
 	golden := filepath.Join("testdata", "29x46_portrait_29mm.png")
-	renderWith := func() {
+	renderWith := func(wantCache bool) {
 		t.Helper()
 		r, err := newRenderer(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer r.Close()
+		if wantCache && r.cache == nil {
+			t.Fatal("started without the compilation cache")
+		}
 		pages, err := r.Render(testPDF(29, 46, "AMS1117-3.3"), Options{WidthDots: 306, MediaWidthMM: 29})
 		if err != nil {
 			t.Fatal(err)
@@ -284,12 +287,16 @@ func TestCompilationCache(t *testing.T) {
 		return files
 	}
 
-	renderWith() // cold: compiles and fills the cache
+	renderWith(true) // cold: compiles and fills the cache
 	files := cacheFiles()
 	if len(files) == 0 {
 		t.Fatal("no cache files written")
 	}
-	renderWith() // warm: loads from the cache
+	valid, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderWith(true) // warm: loads from the cache
 
 	// A corrupt cache must not stop rendering.
 	for _, f := range files {
@@ -297,5 +304,23 @@ func TestCompilationCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	renderWith()
+	renderWith(false)
+
+	// Nor a tampered entry that makes wazero's loader panic: the valid header
+	// ("WAZEVO", version) with no functions, an empty executable and a source map.
+	hdr := 6 + 1 + int(valid[6])
+	tampered := append(append([]byte{}, valid[:hdr]...), 0, 0, 0, 0) // 0 functions
+	tampered = append(tampered, make([]byte, 8)...)                  // executable length 0
+	tampered = append(tampered, 1, 1, 0, 0, 0, 0, 0, 0, 0)           // source map present, length 1
+	renderWith(true)                                                 // refill: the corrupt cache was wiped
+	files = cacheFiles()
+	if len(files) == 0 {
+		t.Fatal("no cache files written")
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f, tampered, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	renderWith(false)
 }
