@@ -59,7 +59,7 @@ commands:
   media                            list known media and the models that take them
   discover [--subnet CIDR]... [--no-usb] [--no-network]
                                    find printers on USB and the local network (read-only)
-  report [--identify] [--print] [--raw] [--out FILE] [HOST|usb]...
+  report [--identify] [--print] [--raw] [--port N] [--out FILE] [HOST|usb]...
                                    collect what's needed to support a printer into a file for a
                                    GitHub issue (asks before sending anything to a printer)
 `
@@ -535,6 +535,7 @@ func reportCmd(ctx context.Context, args []string) error {
 	print := fs.Bool("print", false, "print a test label on supported printers (asks first)")
 	raw := fs.Bool("raw", false, "don't mask IP/MAC addresses, serial numbers and host names")
 	out := fs.String("out", "", "report file (default pdb-print-report-<time>.json)")
+	port := fs.String("port", "9100", "print port of network printers")
 	targets, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -544,7 +545,7 @@ func reportCmd(ctx context.Context, args []string) error {
 	defer svc.Close()
 	in := bufio.NewReader(os.Stdin)
 	r, err := report.Run(ctx, report.Options{
-		Version: appVersion(), DB: devicedb.Default(), Targets: targets, Identify: *identify, Print: *print,
+		Version: appVersion(), DB: devicedb.Default(), Targets: targets, Port: *port, Identify: *identify, Print: *print,
 		Out: os.Stdout, Svc: svc,
 		Confirm: func(q string) bool {
 			fmt.Printf("%s [y/N] ", q)

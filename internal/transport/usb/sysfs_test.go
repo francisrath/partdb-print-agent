@@ -105,3 +105,14 @@ func TestOpenResolvesEachTime(t *testing.T) {
 		t.Errorf("opened %v", opened)
 	}
 }
+
+func TestFindAmbiguousWithoutSerials(t *testing.T) {
+	sys := fakeSysfs(t, map[string][4]string{"lp0": {"04f9", "200f", "", ptID}, "lp1": {"04f9", "200f", "", ptID}})
+	if _, err := Find(sys, "04f9:200f", ""); err == nil || !strings.Contains(err.Error(), "device:") || strings.Contains(err.Error(), "(, )") {
+		t.Errorf("err = %v, want advice to use device:", err)
+	}
+	sys = fakeSysfs(t, map[string][4]string{"lp0": {"04f9", "200f", "X", ptID}, "lp1": {"04f9", "200f", "X", ptID}})
+	if _, err := Find(sys, "04f9:200f", "X"); err == nil || strings.Contains(err.Error(), "set serial") {
+		t.Errorf("err = %v", err)
+	}
+}

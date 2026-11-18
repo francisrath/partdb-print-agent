@@ -274,7 +274,8 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 	if err != nil {
 		return nil, err
 	}
-	if m.QuirkString("status_while_printing") == "busy" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp)
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil

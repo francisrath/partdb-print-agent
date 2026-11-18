@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -91,9 +92,14 @@ func Find(sysfs, usbID, serial string) (string, error) {
 		}
 		return "", fmt.Errorf("no USB printer %s connected", usbID)
 	}
-	serials := make([]string, len(hits))
-	for i, h := range hits {
-		serials[i] = h.Serial
+	var serials []string
+	for _, h := range hits {
+		if h.Serial != "" && !slices.Contains(serials, h.Serial) {
+			serials = append(serials, h.Serial)
+		}
 	}
-	return "", fmt.Errorf("%d USB printers %s connected: set serial (%s)", len(hits), usbID, strings.Join(serials, ", "))
+	if serial == "" && len(serials) == len(hits) {
+		return "", fmt.Errorf("%d USB printers %s connected: set serial (%s)", len(hits), usbID, strings.Join(serials, ", "))
+	}
+	return "", fmt.Errorf("%d USB printers %s connected that serial can't tell apart: use device: /dev/usb/lpN instead", len(hits), usbID)
 }

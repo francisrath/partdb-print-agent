@@ -1,6 +1,7 @@
 package printing
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -23,14 +24,18 @@ type onlineState struct {
 // printer whose device is present and opens is; a network printer that accepts a connection
 // on its print port within 2 s is (nothing is sent). Results are cached for 30 s.
 func (s *Service) Online(p *config.Printer) bool {
+	key := onlineKey(p)
 	s.mu.Lock()
-	st, ok := s.online[p.ID]
+	st, ok := s.online[key]
 	s.mu.Unlock()
 	if ok && time.Since(st.at) < onlineFor {
 		return st.ok
 	}
 	lock := s.printerLock(p.ID)
 	if !lock.TryLock() {
+		if ok {
+			return st.ok // another check (or a job) holds it: keep the last known state
+		}
 		return true // printing a job right now
 	}
 	check := s.OnlineCheck
@@ -43,9 +48,15 @@ func (s *Service) Online(p *config.Printer) bool {
 	if s.online == nil {
 		s.online = map[string]onlineState{}
 	}
-	s.online[p.ID] = onlineState{time.Now(), up}
+	s.online[key] = onlineState{time.Now(), up}
 	s.mu.Unlock()
 	return up
+}
+
+// onlineKey keys the cache by printer and address, so an edited address is checked afresh.
+func onlineKey(p *config.Printer) string {
+	t := p.Transport
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial)
 }
 
 func reachable(p *config.Printer) bool {
@@ -59,11 +70,17 @@ func reachable(p *config.Printer) bool {
 				return false
 			}
 		}
-		f, err := os.OpenFile(dev, os.O_RDWR, 0)
-		if err != nil {
+		opened := make(chan bool, 1)
+		go func() { // usblp opens don't block, but a check must never hang a heartbeat
+			f, err := os.OpenFile(dev, os.O_RDWR, 0)
+			opened <- err == nil && f.Close() == nil
+		}()
+		select {
+		case ok := <-opened:
+			return ok
+		case <-time.After(2 * time.Second):
 			return false
 		}
-		return f.Close() == nil
 	case "tcp":
 		c, err := net.DialTimeout("tcp", net.JoinHostPort(t.Host, strconv.Itoa(t.Port)), 2*time.Second)
 		if err != nil {

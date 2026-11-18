@@ -4,6 +4,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -80,10 +81,11 @@ func byUSB(db *devicedb.DB, usbID, mdl string) *devicedb.Model {
 	return byMDL
 }
 
-// Options for Network. Zero values: the host's subnets, port 9100, 300 ms per connect,
-// 64 at a time, real TCP and SNMP (community public).
+// Options for Network. Zero values: the host's subnets (each at most a /24), port 9100,
+// 300 ms per connect, 64 at a time, 30 s in all, real TCP and SNMP (community public).
 type Options struct {
-	Subnets     []netip.Prefix
+	Subnets     []netip.Prefix // IPv4, at most /22 each (1024 addresses)
+	Timeout     time.Duration  // the whole scan
 	Port        int
 	DialTimeout time.Duration
 	Workers     int
@@ -97,6 +99,19 @@ func Network(ctx context.Context, db *devicedb.DB, o Options) ([]Candidate, erro
 	if o.Subnets == nil {
 		o.Subnets = LocalSubnets()
 	}
+	for _, p := range o.Subnets {
+		if !p.Addr().Is4() {
+			return nil, fmt.Errorf("subnet %s: only IPv4 networks can be scanned", p)
+		}
+		if p.Bits() < 22 {
+			return nil, fmt.Errorf("subnet %s is too large to scan (at most /22, 1024 addresses)", p)
+		}
+	}
+	if o.Timeout == 0 {
+		o.Timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
+	defer cancel()
 	if o.Port == 0 {
 		o.Port = 9100
 	}
@@ -121,10 +136,15 @@ func Network(ctx context.Context, db *devicedb.DB, o Options) ([]Candidate, erro
 		wg   sync.WaitGroup
 		sema = make(chan struct{}, o.Workers)
 	)
-	for _, p := range capTo24(o.Subnets) {
+scan:
+	for _, p := range o.Subnets {
 		for a := p.Masked().Addr(); p.Contains(a); a = a.Next() {
+			select {
+			case sema <- struct{}{}:
+			case <-ctx.Done():
+				break scan
+			}
 			wg.Add(1)
-			sema <- struct{}{}
 			go func(a netip.Addr) {
 				defer func() { <-sema; wg.Done() }()
 				dctx, cancel := context.WithTimeout(ctx, o.DialTimeout)
@@ -149,6 +169,9 @@ func Network(ctx context.Context, db *devicedb.DB, o Options) ([]Candidate, erro
 	slices.SortFunc(out, func(x, y Candidate) int {
 		return netip.MustParseAddr(x.Host).Compare(netip.MustParseAddr(y.Host))
 	})
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return out, nil // the time limit just ends the scan
+	}
 	return out, ctx.Err()
 }
 

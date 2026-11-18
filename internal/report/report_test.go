@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,8 +25,8 @@ func TestRedact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"192.168.1.40", "aa:bb:cc:dd:ee:ff", "000G5G313834", host} {
-		if secret != "" && bytes.Contains(b, []byte(secret)) {
+	for _, secret := range []string{"192.168.1.40", "aa:bb:cc:dd:ee:ff", "000G5G313834", host, strings.ToUpper(host), "008092A1B2C3", "fe80::1ff:fe23:4567:890a"} {
+		if secret != "" && bytes.Contains(bytes.ToLower(b), bytes.ToLower([]byte(secret))) {
 			t.Errorf("%q not masked:\n%s", secret, b)
 		}
 	}
@@ -39,13 +40,27 @@ func TestRedact(t *testing.T) {
 }
 
 // fakeZebra answers ~HI like the GK420d did and records everything it receives.
-func fakeZebra(t *testing.T) (port string, got *bytes.Buffer) {
+// lockedBuf is a buffer written by the fake printer's goroutine and read by the test.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) Len() int       { l.mu.Lock(); defer l.mu.Unlock(); return l.b.Len() }
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+func fakeZebra(t *testing.T) (port string, got *lockedBuf) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	got = &bytes.Buffer{}
+	got = &lockedBuf{}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -102,5 +117,14 @@ func TestIdentifyZebra(t *testing.T) {
 	}
 	if hi == nil || !strings.Contains(hi.Reply, "GK420d-200dpi") {
 		t.Errorf("queries %+v", r.Queries)
+	}
+}
+
+func TestReportRejectsIPv6Target(t *testing.T) {
+	start := time.Now()
+	o := options("9100", false, nil)
+	o.Targets = []string{"::1"}
+	if _, err := Run(context.Background(), o); err == nil || time.Since(start) > time.Second {
+		t.Errorf("err %v after %v", err, time.Since(start))
 	}
 }

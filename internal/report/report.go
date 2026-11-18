@@ -91,7 +91,10 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 			}
 			a = ips[0]
 		}
-		hosts = append(hosts, netip.PrefixFrom(a.Unmap(), 32))
+		if a = a.Unmap(); !a.Is4() {
+			return nil, fmt.Errorf("target %s: only IPv4 printers can be reported for now", t)
+		}
+		hosts = append(hosts, netip.PrefixFrom(a, 32))
 	}
 	if !o.NoUSB && (usbOnly || len(hosts) == 0) {
 		cs, err := discovery.USB(o.DB, o.Sysfs)
@@ -221,7 +224,10 @@ func escape(b []byte) string {
 
 var (
 	ipv4Re = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	ipv6Re = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b|(?i)\b(?:[0-9a-f]{1,4}:)+:(?:[0-9a-f]{1,4}:?)*\b`)
 	macRe  = regexp.MustCompile(`(?i)\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b`)
+	// MAC without separators, e.g. Brother's default node name BRW008092A1B2C3
+	bareMACRe = regexp.MustCompile(`(?i)\b(BR[WN])?[0-9a-f]{12}\b`)
 )
 
 // JSON renders the report; unless raw, IPv4 addresses (host-N, the same token for the same
@@ -240,9 +246,11 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 		}
 	}
 	if h, _ := os.Hostname(); len(h) > 2 {
-		s = strings.ReplaceAll(s, h, "this-computer")
+		s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(h)).ReplaceAllString(s, "this-computer")
 	}
 	s = macRe.ReplaceAllString(s, "xx:xx:xx:xx:xx:xx")
+	s = bareMACRe.ReplaceAllString(s, "${1}xxxxxxxxxxxx")
+	s = ipv6Re.ReplaceAllString(s, "ipv6-address")
 	tokens := map[string]string{}
 	s = ipv4Re.ReplaceAllStringFunc(s, func(ip string) string {
 		if tokens[ip] == "" {

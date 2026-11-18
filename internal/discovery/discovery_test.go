@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -131,5 +132,51 @@ func TestStatusNoDriver(t *testing.T) {
 	cs, _ := USB(db, sys)
 	if len(cs) != 1 || cs[0].Status != NoDriver {
 		t.Errorf("%+v", cs)
+	}
+}
+
+func TestNetworkRejectsIPv6AndHugeSubnets(t *testing.T) {
+	for _, p := range []string{"fd00::/64", "10.0.0.0/8"} {
+		start := time.Now()
+		_, err := Network(context.Background(), devicedb.Default(), Options{Subnets: []netip.Prefix{netip.MustParsePrefix(p)},
+			Dial: func(context.Context, string) (net.Conn, error) { return nil, errors.New("refused") }})
+		if err == nil || time.Since(start) > time.Second {
+			t.Errorf("%s: err %v after %v", p, err, time.Since(start))
+		}
+	}
+}
+
+func TestNetworkExplicitSubnetScannedWhole(t *testing.T) {
+	var mu sync.Mutex
+	n := 0
+	_, err := Network(context.Background(), devicedb.Default(), Options{Subnets: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/23")},
+		Dial: func(context.Context, string) (net.Conn, error) {
+			mu.Lock()
+			n++
+			mu.Unlock()
+			return nil, errors.New("refused")
+		}})
+	if err != nil || n != 512 {
+		t.Errorf("%d addresses, %v", n, err)
+	}
+}
+
+// Ctrl-C (context cancel) or the overall time limit stops the scan.
+func TestNetworkStops(t *testing.T) {
+	block := func(ctx context.Context, _ string) (net.Conn, error) {
+		time.Sleep(200 * time.Millisecond)
+		return nil, errors.New("refused")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, _ = Network(ctx, devicedb.Default(), Options{Subnets: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/22")}, Workers: 4, Dial: block})
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("cancel: still scanning after %v", d)
+	}
+	start = time.Now()
+	_, _ = Network(context.Background(), devicedb.Default(), Options{Subnets: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/22")}, Workers: 4, Dial: block, Timeout: 300 * time.Millisecond})
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("timeout: still scanning after %v", d)
 	}
 }
