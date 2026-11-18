@@ -99,9 +99,10 @@ unit with the API token in an `EnvironmentFile` (`PDB_PRINT_TOKEN=…`), since a
 The web UI stays on `127.0.0.1:8631`: reach it with `ssh -L 8631:127.0.0.1:8631 pi-host`.
 On 32-bit ARM the built-in PDF renderer is slow (up to a minute or two per label on a Pi 1), so
 install poppler (`sudo apt install poppler-utils`): pdb-print then renders with `pdftoppm` in about
-a second. On 32-bit systems it's used automatically whenever it's on `PATH`; `pdftoppm: off` in the
-config (or `PDB_PRINT_PDFTOPPM=off`) turns that off, `on` uses it on any system. Note that poppler
-parses PDFs natively, while the built-in renderer runs in a WebAssembly sandbox.
+a second. On 32-bit systems it's used automatically whenever `pdftoppm` and `pdfinfo` (both in
+poppler-utils) are on `PATH`; `pdftoppm: off` in the config (or `PDB_PRINT_PDFTOPPM=off`) turns that
+off, `on` uses it on any system. Note that poppler parses PDFs natively, while the built-in renderer
+runs in a WebAssembly sandbox.
 
 ### Hot folder
 

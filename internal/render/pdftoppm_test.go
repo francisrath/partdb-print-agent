@@ -70,6 +70,25 @@ func TestParsePGMs(t *testing.T) {
 	}
 }
 
+func TestOutputWriters(t *testing.T) {
+	tl := &tail{n: 4}
+	for _, s := range []string{"ab", "cdef", "g"} {
+		if n, err := tl.Write([]byte(s)); n != len(s) || err != nil {
+			t.Fatal(n, err)
+		}
+	}
+	if string(tl.b) != "defg" {
+		t.Errorf("tail %q", tl.b)
+	}
+	c := &capped{max: 5}
+	if _, err := c.Write([]byte("abc")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write([]byte("def")); err == nil || c.String() != "abc" {
+		t.Errorf("over the cap: %v, kept %q", err, c.String())
+	}
+}
+
 func TestRotateCW(t *testing.T) {
 	// 3×2:  a b c
 	//       d e f

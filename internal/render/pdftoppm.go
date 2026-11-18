@@ -121,13 +121,14 @@ func (p *Pdftoppm) Render(pdf []byte, o Options) ([]*image.Gray, error) {
 		if pg.turned {
 			ax, ay = ay, ax
 		}
-		b, err := p.run(pdf, p.Bin, "-cropbox", "-gray", "-aa", "yes", "-aaVector", "no",
+		n := last - first + 1
+		b, err := p.run(pdf, n*(sx*sy+64), p.Bin, "-cropbox", "-gray", "-aa", "yes", "-aaVector", "no",
 			"-f", strconv.Itoa(first+1), "-l", strconv.Itoa(last+1),
 			"-scale-to-x", strconv.Itoa(ax), "-scale-to-y", strconv.Itoa(ay), "-")
 		if err != nil {
 			return nil, err
 		}
-		imgs, err := parsePGMs(b, last-first+1, sx, sy)
+		imgs, err := parsePGMs(b, n, sx, sy)
 		if err != nil {
 			return nil, fmt.Errorf("%w: pages %d-%d: %v", ErrPdftoppm, first+1, last+1, err)
 		}
@@ -146,8 +147,9 @@ func (p *Pdftoppm) Render(pdf []byte, o Options) ([]*image.Gray, error) {
 	return out, nil
 }
 
-// run executes a poppler tool with pdf on stdin (no shell, no temp file).
-func (p *Pdftoppm) run(pdf []byte, bin string, args ...string) ([]byte, error) {
+// run executes a poppler tool with pdf on stdin (no shell, no temp file) and returns its
+// stdout, failing once that exceeds maxOut bytes.
+func (p *Pdftoppm) run(pdf []byte, maxOut int, bin string, args ...string) ([]byte, error) {
 	timeout := p.Timeout
 	if timeout == 0 {
 		timeout = 2 * time.Minute
@@ -156,18 +158,43 @@ func (p *Pdftoppm) run(pdf []byte, bin string, args ...string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = bytes.NewReader(pdf)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	out := &capped{max: maxOut}
+	stderr := &tail{n: 300} // a broken PDF can make poppler print a warning per operator
+	cmd.Stdout, cmd.Stderr = out, stderr
 	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if len(msg) > 300 {
-			msg = msg[len(msg)-300:]
-		}
-		return nil, fmt.Errorf("%w: %s: %v %s", ErrPdftoppm, filepath.Base(bin), err, msg)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w: %s: %v %s", ErrPdftoppm, filepath.Base(bin), err, strings.TrimSpace(string(stderr.b)))
 	}
-	return out, nil
+	return out.Bytes(), nil
+}
+
+var errTooMuchOutput = errors.New("more output than expected")
+
+// capped collects up to max bytes and then fails the write (and so the program).
+type capped struct {
+	bytes.Buffer
+	max int
+}
+
+func (c *capped) Write(b []byte) (int, error) {
+	if c.Len()+len(b) > c.max {
+		return 0, errTooMuchOutput
+	}
+	return c.Buffer.Write(b)
+}
+
+// tail keeps only the last n bytes written to it.
+type tail struct {
+	n int
+	b []byte
+}
+
+func (t *tail) Write(b []byte) (int, error) {
+	t.b = append(t.b, b...)
+	if len(t.b) > t.n {
+		t.b = append(t.b[:0], t.b[len(t.b)-t.n:]...)
+	}
+	return len(b), nil
 }
 
 var (
@@ -184,7 +211,7 @@ type pageSize struct {
 }
 
 func (p *Pdftoppm) pageSizes(pdf []byte) ([]pageSize, error) {
-	b, err := p.run(pdf, p.Info, "-f", "1", "-l", strconv.Itoa(MaxPages+1), "-")
+	b, err := p.run(pdf, 1<<20, p.Info, "-f", "1", "-l", strconv.Itoa(MaxPages+1), "-")
 	if err != nil {
 		return nil, err
 	}

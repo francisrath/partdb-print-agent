@@ -425,11 +425,6 @@ func TestPdftoppmFallsBackToPDFium(t *testing.T) {
 	if !strings.Contains(log.String(), "rendering with PDFium") {
 		t.Errorf("fallback not logged:\n%s", log)
 	}
-	// A label that doesn't fit is refused without trying PDFium too.
-	log.Reset()
-	if _, err := s.Render(pdfgen.Page(62, 20, "0 g 0 0 1 1 re f"), ptPrinter("tze-36", ""), &m); !errors.Is(err, render.ErrSize) {
-		t.Errorf("size check: %v", err)
-	}
 }
 
 // With pdftoppm installed, the tape path renders the same geometry as with PDFium.
@@ -450,6 +445,10 @@ func TestPTRendersWithPdftoppm(t *testing.T) {
 	}
 	if n := blackCols(pages[0], 10); n < 254 || n > 258 {
 		t.Errorf("18 mm bar is %d dots, want ~256", n)
+	}
+	// A label that doesn't fit is refused without trying PDFium too.
+	if _, err := s.Render(pdfgen.Page(62, 20, "0 g 0 0 1 1 re f"), ptPrinter("tze-36", ""), &m); !errors.Is(err, render.ErrSize) {
+		t.Errorf("size check: %v", err)
 	}
 	if s.r != nil || strings.Contains(log.String(), "PDFium") {
 		t.Errorf("fell back to PDFium:\n%s", log)
