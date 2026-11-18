@@ -148,8 +148,9 @@ type Status struct {
 	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
 	// non-laminated, lettering, hg, av); "" otherwise.
 	MediaType string
-	Done      bool // a "printing completed" notification
-	Idle      bool // idle when read (QL over SNMP: confirms a job only if it was idle before)
+	Done      bool   // a "printing completed" notification
+	Idle      bool   // idle when read (QL over SNMP: confirms a job only if it was idle before)
+	Via       string // where the status came from: the driver's own protocol ("" ), or e.g. "snmp", "tcp"
 }
 
 // Error is a printer-side failure with a normalised code.
