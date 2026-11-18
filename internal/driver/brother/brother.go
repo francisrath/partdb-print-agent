@@ -22,6 +22,8 @@ func New(m *devicedb.Model, o driver.Options) (driver.Driver, error) {
 	switch m.Dialect {
 	case "ql":
 		return newQL(m, o), nil
+	case "pt-cbp":
+		return newPT(m), nil
 	}
 	return nil, &driver.Error{Code: driver.Unsupported, Detail: fmt.Sprintf("%s: unknown Brother dialect %q", m.ID, m.Dialect)}
 }
