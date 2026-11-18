@@ -7,15 +7,19 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"image/png"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -50,7 +54,9 @@ commands:
   printers list                    list configured printers
   printers status ID               query printer status and loaded media
   printers test ID [--dry-run OUT] print a test label sized for the loaded media
-  media                            list known Brother QL media
+  media                            list known media and the models that take them
+  discover [--subnet CIDR]... [--no-usb] [--no-network]
+                                   find printers on USB and the local network (read-only)
 `
 
 func main() {
@@ -86,6 +92,9 @@ func run(ctx context.Context, args []string) error {
 	if cmd == "version" {
 		fmt.Printf("pdb-print %s (%s %s/%s)\n", appVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return nil
+	}
+	if cmd == "discover" { // needs no config: it's how you find what to put in it
+		return discover(ctx, rest)
 	}
 	if cmd == "media" { // needs no config: it's what config errors point to
 		// every medium once, with the models that take it
@@ -442,4 +451,72 @@ func (a *app) renderer() string {
 		return "pdftoppm (" + a.svc.Pdftoppm.Bin + ")"
 	}
 	return "pdfium"
+}
+
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+func discover(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
+	var subnets multiFlag
+	fs.Var(&subnets, "subnet", "network to scan, e.g. 192.168.1.0/24 (repeatable; default: this computer's networks, each at most a /24)")
+	noUSB := fs.Bool("no-usb", false, "skip USB")
+	noNet := fs.Bool("no-network", false, "skip the network")
+	port := fs.Int("port", 9100, "print port to look for")
+	timeout := fs.Duration("timeout", 300*time.Millisecond, "connect timeout per address")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	db := devicedb.Default()
+	var found []discovery.Candidate
+	if !*noUSB {
+		cs, err := discovery.USB(db, "")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "usb:", err)
+		}
+		found = append(found, cs...)
+	}
+	if !*noNet {
+		o := discovery.Options{Port: *port, DialTimeout: *timeout}
+		for _, s := range subnets {
+			p, err := netip.ParsePrefix(s)
+			if err != nil {
+				return fmt.Errorf("--subnet %s: %w", s, err)
+			}
+			o.Subnets = append(o.Subnets, p)
+		}
+		cs, err := discovery.Network(ctx, db, o)
+		if err != nil {
+			return err
+		}
+		found = append(found, cs...)
+	}
+	if len(found) == 0 {
+		fmt.Println("no printers found")
+		return nil
+	}
+	for _, c := range found {
+		addr, what := c.Device, c.ModelID
+		if c.Kind == "tcp" {
+			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+		}
+		switch {
+		case what == "" && c.IEEE1284["MDL"] != "":
+			what = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
+		case what == "" && c.SNMPDescr != "":
+			what = c.SNMPDescr
+		case what == "":
+			what = "?"
+		}
+		fmt.Printf("%-4s %-22s %-28s %s\n", c.Kind, addr, what, c.Status)
+		if c.Status != discovery.Unknown {
+			fmt.Printf("     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
+		}
+	}
+	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
+		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
+	}
+	return nil
 }

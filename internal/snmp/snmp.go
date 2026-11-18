@@ -5,6 +5,7 @@ package snmp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -131,4 +132,24 @@ func (s *State) LoadedMedia() (kind driver.MediaKind, widthMM, lengthMM int, ok 
 	}
 	lengthMM, _ = strconv.Atoi(m[2])
 	return driver.DieCut, widthMM, lengthMM, true
+}
+
+const oidSysDescr = "1.3.6.1.2.1.1.1.0"
+
+// SysDescr reads a device's sysDescr (e.g. "Brother NC-… QL-810W"), for discovery.
+func SysDescr(ctx context.Context, host, community string, timeout time.Duration) (string, error) {
+	g := &gosnmp.GoSNMP{Target: host, Port: 161, Community: community, Version: gosnmp.Version2c,
+		Timeout: timeout, Retries: 0, Context: ctx}
+	if err := g.Connect(); err != nil {
+		return "", err
+	}
+	defer g.Conn.Close()
+	res, err := g.Get([]string{oidSysDescr})
+	if err != nil {
+		return "", err
+	}
+	if len(res.Variables) == 0 || res.Variables[0].Type != gosnmp.OctetString {
+		return "", errors.New("snmp: no sysDescr")
+	}
+	return str(res.Variables[0]), nil
 }

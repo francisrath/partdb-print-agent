@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/server"
@@ -244,5 +245,37 @@ func TestMediaRunsWithBrokenConfig(t *testing.T) {
 	}
 	if err := run(context.Background(), []string{"--config", cfg, "media"}); err != nil {
 		t.Errorf("media with a broken config: %v", err)
+	}
+}
+
+// discover needs no config and never writes to the printers it finds.
+func TestDiscoverWithoutConfig(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	wrote := make(chan bool, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		n, _ := c.Read(make([]byte, 1))
+		wrote <- n > 0
+		c.Close()
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	cfg := filepath.Join(t.TempDir(), "none.yaml")
+	if err := run(context.Background(), []string{"--config", cfg, "discover", "--no-usb", "--subnet", "127.0.0.1/32", "--port", port}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case w := <-wrote:
+		if w {
+			t.Error("discover wrote to the printer port")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("discover didn't connect")
 	}
 }
