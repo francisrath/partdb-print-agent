@@ -2,12 +2,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
+	"github.com/francisrath/partdb-print-agent/internal/report"
 	"image/png"
 	"log/slog"
 	"net"
@@ -57,6 +59,9 @@ commands:
   media                            list known media and the models that take them
   discover [--subnet CIDR]... [--no-usb] [--no-network]
                                    find printers on USB and the local network (read-only)
+  report [--identify] [--print] [--raw] [--out FILE] [HOST|usb]...
+                                   collect what's needed to support a printer into a file for a
+                                   GitHub issue (asks before sending anything to a printer)
 `
 
 func main() {
@@ -95,6 +100,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "discover" { // needs no config: it's how you find what to put in it
 		return discover(ctx, rest)
+	}
+	if cmd == "report" {
+		return reportCmd(ctx, rest)
 	}
 	if cmd == "media" { // needs no config: it's what config errors point to
 		// every medium once, with the models that take it
@@ -518,5 +526,45 @@ func discover(ctx context.Context, args []string) error {
 	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
 		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
+	return nil
+}
+
+func reportCmd(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	identify := fs.Bool("identify", false, "send identify queries to printers we can't name (asks first)")
+	print := fs.Bool("print", false, "print a test label on supported printers (asks first)")
+	raw := fs.Bool("raw", false, "don't mask IP/MAC addresses, serial numbers and host names")
+	out := fs.String("out", "", "report file (default pdb-print-report-<time>.json)")
+	targets, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc := &printing.Service{Log: log}
+	defer svc.Close()
+	in := bufio.NewReader(os.Stdin)
+	r, err := report.Run(ctx, report.Options{
+		Version: appVersion(), DB: devicedb.Default(), Targets: targets, Identify: *identify, Print: *print,
+		Out: os.Stdout, Svc: svc,
+		Confirm: func(q string) bool {
+			fmt.Printf("%s [y/N] ", q)
+			answer, _ := in.ReadString('\n')
+			return strings.EqualFold(strings.TrimSpace(answer), "y")
+		},
+	})
+	if err != nil {
+		return err
+	}
+	b, err := r.JSON(*raw)
+	if err != nil {
+		return err
+	}
+	if *out == "" {
+		*out = "pdb-print-report-" + time.Now().Format("20060102-150405") + ".json"
+	}
+	if err := os.WriteFile(*out, b, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote %s. Attach it to a GitHub issue for the printer (check it first: addresses and serials are masked unless --raw).\n", *out)
 	return nil
 }

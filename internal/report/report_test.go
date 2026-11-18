@@ -1,0 +1,106 @@
+package report
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
+)
+
+func TestRedact(t *testing.T) {
+	host, _ := os.Hostname()
+	r := &Report{
+		Candidates: []discovery.Candidate{{Kind: "tcp", Host: "192.168.1.40", Port: 9100}, {Kind: "usb", Device: "/dev/usb/lp0", Serial: "000G5G313834"}},
+		Queries:    []Query{{Target: "192.168.1.40:9100", Name: "~HI", Reply: "IP 192.168.1.40 MAC aa:bb:cc:dd:ee:ff on " + host + " serial 000G5G313834"}},
+	}
+	b, err := r.JSON(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"192.168.1.40", "aa:bb:cc:dd:ee:ff", "000G5G313834", host} {
+		if secret != "" && bytes.Contains(b, []byte(secret)) {
+			t.Errorf("%q not masked:\n%s", secret, b)
+		}
+	}
+	if bytes.Count(b, []byte("host-1")) != 3 {
+		t.Errorf("one address should become the same token everywhere:\n%s", b)
+	}
+	raw, _ := r.JSON(true)
+	if !bytes.Contains(raw, []byte("192.168.1.40")) {
+		t.Error("--raw masked the report")
+	}
+}
+
+// fakeZebra answers ~HI like the GK420d did and records everything it receives.
+func fakeZebra(t *testing.T) (port string, got *bytes.Buffer) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got = &bytes.Buffer{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 256)
+			_ = c.SetReadDeadline(time.Now().Add(time.Second))
+			n, _ := c.Read(buf)
+			got.Write(buf[:n])
+			if bytes.Contains(buf[:n], []byte("~HI")) {
+				_, _ = c.Write([]byte("\x02GK420d-200dpi,V61.17.11Z,8,2104KB\x03\r\n"))
+			}
+			c.Close()
+		}
+	}()
+	_, port, _ = net.SplitHostPort(ln.Addr().String())
+	return port, got
+}
+
+func options(port string, identify bool, confirm func(string) bool) Options {
+	return Options{
+		DB: devicedb.Default(), Targets: []string{"127.0.0.1"}, Port: port, Identify: identify, Confirm: confirm,
+		Out: &bytes.Buffer{}, NoUSB: true,
+		SysDescr: func(context.Context, string) (string, error) { return "", errors.New("no snmp") },
+	}
+}
+
+// Identify queries can print a page on a printer that doesn't understand them: ask first.
+func TestIdentifyAsksFirst(t *testing.T) {
+	port, got := fakeZebra(t)
+	asked := false
+	r, err := Run(context.Background(), options(port, true, func(q string) bool { asked = true; return false }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !asked || got.Len() != 0 || len(r.Candidates) != 1 {
+		t.Errorf("asked=%v, printer received %q, %d candidates", asked, got.String(), len(r.Candidates))
+	}
+}
+
+func TestIdentifyZebra(t *testing.T) {
+	port, _ := fakeZebra(t)
+	r, err := Run(context.Background(), options(port, true, func(string) bool { return true }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hi *Query
+	for i := range r.Queries {
+		if r.Queries[i].Name == "zpl ~HI" {
+			hi = &r.Queries[i]
+		}
+	}
+	if hi == nil || !strings.Contains(hi.Reply, "GK420d-200dpi") {
+		t.Errorf("queries %+v", r.Queries)
+	}
+}
