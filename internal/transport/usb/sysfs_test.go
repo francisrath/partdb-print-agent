@@ -15,7 +15,7 @@ func fakeSysfs(t *testing.T, printers map[string][4]string) string {
 	root := t.TempDir()
 	for lp, p := range printers { // p = vendor, product, serial, ieee1284
 		dev := filepath.Join(root, "devices", "usb1", "1-1", "port-"+lp)
-		iface := filepath.Join(dev, "1-1:1.0")
+		iface := filepath.Join(dev, "1-1.1.0") // real name 1-1:1.0; ":" is invalid on Windows
 		must(t, os.MkdirAll(iface, 0o755))
 		must(t, os.WriteFile(filepath.Join(dev, "idVendor"), []byte(p[0]+"\n"), 0o644))
 		must(t, os.WriteFile(filepath.Join(dev, "idProduct"), []byte(p[1]+"\n"), 0o644))
