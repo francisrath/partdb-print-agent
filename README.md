@@ -60,8 +60,9 @@ bin/pdb-print discover                                        # find printers on
 print. For a printer pdb-print doesn't support yet, `pdb-print report` writes a file to attach to a
 GitHub issue: discovery data, SNMP values and, with `--identify` (asks per printer, since a printer
 that doesn't understand a query may print it), the replies to each printer language's identify
-query; `--print` adds a test label on supported printers. IP/MAC addresses, serial numbers and the
-host name are masked unless `--raw`.
+query; `--print` adds a test label on supported printers. IP/MAC addresses, serial numbers (USB and
+IEEE 1284 device ID; inside printer replies only from 3 characters on) and the host name are masked
+unless `--raw` – check the file before you post it.
 
 Each printer in the config names its `model` (from the device database; it picks the driver). USB
 printers on Linux are found by `usb_id` (and `serial`, for two identical printers) at every job, so

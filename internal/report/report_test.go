@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -127,5 +128,26 @@ func TestReportRejectsIPv6Target(t *testing.T) {
 	o.Targets = []string{"::1"}
 	if _, err := Run(context.Background(), o); err == nil || time.Since(start) > time.Second {
 		t.Errorf("err %v after %v", err, time.Since(start))
+	}
+}
+
+// Serial fields are masked whatever their length; free-text replies whole-word from 3 characters.
+func TestRedactShortSerialFields(t *testing.T) {
+	r := &Report{Candidates: []discovery.Candidate{{Kind: "usb", Device: "/dev/usb/lp0", Serial: "Q", IEEE1284: map[string]string{"MDL": "X", "SN": "AB"}}},
+		Queries: []Query{{Target: "x", Name: "q", Reply: "ABC took 1 ms, sn K7Q22Z9X", TookMS: 1}}}
+	r.Candidates = append(r.Candidates, discovery.Candidate{Kind: "usb", Device: "/dev/usb/lp1", IEEE1284: map[string]string{"SERN": "K7Q22Z9X"}})
+	b, err := r.JSON(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Report
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("redacted report isn't valid JSON: %v", err)
+	}
+	if c := back.Candidates[0]; c.Serial == "Q" || c.IEEE1284["SN"] == "AB" {
+		t.Errorf("short serial fields not masked: %+v", c)
+	}
+	if q := back.Queries[0]; q.Reply != "ABC took 1 ms, sn serial-3" || q.TookMS != 1 {
+		t.Errorf("free text: %+v", q)
 	}
 }

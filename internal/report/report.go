@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/netip"
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
@@ -230,28 +231,51 @@ var (
 	bareMACRe = regexp.MustCompile(`(?i)\b(BR[WN])?[0-9a-f]{12}\b`)
 )
 
-// JSON renders the report; unless raw, IPv4 addresses (host-N, the same token for the same
-// address), MAC addresses, USB serial numbers and this computer's name are masked.
+// serialKeys are IEEE 1284 device ID keys that carry a serial number.
+var serialKeys = map[string]bool{"SN": true, "SER": true, "SERN": true, "SERIAL": true, "SERIALNUMBER": true}
+
+// JSON renders the report; unless raw, IPv4/IPv6 addresses (host-N, the same token for the
+// same address), MAC addresses, serial numbers and this computer's name are masked. Serial
+// fields are masked whatever their length; inside free text (replies) a serial is replaced
+// as a whole word from 3 characters on – shorter values would hit unrelated text.
 func (r *Report) JSON(raw bool) ([]byte, error) {
-	b, err := json.MarshalIndent(r, "", "  ")
-	if err != nil || raw {
-		return b, err
+	if raw {
+		return json.MarshalIndent(r, "", "  ")
+	}
+	tokens := map[string]string{} // serial → serial-N
+	token := func(v string) string {
+		if v == "" {
+			return ""
+		}
+		if tokens[v] == "" {
+			tokens[v] = fmt.Sprintf("serial-%d", len(tokens)+1)
+		}
+		return tokens[v]
+	}
+	masked := *r
+	masked.Candidates = make([]discovery.Candidate, len(r.Candidates))
+	for i, c := range r.Candidates {
+		c.Serial = token(c.Serial)
+		if c.IEEE1284 != nil {
+			m := make(map[string]string, len(c.IEEE1284))
+			for _, k := range slices.Sorted(maps.Keys(c.IEEE1284)) {
+				m[k] = c.IEEE1284[k]
+				if serialKeys[k] {
+					m[k] = token(c.IEEE1284[k])
+				}
+			}
+			c.IEEE1284 = m
+		}
+		masked.Candidates[i] = c
+	}
+	b, err := json.MarshalIndent(&masked, "", "  ")
+	if err != nil {
+		return nil, err
 	}
 	s := string(b)
-	n := 0
-	var serials []string
-	for _, c := range r.Candidates {
-		serials = append(serials, c.Serial)
-		for k, v := range c.IEEE1284 { // serials printers report in their IEEE 1284 device ID
-			if k == "SN" || k == "SER" || k == "SERN" || k == "SERIAL" || k == "SERIALNUMBER" {
-				serials = append(serials, v)
-			}
-		}
-	}
-	for _, sn := range serials {
-		if len(sn) > 2 && strings.Contains(s, sn) {
-			n++
-			s = strings.ReplaceAll(s, sn, fmt.Sprintf("serial-%d", n))
+	for v, tok := range tokens {
+		if len(v) >= 3 {
+			s = regexp.MustCompile(`\b`+regexp.QuoteMeta(v)+`\b`).ReplaceAllString(s, tok)
 		}
 	}
 	if h, _ := os.Hostname(); len(h) > 2 {
@@ -260,12 +284,12 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 	s = macRe.ReplaceAllString(s, "xx:xx:xx:xx:xx:xx")
 	s = bareMACRe.ReplaceAllString(s, "${1}xxxxxxxxxxxx")
 	s = ipv6Re.ReplaceAllString(s, "ipv6-address")
-	tokens := map[string]string{}
+	hosts := map[string]string{}
 	s = ipv4Re.ReplaceAllStringFunc(s, func(ip string) string {
-		if tokens[ip] == "" {
-			tokens[ip] = fmt.Sprintf("host-%d", len(tokens)+1)
+		if hosts[ip] == "" {
+			hosts[ip] = fmt.Sprintf("host-%d", len(hosts)+1)
 		}
-		return tokens[ip]
+		return hosts[ip]
 	})
 	return []byte(s), nil
 }
