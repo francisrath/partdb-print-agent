@@ -113,10 +113,19 @@ Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen-icons.sh`
 (needs `brew install librsvg imagemagick`, plus `iconutil` from macOS); the output is committed.
 
-Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`,
-`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brotherpt`.
+Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brother`,
+`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brother`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
+
+## Adding a printer
+
+A printer that an existing driver family can already talk to (e.g. another Brother QL or PT with the
+same protocol) is an entry in `internal/devicedb/data/*.yaml`: its id, driver and dialect, dpi and head
+pins, how it identifies itself (USB id, IEEE 1284 model, status model code), which media it takes and
+any quirks. Add a golden test vector for it if you can; `go test ./internal/devicedb` checks the data.
+A new protocol family is a package under `internal/driver/` that registers itself; a new connection
+type is a package under `internal/transport/`.
 
 ## License
 MIT

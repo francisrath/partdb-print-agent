@@ -64,7 +64,7 @@ Addresses below are placeholders; the real printer IP and Part-DB URL live in th
 
 ## Conventions
 - Go ≥ 1.23, `go vet` + `staticcheck` clean, table-driven tests, no global state.
-- Package layout suggestion: `internal/config`, `internal/partdb`, `internal/render`, `internal/driver/brotherql`,
+- Package layout suggestion: `internal/config`, `internal/partdb`, `internal/render`, `internal/driver/brother`, `internal/devicedb`,
   `internal/transport/{tcp,usb}`, `internal/queue`, `internal/server`, `internal/source/hotfolder`.
 - Keep the `Driver` and `Transport` interfaces from architecture §7 so phase-2 drivers drop in.
 - Never send real print jobs from tests; use the virtual printer. Hardware tests behind a build tag (`//go:build hardware`).

@@ -419,6 +419,24 @@ PDF ──► PDFium (wasm, sandboxed) ──► RGBA @ native dots ──► or
 
 ## 7. Drivers and transports
 
+### 7.0 How it is wired today
+
+The sketch in 7.1 was the starting point; the code now works like this:
+
+* **Device database** (`internal/devicedb`, YAML embedded in the binary): models (driver family,
+  dialect, dpi, head pins, allowed transports, how to recognise them, quirks such as cut bytes or pin
+  order) and media (geometry, print area, offset pins, unprintable edges). A model an existing family
+  can print is a data change only.
+* **Driver registry** (`internal/driver`): families register in `init`; a driver is built per printer
+  from its model and options and owns the whole flow after rendering: `Status`, `Print` (encode, send,
+  pace, confirm) and `Encode` (for `--dry-run`). `internal/driver/brother` covers the QL (`ql`) and
+  PT-9500PC (`pt-cbp`) dialects.
+* **Transport registry** (`internal/transport`): connection kinds (`tcp`, `usb`) register in `init`.
+  The printing service hands drivers a connection that opens on first use, so a QL that answers over
+  SNMP never gets a TCP connection just for a status check.
+* **Printing service** (`internal/printing`): per-printer lock, model and media resolution, rendering
+  (tape: full width, edges trimmed with a warning in the job result), dispatch to the driver.
+
 ### 7.1 Driver plugin interface
 
 ```go
@@ -682,7 +700,7 @@ cmd/pdb-print-tray/       tray app (separate binary on Win/mac)
 internal/core/            jobs, queue (bbolt), router, state machine
 internal/partdb/          API client, PrintJob client, mercure SSE, oauth
 internal/render/          pdfium wasm, orient, threshold, colour split, impose (pdfcpu)
-internal/driver/{brotherql,brotherpt,zpl,epl,tspl,escpos,dymolw,dymolm,niimbot,phomemo,ipp,osqueue,exec,virtual}
+internal/driver/{brother,zpl,epl,tspl,escpos,dymolw,dymolm,niimbot,phomemo,ipp,osqueue,exec,virtual}
 internal/transport/{tcp,usb,ble,serial,ipp,osqueue}
 internal/discovery/
 internal/localapi/        HTTP API, auth, CORS, handoff HMAC
