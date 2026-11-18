@@ -504,6 +504,56 @@ func (s *Server) PrintFile(ctx context.Context, source, printerID, path string) 
 	return err
 }
 
+// EnsureAgentID returns the agent id for Part-DB's print job API, generating and saving it on first use.
+func (s *Server) EnsureAgentID() (string, error) {
+	if id := s.config().AgentID; id != "" {
+		return id, nil
+	}
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80 // UUID version 4, RFC 4122 variant
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	return id, s.update(func(c *config.Config) error {
+		c.AgentID = id
+		return nil
+	})
+}
+
+// AgentPrinters are the configured printers, as reported to Part-DB.
+func (s *Server) AgentPrinters() []partdb.AgentPrinter {
+	var out []partdb.AgentPrinter
+	for _, p := range s.config().Printers {
+		out = append(out, partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media})
+	}
+	return out
+}
+
+// PrintJob prints a print job from Part-DB's job API on the printer the job names.
+func (s *Server) PrintJob(ctx context.Context, instanceID string, job partdb.Job) (string, error) {
+	pl := job.Payload
+	what := fmt.Sprintf("%s %s · profile %d", pl.ElementType, pl.ElementIDs, pl.ProfileID)
+	p, err := s.printer(job.Printer)
+	if err != nil {
+		s.record(jobFor("Part-DB job", what, job.Printer, nil, err))
+		return "", err
+	}
+	var res *printing.Result
+	in, err := s.config().Instance(instanceID)
+	if err == nil {
+		var pdf []byte
+		if pdf, err = partdb.FromInstance(in).GenerateLabels(ctx, pl.ProfileID, pl.ElementIDs, pl.ElementType); err == nil {
+			res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
+		}
+	}
+	s.record(jobFor("Part-DB job", what, p.ID, res, err))
+	if err != nil {
+		return "", err
+	}
+	return resultText(res), nil
+}
+
 func defaultStr(s, def string) string {
 	if s == "" {
 		return def

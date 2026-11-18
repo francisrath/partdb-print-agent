@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/server"
 	"github.com/zalando/go-keyring"
 )
 
@@ -182,5 +185,53 @@ func TestPrintersTestDryRun(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(out); !bytes.HasSuffix(b, []byte{0x1a}) {
 		t.Error("no job written")
+	}
+}
+
+func TestServeLogsWhichPartDBItFetchesJobsFrom(t *testing.T) {
+	partDB := httptest.NewServer(http.NotFoundHandler()) // no agent API: the loop just waits
+	t.Cleanup(partDB.Close)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfgText := fmt.Sprintf("instances:\n  - id: home\n    base_url: %s\n    token: tcp_test\n  - id: work\n    base_url: https://partdb.example.org\n", partDB.URL)
+	if err := os.WriteFile(path, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	a := &app{cfg: cfg, cfgPath: path, log: slog.New(slog.NewTextHandler(&logs, nil))}
+	srv := server.New(cfg, path, nil, a.log, "127.0.0.1:0", "test")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := a.startAgentJobs(ctx, srv)
+	cancel()
+	wg.Wait()
+
+	out := logs.String()
+	if !strings.Contains(out, `msg="fetching print jobs" instance=home url=`+partDB.URL) {
+		t.Errorf("no startup line for the instance with a token:\n%s", out)
+	}
+	if !strings.Contains(out, `msg="not fetching print jobs" instance=work`) || !strings.Contains(out, "API token") {
+		t.Errorf("no line saying why the instance without a token is skipped:\n%s", out)
+	}
+}
+
+func TestServeWithoutPartDBSaysSo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("log_level: info\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	a := &app{cfg: cfg, cfgPath: path, log: slog.New(slog.NewTextHandler(&logs, nil))}
+	a.startAgentJobs(context.Background(), server.New(cfg, path, nil, a.log, "127.0.0.1:0", "test")).Wait()
+
+	if out := logs.String(); !strings.Contains(out, `msg="not fetching print jobs" reason="no Part-DB connected"`) {
+		t.Errorf("want a plain reason when no Part-DB is set up:\n%s", out)
 	}
 }

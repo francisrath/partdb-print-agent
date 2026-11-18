@@ -19,6 +19,7 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/zalando/go-keyring"
 )
@@ -392,5 +393,42 @@ func TestConnectLinkAndLongIDs(t *testing.T) {
 	}
 	if body := handoff("3,,5"); !strings.Contains(body, "Invalid element ids.") {
 		t.Errorf("malformed ids:\n%s", body)
+	}
+}
+
+func TestAgentJobsHooks(t *testing.T) {
+	h := newHarness(t)
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+
+	id, err := h.srv.EnsureAgentID()
+	if err != nil || !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(id) {
+		t.Fatalf("agent id %q %v", id, err)
+	}
+	if again, _ := h.srv.EnsureAgentID(); again != id {
+		t.Errorf("agent id changed: %q → %q", id, again)
+	}
+	if saved, _ := os.ReadFile(h.srv.CfgPath); !strings.Contains(string(saved), "agent_id: "+id) {
+		t.Errorf("agent id not saved:\n%s", saved)
+	}
+
+	if ps := h.srv.AgentPrinters(); len(ps) != 1 || ps[0].ID != "ql" || ps[0].Model != "QL-810W" || ps[0].Media != "dk-22210" {
+		t.Errorf("printers: %+v", ps)
+	}
+
+	var job partdb.Job
+	job.ID, job.Type, job.Printer = 7, "print", "ql"
+	job.Payload.ProfileID, job.Payload.ElementType, job.Payload.ElementIDs = 2, "part", "32"
+	res, err := h.srv.PrintJob(context.Background(), h.srv.config().Instances[0].ID, job)
+	if err != nil || !strings.Contains(res, "page(s)") {
+		t.Fatalf("print job: %q %v", res, err)
+	}
+	<-h.jobs
+	if j := h.srv.jobs[0]; j.Source != "Part-DB job" || !strings.Contains(j.What, "part 32") {
+		t.Errorf("history: %+v", j)
+	}
+
+	job.Printer = "gone"
+	if _, err := h.srv.PrintJob(context.Background(), h.srv.config().Instances[0].ID, job); err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Errorf("unknown printer: %v", err)
 	}
 }
