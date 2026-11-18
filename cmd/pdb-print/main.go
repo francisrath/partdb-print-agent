@@ -143,6 +143,13 @@ func run(ctx context.Context, args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
+	pdftoppm := cfg.Pdftoppm
+	if v := os.Getenv("PDB_PRINT_PDFTOPPM"); v != "" {
+		pdftoppm = v
+	}
+	if a.svc.Pdftoppm, err = render.FindPdftoppm(pdftoppm); err != nil {
+		log.Warn("pdftoppm not usable", "err", err)
+	}
 	defer a.svc.Close()
 	a.log.Debug("config", "path", path)
 
@@ -326,7 +333,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		defer cancel()
 		_ = hs.Shutdown(sctx)
 	}()
-	a.log.Info("web UI ready", "url", "http://"+ln.Addr().String(), "config", a.cfgPath)
+	a.log.Info("web UI ready", "url", "http://"+ln.Addr().String(), "config", a.cfgPath, "renderer", a.renderer())
 	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -430,4 +437,12 @@ func (a *app) printers(ctx context.Context, args []string) error {
 		return a.printPDF(ctx, p.ID, *dryRun, printing.TestCard(p.Model, appVersion()))
 	}
 	return errors.New("usage: printers list | printers status ID | printers test ID [--dry-run OUT.bin]")
+}
+
+// renderer names the PDF renderer jobs start with.
+func (a *app) renderer() string {
+	if a.svc.Pdftoppm != nil {
+		return "pdftoppm (" + a.svc.Pdftoppm.Bin + ")"
+	}
+	return "pdfium"
 }

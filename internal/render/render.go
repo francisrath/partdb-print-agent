@@ -162,14 +162,8 @@ func (r *Renderer) Close() error {
 // Rows run along the feed direction; columns are printhead dots.
 // A Renderer is not safe for concurrent use.
 func (r *Renderer) Render(pdf []byte, o Options) ([]*image.Gray, error) {
-	if len(pdf) > MaxPDFBytes {
-		return nil, fmt.Errorf("PDF too large (%d bytes, max %d)", len(pdf), MaxPDFBytes)
-	}
-	if o.WidthDots <= 0 {
-		return nil, errors.New("render: WidthDots must be set")
-	}
-	if o.Threshold == 0 {
-		o.Threshold = 128
+	if err := check(pdf, &o); err != nil {
+		return nil, err
 	}
 	p := r.instance
 	doc, err := p.OpenDocument(&requests.OpenDocument{File: &pdf})
@@ -203,33 +197,9 @@ func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options
 	if err != nil {
 		return nil, err
 	}
-	wMM, hMM := size.Width*mmPerPt, size.Height*mmPerPt
-	rot, err := rotation(o.Rotate, wMM, hMM, o.MediaWidthMM)
+	rot, w, h, err := layout(size.Width, size.Height, o, budget, r.maxPixels)
 	if err != nil {
 		return nil, err
-	}
-	crossMM, feedMM := wMM, hMM
-	if rot == enums.FPDF_PAGE_ROTATION_90_CW || rot == enums.FPDF_PAGE_ROTATION_270_CW {
-		crossMM, feedMM = hMM, wMM
-	}
-	if o.CheckSize && (math.Abs(crossMM-o.MediaWidthMM) > widthToleranceMM ||
-		(o.MediaLengthMM > 0 && math.Abs(feedMM-o.MediaLengthMM) > 1)) {
-		media := fmt.Sprintf("%g mm", o.MediaWidthMM)
-		if o.MediaLengthMM > 0 {
-			media = fmt.Sprintf("%g×%g mm", o.MediaWidthMM, o.MediaLengthMM)
-		}
-		return nil, fmt.Errorf("%w: label is %.1f×%.1f mm, loaded media is %s", ErrSize, wMM, hMM, media)
-	}
-	// Render straight at the target dot size: resampling afterwards would smear QR modules.
-	w, h := o.WidthDots, o.LengthDots
-	if h == 0 {
-		h = int(math.Round(feedMM * float64(w) / crossMM))
-	}
-	if h <= 0 || h > 100000 {
-		return nil, fmt.Errorf("bad raster length %d", h)
-	}
-	if *budget -= w * h; *budget < 0 {
-		return nil, fmt.Errorf("PDF too large to rasterise (over %d megapixels in total)", r.maxPixels>>20)
 	}
 
 	page, err := p.FPDF_LoadPage(&requests.FPDF_LoadPage{Document: doc, Index: index})
@@ -265,6 +235,55 @@ func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options
 		return nil, err
 	}
 	return threshold(buf.Buffer, stride.Stride, w, h, o.Threshold), nil
+}
+
+// check validates the input common to both renderers and fills in defaults.
+func check(pdf []byte, o *Options) error {
+	if len(pdf) > MaxPDFBytes {
+		return fmt.Errorf("PDF too large (%d bytes, max %d)", len(pdf), MaxPDFBytes)
+	}
+	if o.WidthDots <= 0 {
+		return errors.New("render: WidthDots must be set")
+	}
+	if o.Threshold == 0 {
+		o.Threshold = 128
+	}
+	return nil
+}
+
+// layout applies the size check and picks the clockwise rotation and the raster size
+// (cross-feed × feed dots) for a page of wPt×hPt (as displayed, i.e. after /Rotate).
+// It takes the raster from *budget, failing once the PDF exceeds maxPixels in total.
+func layout(wPt, hPt float64, o Options, budget *int, maxPixels int) (rot enums.FPDF_PAGE_ROTATION, w, h int, err error) {
+	wMM, hMM := wPt*mmPerPt, hPt*mmPerPt
+	rot, err = rotation(o.Rotate, wMM, hMM, o.MediaWidthMM)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	crossMM, feedMM := wMM, hMM
+	if rot == enums.FPDF_PAGE_ROTATION_90_CW || rot == enums.FPDF_PAGE_ROTATION_270_CW {
+		crossMM, feedMM = hMM, wMM
+	}
+	if o.CheckSize && (math.Abs(crossMM-o.MediaWidthMM) > widthToleranceMM ||
+		(o.MediaLengthMM > 0 && math.Abs(feedMM-o.MediaLengthMM) > 1)) {
+		media := fmt.Sprintf("%g mm", o.MediaWidthMM)
+		if o.MediaLengthMM > 0 {
+			media = fmt.Sprintf("%g×%g mm", o.MediaWidthMM, o.MediaLengthMM)
+		}
+		return 0, 0, 0, fmt.Errorf("%w: label is %.1f×%.1f mm, loaded media is %s", ErrSize, wMM, hMM, media)
+	}
+	// Render straight at the target dot size: resampling afterwards would smear QR modules.
+	w, h = o.WidthDots, o.LengthDots
+	if h == 0 {
+		h = int(math.Round(feedMM * float64(w) / crossMM))
+	}
+	if h <= 0 || h > 100000 {
+		return 0, 0, 0, fmt.Errorf("bad raster length %d", h)
+	}
+	if *budget -= w * h; *budget < 0 {
+		return 0, 0, 0, fmt.Errorf("PDF too large to rasterise (over %d megapixels in total)", maxPixels>>20)
+	}
+	return rot, w, h, nil
 }
 
 // threshold converts BGRx pixels to pure black/white. No dithering: barcodes stay hard-edged.

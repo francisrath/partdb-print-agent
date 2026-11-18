@@ -19,6 +19,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
+	"github.com/francisrath/partdb-print-agent/internal/render"
 )
 
 // fakePT plays a PT-9500PC with 36 mm laminated tape behind a driver.Transport: it answers
@@ -409,5 +410,47 @@ func TestPrintCarriesTrimWarning(t *testing.T) {
 	}
 	if len(res.Warnings) == 0 || !strings.Contains(res.Warnings[0], "trimmed") {
 		t.Errorf("warnings %q", res.Warnings)
+	}
+}
+
+// A broken pdftoppm must not fail the job: the service falls back to PDFium.
+func TestPdftoppmFallsBackToPDFium(t *testing.T) {
+	s, log := logged(t)
+	s.Pdftoppm = &render.Pdftoppm{Bin: "/nonexistent/pdftoppm", Info: "/nonexistent/pdfinfo"}
+	m, _ := devicedb.Default().Media("tze-36")
+	pages, err := s.Render(pdfgen.Page(36, 20, "0 g 9 0 18 20 re f"), ptPrinter("tze-36", ""), &m)
+	if err != nil || len(pages) != 1 {
+		t.Fatalf("%d pages, %v", len(pages), err)
+	}
+	if !strings.Contains(log.String(), "rendering with PDFium") {
+		t.Errorf("fallback not logged:\n%s", log)
+	}
+}
+
+// With pdftoppm installed, the tape path renders the same geometry as with PDFium.
+func TestPTRendersWithPdftoppm(t *testing.T) {
+	pp, err := render.FindPdftoppm("on")
+	if err != nil || pp == nil {
+		t.Skip("pdftoppm not installed")
+	}
+	s, log := logged(t)
+	s.Pdftoppm = pp
+	m, _ := devicedb.Default().Media("tze-36")
+	pages, err := s.Render(pdfgen.Page(36, 20, "0 g 9 0 18 20 re f"), ptPrinter("tze-36", ""), &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := pages[0].Bounds().Dx(); w != 384 {
+		t.Fatalf("width %d dots, want 384", w)
+	}
+	if n := blackCols(pages[0], 10); n < 254 || n > 258 {
+		t.Errorf("18 mm bar is %d dots, want ~256", n)
+	}
+	// A label that doesn't fit is refused without trying PDFium too.
+	if _, err := s.Render(pdfgen.Page(62, 20, "0 g 0 0 1 1 re f"), ptPrinter("tze-36", ""), &m); !errors.Is(err, render.ErrSize) {
+		t.Errorf("size check: %v", err)
+	}
+	if s.r != nil || strings.Contains(log.String(), "PDFium") {
+		t.Errorf("fell back to PDFium:\n%s", log)
 	}
 }
