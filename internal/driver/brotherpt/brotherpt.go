@@ -213,9 +213,23 @@ func WaitPage(ctx context.Context, t driver.Transport, timeout time.Duration) er
 	}
 }
 
+// readStatus reads one 32-byte status. A read timeout in the middle of a reply waits on
+// (twice) for the rest, so a pause can't shift the stream by a partial status.
 func readStatus(t driver.Transport) (*driver.Status, byte, error) {
 	buf := make([]byte, 32)
-	if _, err := io.ReadFull(t, buf); err != nil {
+	for n, pauses := 0, 0; n < len(buf); {
+		k, err := t.Read(buf[n:])
+		n += k
+		if err == nil {
+			continue
+		}
+		if n > 0 && n < len(buf) && errors.Is(err, os.ErrDeadlineExceeded) && pauses < 2 {
+			pauses++
+			continue
+		}
+		if n == len(buf) {
+			break
+		}
 		if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, driver.ErrNoReadback) {
 			return nil, 0, fmt.Errorf("%w: %w", driver.ErrNoReadback, err) // keep the cause: EOF means the device is gone
 		}

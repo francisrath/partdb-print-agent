@@ -220,14 +220,23 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// scripted replays status replies, one per Read of 32 bytes; then reads time out.
-type scripted struct{ replies [][]byte }
+// scripted replays status replies, one chunk per Read; then reads time out. With
+// gapAfterFirst, one read times out after the first chunk.
+type scripted struct {
+	replies       [][]byte
+	gapAfterFirst bool
+	reads         int
+}
 
 func (s *scripted) Open(context.Context) error  { return nil }
 func (s *scripted) Write(p []byte) (int, error) { return len(p), nil }
 func (s *scripted) Close() error                { return nil }
 func (s *scripted) Kind() string                { return "test" }
 func (s *scripted) Read(p []byte) (int, error) {
+	s.reads++
+	if s.gapAfterFirst && s.reads == 2 {
+		return 0, os.ErrDeadlineExceeded
+	}
 	if len(s.replies) == 0 {
 		time.Sleep(20 * time.Millisecond)
 		return 0, os.ErrDeadlineExceeded
@@ -242,15 +251,15 @@ func TestWaitPageSkipsPhaseChange(t *testing.T) {
 	done := reply(func(b []byte) { b[18] = 0x01 })
 	coverOpen := reply(func(b []byte) { b[18], b[9] = 0x02, 0x10 })
 
-	if err := WaitPage(context.Background(), &scripted{[][]byte{phase, phase, done}}, time.Second); err != nil {
+	if err := WaitPage(context.Background(), &scripted{replies: [][]byte{phase, phase, done}}, time.Second); err != nil {
 		t.Errorf("phase, phase, completed: %v", err)
 	}
 	var de *driver.Error
-	if err := WaitPage(context.Background(), &scripted{[][]byte{phase, coverOpen}}, time.Second); !errors.As(err, &de) || de.Code != driver.CoverOpen {
+	if err := WaitPage(context.Background(), &scripted{replies: [][]byte{phase, coverOpen}}, time.Second); !errors.As(err, &de) || de.Code != driver.CoverOpen {
 		t.Errorf("error status: %v", err)
 	}
 	start := time.Now()
-	if err := WaitPage(context.Background(), &scripted{[][]byte{phase}}, 200*time.Millisecond); !errors.Is(err, driver.ErrNoReadback) {
+	if err := WaitPage(context.Background(), &scripted{replies: [][]byte{phase}}, 200*time.Millisecond); !errors.Is(err, driver.ErrNoReadback) {
 		t.Errorf("no completion: %v", err)
 	}
 	if time.Since(start) > 2*time.Second {
@@ -265,7 +274,7 @@ func TestStatusSkipsStaleReplies(t *testing.T) {
 		reply(func(b []byte) { b[18] = 0x01 }),
 		realReply(),
 	}
-	tr := &scripted{stale}
+	tr := &scripted{replies: stale}
 	s, err := New().Status(context.Background(), tr)
 	if err != nil || s.Done || s.Code != driver.OK {
 		t.Fatalf("%+v %v", s, err)
@@ -275,8 +284,19 @@ func TestStatusSkipsStaleReplies(t *testing.T) {
 	}
 }
 
+// A status split by a read timeout (a pause mid-reply) must not shift the stream.
+func TestReadStatusAcrossTimeout(t *testing.T) {
+	r := realReply()
+	tr := &scripted{replies: [][]byte{r[:10], r[10:]}}
+	tr.gapAfterFirst = true
+	s, typ, err := readStatus(tr)
+	if err != nil || typ != statusReply || s.Media.ID != "tze-36" {
+		t.Fatalf("%+v %02x %v", s, typ, err)
+	}
+}
+
 func TestStatus(t *testing.T) {
-	s, err := New().Status(context.Background(), &scripted{[][]byte{realReply()}})
+	s, err := New().Status(context.Background(), &scripted{replies: [][]byte{realReply()}})
 	if err != nil || s.Code != driver.OK || s.Media.ID != "tze-36" {
 		t.Fatalf("%+v %v", s, err)
 	}

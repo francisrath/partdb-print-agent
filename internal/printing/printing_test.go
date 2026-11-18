@@ -203,7 +203,38 @@ func TestPrintPTMediaMismatch(t *testing.T) {
 func TestPrintPTDeviceGone(t *testing.T) {
 	f := newFakePT()
 	f.failPages = true
-	_, err := service(t, f).Print(context.Background(), ptPrinter("", ""), "", labels(1))
+	s := service(t, f)
+	_, err := s.Print(context.Background(), ptPrinter("", ""), "", labels(1))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError {
+		t.Fatalf("err = %v, want COMMS_ERROR", err)
+	}
+	f.mu.Lock()
+	f.failPages, f.queue = false, nil // plugged back in
+	f.mu.Unlock()
+	if res, err := s.Print(context.Background(), ptPrinter("", ""), "", labels(1)); err != nil || !res.Confirmed {
+		t.Errorf("next job after replug: %+v %v", res, err)
+	}
+}
+
+// goneWhileWaiting loses the device after a page was sent, while waiting for its status.
+type goneWhileWaiting struct{ *fakePT }
+
+func (g goneWhileWaiting) Read(p []byte) (int, error) {
+	g.mu.Lock()
+	sentPage := len(g.writes) > 1
+	g.mu.Unlock()
+	if sentPage {
+		return 0, syscall.ENODEV
+	}
+	return g.fakePT.Read(p)
+}
+
+func TestPrintPTDeviceGoneWhileWaiting(t *testing.T) {
+	f := newFakePT()
+	s := service(t, f)
+	s.OpenTransport = func(*config.Printer) driver.Transport { return goneWhileWaiting{f} }
+	_, err := s.Print(context.Background(), ptPrinter("", ""), "", labels(1))
 	var de *driver.Error
 	if !errors.As(err, &de) || de.Code != driver.CommsError {
 		t.Fatalf("err = %v, want COMMS_ERROR", err)

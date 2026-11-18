@@ -288,8 +288,12 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		return nil, errors.New("media unknown: set `media:` for this printer in the config")
 	}
 
+	pdf, err := source(&media)
+	if err != nil {
+		return nil, err
+	}
 	start := time.Now()
-	pages, err := s.rasterise(p, &media, source)
+	pages, err := s.rasterise(pdf, p, &media)
 	if err != nil {
 		return nil, err
 	}
@@ -336,12 +340,8 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	return res, nil
 }
 
-// rasterise gets the PDF from source and renders it for media.
-func (s *Service) rasterise(p *config.Printer, media *driver.Media, source Source) ([]*image.Gray, error) {
-	pdf, err := source(media)
-	if err != nil {
-		return nil, err
-	}
+// rasterise renders pdf for media and maps render errors to driver codes.
+func (s *Service) rasterise(pdf []byte, p *config.Printer, media *driver.Media) ([]*image.Gray, error) {
 	start := time.Now()
 	pages, err := s.render(pdf, p, media)
 	if errors.Is(err, render.ErrSize) {

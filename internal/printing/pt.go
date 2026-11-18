@@ -65,8 +65,12 @@ func (s *Service) printPT(ctx context.Context, p *config.Printer, dryRun string,
 		return nil, errors.New("media unknown: set `media:` for this printer in the config")
 	}
 
+	pdf, err := source(&media)
+	if err != nil {
+		return nil, err
+	}
 	start := time.Now()
-	pages, err := s.rasterise(p, &media, source)
+	pages, err := s.rasterise(pdf, p, &media)
 	if err != nil {
 		return nil, err
 	}

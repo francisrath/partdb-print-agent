@@ -339,6 +339,12 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 		Media:     r.FormValue("media"), Rotate: r.FormValue("rotate"), Cut: r.FormValue("cut"),
 	}
 	err := s.update(func(c *config.Config) error {
+		for _, old := range c.Printers {
+			if old.ID == p.ID && old.Driver != "brother-ql" {
+				// the form only knows QL over TCP
+				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, old.Driver)
+			}
+		}
 		if _, err := brotherql.New().Capabilities(p.Model); err != nil {
 			return err
 		}
@@ -346,10 +352,6 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("unknown media %q", p.Media)
 		}
 		for i := range c.Printers {
-			if c.Printers[i].ID == p.ID && c.Printers[i].Driver != "brother-ql" {
-				// the form only knows QL over TCP
-				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, c.Printers[i].Driver)
-			}
 			if c.Printers[i].ID == p.ID {
 				// keep settings the form doesn't show
 				old := c.Printers[i]
@@ -460,6 +462,8 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	st, err := s.Svc.Status(ctx, p)
 	switch {
+	case errors.Is(err, driver.ErrNoReadback) && p.Driver == "brother-pt":
+		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
 	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
