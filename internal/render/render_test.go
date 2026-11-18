@@ -242,3 +242,60 @@ func TestTestCardTextFitsRendered(t *testing.T) {
 		}
 	}
 }
+
+func TestCompilationCache(t *testing.T) {
+	if cacheDir() == "" {
+		t.Skip("interpreter platform: no compilation cache")
+	}
+	dir := t.TempDir()
+	golden := filepath.Join("testdata", "29x46_portrait_29mm.png")
+	renderWith := func() {
+		t.Helper()
+		r, err := newRenderer(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		pages, err := r.Render(testPDF(29, 46, "AMS1117-3.3"), Options{WidthDots: 306, MediaWidthMM: 29})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(golden)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		want, err := png.Decode(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := countDiff(pages[0], want); diff != 0 {
+			t.Errorf("%d pixels differ from %s", diff, golden)
+		}
+	}
+	cacheFiles := func() []string {
+		var files []string
+		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				files = append(files, p)
+			}
+			return nil
+		})
+		return files
+	}
+
+	renderWith() // cold: compiles and fills the cache
+	files := cacheFiles()
+	if len(files) == 0 {
+		t.Fatal("no cache files written")
+	}
+	renderWith() // warm: loads from the cache
+
+	// A corrupt cache must not stop rendering.
+	for _, f := range files {
+		if err := os.WriteFile(f, []byte("garbage"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	renderWith()
+}
