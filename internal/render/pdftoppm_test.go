@@ -89,8 +89,13 @@ func TestPdftoppmMissing(t *testing.T) {
 	if !errors.Is(err, ErrPdftoppm) {
 		t.Errorf("want ErrPdftoppm, got %v", err)
 	}
-	if p, err := FindPdftoppm("off"); p != nil || err != nil {
-		t.Errorf("off: %v %v", p, err)
+	for _, interp := range []bool{false, true} {
+		if p, err := findPdftoppm("off", interp); p != nil || err != nil {
+			t.Errorf("off: %v %v", p, err)
+		}
+	}
+	if p, err := findPdftoppm("auto", false); p != nil || err != nil {
+		t.Errorf("auto with a compiling wazero: %v %v", p, err)
 	}
 	if _, err := FindPdftoppm("/nonexistent/pdftoppm"); err == nil {
 		t.Error("missing explicit path accepted")
@@ -105,7 +110,7 @@ func withRotate(pdf []byte, deg int) []byte {
 // pdftoppm must give the same sizes, rotations and errors as PDFium, and nearly the
 // same pixels (the rasterisers round edges differently, by at most a dot).
 func TestPdftoppmMatchesPDFium(t *testing.T) {
-	pp, err := FindPdftoppm("auto")
+	pp, err := FindPdftoppm("on")
 	if err != nil || pp == nil {
 		t.Skip("pdftoppm not installed")
 	}

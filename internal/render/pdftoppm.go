@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -28,15 +29,26 @@ type Pdftoppm struct {
 	maxPixels int
 }
 
-// FindPdftoppm resolves setting: "off" disables, "" or "auto" looks up pdftoppm on PATH
-// (nil, nil when absent), anything else is the path of pdftoppm. pdfinfo is taken
-// from the same directory, else from PATH.
+// interpreted: wazero has no compiler here, so PDFium takes about a minute per label.
+var interpreted = runtime.GOARCH == "arm" || runtime.GOARCH == "386"
+
+// FindPdftoppm resolves setting: "" or "auto" uses pdftoppm from PATH where PDFium is
+// interpreted (32-bit ARM and x86), "on" uses it from PATH everywhere, "off" never;
+// anything else is the path of pdftoppm. nil, nil = use PDFium. pdfinfo is taken from
+// pdftoppm's directory, else from PATH.
 func FindPdftoppm(setting string) (*Pdftoppm, error) {
+	return findPdftoppm(setting, interpreted)
+}
+
+func findPdftoppm(setting string, interpreted bool) (*Pdftoppm, error) {
 	bin := setting
 	switch setting {
 	case "off":
 		return nil, nil
-	case "", "auto":
+	case "", "auto", "on":
+		if setting != "on" && !interpreted {
+			return nil, nil
+		}
 		p, err := exec.LookPath("pdftoppm")
 		if err != nil {
 			return nil, nil

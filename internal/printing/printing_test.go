@@ -434,7 +434,7 @@ func TestPdftoppmFallsBackToPDFium(t *testing.T) {
 
 // With pdftoppm installed, the tape path renders the same geometry as with PDFium.
 func TestPTRendersWithPdftoppm(t *testing.T) {
-	pp, err := render.FindPdftoppm("auto")
+	pp, err := render.FindPdftoppm("on")
 	if err != nil || pp == nil {
 		t.Skip("pdftoppm not installed")
 	}
