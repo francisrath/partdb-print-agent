@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"image"
 	"io"
+
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 )
 
 // Driver turns rendered pages into a byte stream for one printer family.
@@ -34,26 +36,16 @@ type Transport interface {
 
 var ErrNoReadback = errors.New("transport has no read-back")
 
-type MediaKind string
-
-const (
-	Continuous MediaKind = "continuous"
-	DieCut     MediaKind = "die_cut"
+// Media and its kinds live in the device database; these aliases keep driver.Media working.
+type (
+	MediaKind = devicedb.MediaKind
+	Media     = devicedb.Media
 )
 
-// Media is a label stock as the renderer and driver see it.
-type Media struct {
-	ID                 string
-	Name               string
-	Kind               MediaKind
-	WidthMM, LengthMM  float64 // LengthMM = 0 for continuous
-	PrintableWidthDots int     // cross-feed
-	// WidthDots is the whole media width in dots when wider than the printable area (tape:
-	// labels are drawn across the full tape and the unprintable edges trimmed); 0 = same.
-	WidthDots           int
-	PrintableLengthDots int // feed; 0 for continuous
-	DPI                 int
-}
+const (
+	Continuous = devicedb.Continuous
+	DieCut     = devicedb.DieCut
+)
 
 type Capabilities struct {
 	DPI      int

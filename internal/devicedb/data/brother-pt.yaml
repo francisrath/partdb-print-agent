@@ -1,0 +1,25 @@
+# Brother P-touch PT-9500PC (Command Reference, CBP-RASTER Mode, 2003). Cut bytes ([ESC i M, ESC i K])
+# and pin order were settled by printing on the real printer (2026-11-18).
+models:
+  - id: PT-9500PC
+    vendor: Brother
+    driver: brother
+    dialect: pt-cbp
+    dpi: 360
+    head_pins: 384
+    transports: [usb]
+    match: {usb: ["04f9:200f"], ieee1284_model: PT-9500PC}
+    media: [tze-6, tze-9, tze-12, tze-18, tze-24, tze-36]
+    quirks:
+      min_lines: 57
+      max_lines: 14173
+      margin: 28
+      pin_order: reversed
+      pacing: per_page
+      status_while_printing: busy
+      cut_modes:
+        chain: [0x40, 0x00]
+        per_label: [0x40, 0x08]
+        none: [0x00, 0x00]
+        half: [0x00, 0x04]
+    defaults: {cut: chain}

@@ -1,0 +1,10 @@
+# Brother TZe/HG tape at 360 dpi (PT-9500PC). From Brother's "PT-9500PC Command Reference, CBP-RASTER
+# Mode": tape and print-area width in dots (p.6), pins the Windows driver prints on (p.11). Labels are
+# drawn across the whole tape (width_dots) and the unprintable edges trimmed.
+media:
+  - {id: tze-6, name: 6 mm tape, kind: continuous, width_mm: 6, width_dots: 84, printable_width_dots: 64, dpi: 360, offset_pins: 160, edge_mm: 0.71}
+  - {id: tze-9, name: 9 mm tape, kind: continuous, width_mm: 9, width_dots: 128, printable_width_dots: 106, dpi: 360, offset_pins: 139, edge_mm: 0.78}
+  - {id: tze-12, name: 12 mm tape, kind: continuous, width_mm: 12, width_dots: 170, printable_width_dots: 150, dpi: 360, offset_pins: 117, edge_mm: 0.71}
+  - {id: tze-18, name: 18 mm tape, kind: continuous, width_mm: 18, width_dots: 256, printable_width_dots: 234, dpi: 360, offset_pins: 75, edge_mm: 0.78}
+  - {id: tze-24, name: 24 mm tape, kind: continuous, width_mm: 24, width_dots: 340, printable_width_dots: 320, dpi: 360, offset_pins: 32, edge_mm: 0.71}
+  - {id: tze-36, name: 36 mm tape, kind: continuous, width_mm: 36, width_dots: 512, printable_width_dots: 384, dpi: 360, offset_pins: 0, edge_mm: 4.52}

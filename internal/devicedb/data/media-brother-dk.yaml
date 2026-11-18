@@ -1,0 +1,15 @@
+# Brother DK rolls for QL printers at 300 dpi. Values from Brother's "Raster Command Reference"
+# (QL-800/810W/820NWB). offset_pins = the spec's "right margin" pins; QL labels are rendered at the
+# printable width (no width_dots, never trimmed).
+media:
+  - {id: dk-22214, name: 12 mm continuous, kind: continuous, width_mm: 12, printable_width_dots: 106, dpi: 300, offset_pins: 29}
+  - {id: dk-22210, name: 29 mm continuous, kind: continuous, width_mm: 29, printable_width_dots: 306, dpi: 300, offset_pins: 6}
+  - {id: dk-22225, name: 38 mm continuous, kind: continuous, width_mm: 38, printable_width_dots: 413, dpi: 300, offset_pins: 12}
+  - {id: dk-22223, name: 50 mm continuous, kind: continuous, width_mm: 50, printable_width_dots: 554, dpi: 300, offset_pins: 12}
+  - {id: dk-n55224, name: 54 mm continuous, kind: continuous, width_mm: 54, printable_width_dots: 590, dpi: 300, offset_pins: 0}
+  - {id: dk-22205, name: 62 mm continuous, kind: continuous, width_mm: 62, printable_width_dots: 696, dpi: 300, offset_pins: 12}
+  - {id: dk-11204, name: 17×54 mm die-cut, kind: die_cut, width_mm: 17, length_mm: 54, printable_width_dots: 165, printable_length_dots: 566, dpi: 300, offset_pins: 0}
+  - {id: dk-11201, name: 29×90 mm die-cut, kind: die_cut, width_mm: 29, length_mm: 90, printable_width_dots: 306, printable_length_dots: 991, dpi: 300, offset_pins: 6}
+  - {id: dk-11208, name: 38×90 mm die-cut, kind: die_cut, width_mm: 38, length_mm: 90, printable_width_dots: 413, printable_length_dots: 991, dpi: 300, offset_pins: 12}
+  - {id: dk-11209, name: 62×29 mm die-cut, kind: die_cut, width_mm: 62, length_mm: 29, printable_width_dots: 696, printable_length_dots: 271, dpi: 300, offset_pins: 12}
+  - {id: dk-11202, name: 62×100 mm die-cut, kind: die_cut, width_mm: 62, length_mm: 100, printable_width_dots: 696, printable_length_dots: 1109, dpi: 300, offset_pins: 12}

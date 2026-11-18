@@ -1,0 +1,33 @@
+# Brother QL label printers (Raster Command Reference QL-800/810W/820NWB). status_code = byte 4 of
+# the 32-byte status reply.
+models:
+  - id: QL-800
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp]
+    match: {status_code: 0x38}
+    media: &dk [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202]
+    quirks: &ql {min_lines: 150, max_lines: 11811, feed_margin: 35}
+  - id: QL-810W
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp]
+    match: {status_code: 0x39, snmp_descr: "QL-810W"}
+    media: *dk
+    quirks: *ql
+  - id: QL-820NWB
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp]
+    match: {status_code: 0x41}
+    media: *dk
+    quirks: *ql
