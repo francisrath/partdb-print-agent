@@ -159,42 +159,27 @@ func TestOnlineLockWithoutJobKeepsLastState(t *testing.T) {
 	}
 }
 
-// Reversed publication: check A has its result but hasn't stored it while check B would
-// run and store a newer one; A must not overwrite it later. Checks are serialised, so B
-// can't run until A has stored its result – B then uses it.
+// Reversed publication: check A has returned its result but not stored it yet while check
+// B arrives. Checks are serialised, so B waits (it never runs its own check) until A has
+// stored its result, and then uses it: nothing can overwrite a newer result later.
 func TestOnlineNoReversedPublication(t *testing.T) {
 	s := service(t, nil)
-	release := make(chan struct{})
-	inA := make(chan struct{})
-	var mu sync.Mutex
 	calls := 0
-	s.OnlineCheck = func(*config.Printer) bool {
-		mu.Lock()
-		calls++
-		first := calls == 1
-		mu.Unlock()
-		if first {
-			close(inA)
-			<-release // A holds its result here
-			return false
-		}
-		return true // B would see the printer online
-	}
+	s.OnlineCheck = func(*config.Printer) bool { calls++; return calls != 1 } // A: offline, B would be online
+	atPublish, release := make(chan struct{}), make(chan struct{})
+	s.beforePublish = func() { close(atPublish); <-release; s.beforePublish = nil } // A's result is in hand
+	bWaiting := make(chan struct{})
 	p := tcpPrinter("ql", "127.0.0.1:9")
 	a := make(chan bool, 1)
 	go func() { a <- s.Online(p) }()
-	<-inA
+	<-atPublish
+	s.waitingForCheck = func() { close(bWaiting) }
 	b := make(chan bool, 1)
 	go func() { b <- s.Online(p) }()
-	time.Sleep(100 * time.Millisecond)
-	mu.Lock()
-	if calls != 1 {
-		t.Fatalf("B checked (%d checks) while A's result was unpublished", calls)
-	}
-	mu.Unlock()
+	<-bWaiting // B is blocked behind A's check, deterministically
 	close(release)
-	if ra, rb := <-a, <-b; ra || rb {
-		t.Errorf("A %v, B %v: B must take A's stored result", ra, rb)
+	if ra, rb := <-a, <-b; ra || rb || calls != 1 {
+		t.Errorf("A %v, B %v, %d checks: B must take A's stored result", ra, rb, calls)
 	}
 	if up, fresh := s.cachedOnline(onlineKey(p)); up || !fresh {
 		t.Errorf("cache %v fresh %v", up, fresh)

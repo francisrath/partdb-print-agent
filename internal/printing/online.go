@@ -30,7 +30,12 @@ func (s *Service) Online(p *config.Printer) bool {
 		return up
 	}
 	probe := s.lockFor(&s.probes, p.ID)
-	probe.Lock() // a check already running for this printer: wait for its result
+	if !probe.TryLock() { // a check is already running for this printer: wait for its result
+		if s.waitingForCheck != nil {
+			s.waitingForCheck()
+		}
+		probe.Lock()
+	}
 	defer probe.Unlock()
 	if up, ok := s.cachedOnline(key); ok {
 		return up
@@ -46,6 +51,9 @@ func (s *Service) Online(p *config.Printer) bool {
 		return s.online[key].ok
 	}
 	up, done := s.check(p) // under the printer lock: a USB open can't collide with a starting job
+	if s.beforePublish != nil {
+		s.beforePublish()
+	}
 	s.mu.Lock()
 	if s.online == nil {
 		s.online = map[string]onlineState{}

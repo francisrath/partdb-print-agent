@@ -64,8 +64,11 @@ type Service struct {
 	online   map[string]onlineState
 	probes   map[string]*sync.Mutex // one online check per printer at a time
 	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
-	r        *render.Renderer
-	printers map[string]*sync.Mutex
+
+	beforePublish   func() // tests: between an online check returning and its result being stored
+	waitingForCheck func() // tests: an online call is about to wait for a running check
+	r               *render.Renderer
+	printers        map[string]*sync.Mutex
 }
 
 func (s *Service) Close() {
