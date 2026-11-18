@@ -323,8 +323,8 @@ func waitDone(ctx context.Context, t driver.Transport, n int, timeout time.Durat
 			return driver.ErrNoReadback // printer keeps talking but never reports completion
 		}
 		b, err := r.read()
-		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) && time.Now().Before(deadline) {
-			continue // read timed out: long label still printing
+		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) {
+			continue // read timed out: long label still printing (the deadline check handles a partial reply)
 		}
 		if err != nil {
 			return err

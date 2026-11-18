@@ -344,3 +344,14 @@ func TestQLPrintCancelledSendsNothing(t *testing.T) {
 		t.Errorf("err %v, %d bytes sent", err, tr.sent.Len())
 	}
 }
+
+// A QL completion reply still partial when the job deadline passes is a framing error, as on the PT.
+func TestWaitDonePartialAtDeadline(t *testing.T) {
+	done := make([]byte, 32)
+	done[0], done[1], done[2], done[4], done[18] = 0x80, 0x20, 'B', 0x39, 0x01
+	err := waitDone(context.Background(), &scripted{replies: [][]byte{done[:10]}}, 1, 50*time.Millisecond)
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError {
+		t.Errorf("err = %v, want COMMS_ERROR", err)
+	}
+}
