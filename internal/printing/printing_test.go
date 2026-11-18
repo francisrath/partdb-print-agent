@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"image"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 )
 
@@ -253,5 +256,70 @@ func TestPrintPTDryRun(t *testing.T) {
 	}
 	if !bytes.HasPrefix(got, make([]byte, 100)) || got[len(got)-1] != 0x1a {
 		t.Error("dry-run file isn't a whole PT job")
+	}
+}
+
+// logged returns a Service whose log goes to the returned buffer.
+func logged(t *testing.T) (*Service, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	s := &Service{Log: slog.New(slog.NewTextHandler(&buf, nil))}
+	t.Cleanup(s.Close)
+	return s, &buf
+}
+
+func blackCols(img *image.Gray, y int) int {
+	n := 0
+	for x := range img.Bounds().Dx() {
+		if img.Pix[y*img.Stride+x] < 128 {
+			n++
+		}
+	}
+	return n
+}
+
+// Tape labels print at true size: a 36 mm-wide label is drawn across the full tape
+// (512 dots) and the unprintable 4.5 mm edges are trimmed, so 18 mm stay 18 mm.
+func TestPTRendersAtTapeWidth(t *testing.T) {
+	s, log := logged(t)
+	m, _ := brotherpt.LookupMedia("tze-36")
+	pages, err := s.Render(pdfgen.Page(36, 20, "0 g 9 0 18 20 re f"), ptPrinter("tze-36", ""), &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := pages[0].Bounds().Dx(); w != 384 {
+		t.Fatalf("width %d dots, want 384", w)
+	}
+	if n := blackCols(pages[0], 10); n < 254 || n > 258 {
+		t.Errorf("18 mm bar is %d dots, want ~256 (1:1 at 360 dpi)", n)
+	}
+	if strings.Contains(log.String(), "trimmed") {
+		t.Errorf("warned about trimmed ink on a label with clear edges:\n%s", log)
+	}
+}
+
+func TestPTWarnsWhenEdgeInked(t *testing.T) {
+	s, log := logged(t)
+	m, _ := brotherpt.LookupMedia("tze-36")
+	if _, err := s.Render(pdfgen.Page(36, 20, "0 g 0 0 36 20 re f"), ptPrinter("tze-36", ""), &m); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "trimmed") {
+		t.Error("no warning when the label has ink on the unprintable tape edges")
+	}
+}
+
+func TestPTTestCardFitsPrintArea(t *testing.T) {
+	s, log := logged(t)
+	m, _ := brotherpt.LookupMedia("tze-36")
+	pdf, err := TestCard("PT-9500PC", "test")(&m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Render(pdf, ptPrinter("tze-36", ""), &m); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(log.String(), "trimmed") {
+		t.Errorf("test card loses its border on the tape edges:\n%s", log)
 	}
 }

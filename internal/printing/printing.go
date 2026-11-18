@@ -39,9 +39,11 @@ func TestCard(model, version string) Source {
 		if length == 0 {
 			length = 40 // continuous: any length will do
 		}
-		return pdfgen.TestCard(m.WidthMM, length, []string{
-			"pdb-print test", model, m.ID, fmt.Sprintf("%d dots", m.PrintableWidthDots), version,
-		}), nil
+		lines := []string{"pdb-print test", model, m.ID, fmt.Sprintf("%d dots", m.PrintableWidthDots), version}
+		if m.WidthDots > m.PrintableWidthDots { // tape: card on the print area, edges left clear
+			return pdfgen.TestCardOn(m.WidthMM, float64(m.PrintableWidthDots)/float64(m.DPI)*25.4, length, lines), nil
+		}
+		return pdfgen.TestCard(m.WidthMM, length, lines), nil
 	}
 }
 
@@ -95,8 +97,9 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		}
 		s.r = r
 	}
-	return s.r.Render(pdf, render.Options{
-		WidthDots:     m.PrintableWidthDots,
+	width := max(m.WidthDots, m.PrintableWidthDots)
+	pages, err := s.r.Render(pdf, render.Options{
+		WidthDots:     width,
 		LengthDots:    m.PrintableLengthDots,
 		MediaWidthMM:  m.WidthMM,
 		MediaLengthMM: m.LengthMM,
@@ -104,6 +107,38 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		Rotate:        p.Rotate,
 		Threshold:     p.Threshold,
 	})
+	if err != nil || width == m.PrintableWidthDots {
+		return pages, err
+	}
+	inked := false
+	for i, pg := range pages {
+		var lost bool
+		pages[i], lost = trimEdges(pg, m.PrintableWidthDots)
+		inked = inked || lost
+	}
+	if inked {
+		s.Log.Warn("label has ink on the tape's unprintable edges; it was trimmed", "media", m.ID,
+			"edge_mm", float64(width-m.PrintableWidthDots)/2/float64(m.DPI)*25.4)
+	}
+	return pages, nil
+}
+
+// trimEdges keeps the centre printable columns of img; lost reports dark pixels cut off.
+func trimEdges(img *image.Gray, printable int) (out *image.Gray, lost bool) {
+	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	off := (w - printable) / 2
+	out = image.NewGray(image.Rect(0, 0, printable, h))
+	for y := 0; y < h; y++ {
+		row := img.Pix[y*img.Stride : y*img.Stride+w]
+		copy(out.Pix[y*out.Stride:], row[off:off+printable])
+		for x, v := range row {
+			if v < 128 && (x < off || x >= off+printable) {
+				lost = true
+				break
+			}
+		}
+	}
+	return out, lost
 }
 
 // Render rasterises pdf for media without printing (previews).

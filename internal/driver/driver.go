@@ -43,12 +43,15 @@ const (
 
 // Media is a label stock as the renderer and driver see it.
 type Media struct {
-	ID                  string
-	Name                string
-	Kind                MediaKind
-	WidthMM, LengthMM   float64 // LengthMM = 0 for continuous
-	PrintableWidthDots  int     // cross-feed
-	PrintableLengthDots int     // feed; 0 for continuous
+	ID                 string
+	Name               string
+	Kind               MediaKind
+	WidthMM, LengthMM  float64 // LengthMM = 0 for continuous
+	PrintableWidthDots int     // cross-feed
+	// WidthDots is the whole media width in dots when wider than the printable area (tape:
+	// labels are drawn across the full tape and the unprintable edges trimmed); 0 = same.
+	WidthDots           int
+	PrintableLengthDots int // feed; 0 for continuous
 	DPI                 int
 }
 

@@ -24,21 +24,21 @@ type mediaSpec struct {
 	offsetPins int // unprinted pins from pin 0 to the print area (p.11)
 }
 
-func tape(mm, dots, offset int) mediaSpec {
+func tape(mm, tapeDots, dots, offset int) mediaSpec {
 	return mediaSpec{driver.Media{
 		ID: "tze-" + strconv.Itoa(mm), Name: strconv.Itoa(mm) + " mm tape", Kind: driver.Continuous, WidthMM: float64(mm),
-		PrintableWidthDots: dots, DPI: dpi,
+		PrintableWidthDots: dots, WidthDots: tapeDots, DPI: dpi,
 	}, offset}
 }
 
-// Tape widths (p.6) and the pins the Windows driver prints them on (p.11).
+// Tape width and print area in dots (p.6) and the pins the Windows driver prints them on (p.11).
 var mediaTable = []mediaSpec{
-	tape(6, 64, 160),
-	tape(9, 106, 139),
-	tape(12, 150, 117),
-	tape(18, 234, 75),
-	tape(24, 320, 32),
-	tape(36, 384, 0),
+	tape(6, 84, 64, 160),
+	tape(9, 128, 106, 139),
+	tape(12, 170, 150, 117),
+	tape(18, 256, 234, 75),
+	tape(24, 340, 320, 32),
+	tape(36, 512, 384, 0),
 }
 
 func lookupMedia(id string) (mediaSpec, bool) {

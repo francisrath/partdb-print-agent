@@ -65,6 +65,16 @@ func Text(s string) string {
 // TestCard is a printer test label of wMM×hMM: border, 1 mm rulers on the
 // top and left edges, a 0.5 mm checkerboard and the given text lines.
 func TestCard(wMM, hMM float64, lines []string) []byte {
+	return Page(wMM, hMM, testCard(wMM, hMM, lines))
+}
+
+// TestCardOn is a cardMM-wide test card centred on a wider pageMM×hMM page
+// (tape: the card covers the print area, the unprintable edges stay blank).
+func TestCardOn(pageMM, cardMM, hMM float64, lines []string) []byte {
+	return Page(pageMM, hMM, fmt.Sprintf("q 1 0 0 1 %.3f 0 cm\n%sQ\n", (pageMM-cardMM)/2, testCard(cardMM, hMM, lines)))
+}
+
+func testCard(wMM, hMM float64, lines []string) string {
 	var c strings.Builder
 	fmt.Fprintf(&c, "0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n0.15 w\n", wMM-1, hMM-1)
 	for x := 1.0; x < wMM-0.5; x++ { // top ruler, longer tick every 5 mm
@@ -97,7 +107,7 @@ func TestCard(wMM, hMM float64, lines []string) []byte {
 			}
 		}
 	}
-	return Page(wMM, hMM, c.String())
+	return c.String()
 }
 
 // helveticaWidths are the advance widths (1/1000 em) of ASCII 32–126 in Helvetica,
