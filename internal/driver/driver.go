@@ -93,7 +93,10 @@ type Status struct {
 	Detail string
 	Model  string
 	Media  *Media // loaded media, if the printer reports it
-	Done   bool   // a "printing completed" notification
+	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
+	// non-laminated, lettering, hg, av); "" otherwise.
+	MediaType string
+	Done      bool // a "printing completed" notification
 }
 
 // Error is a printer-side failure with a normalised code.
