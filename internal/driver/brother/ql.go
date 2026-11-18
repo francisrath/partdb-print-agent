@@ -64,7 +64,7 @@ func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, er
 	}
 	s, err := parseQLStatus(b)
 	if s != nil {
-		s.Via = "tcp"
+		s.Via = t.Kind() // answered over the printer connection itself (usb, tcp)
 	}
 	return s, err
 }
@@ -254,7 +254,7 @@ func (d *ql) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 		default:
 			res.Message = "sent (unconfirmed: printer didn't report printing)"
 		}
-	case job.Status != nil && job.Status.Via == "tcp":
+	case job.Status != nil && job.Status.Via != "":
 		err := waitDone(ctx, t, len(job.Pages), timeout)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback):

@@ -355,3 +355,23 @@ func TestWaitDonePartialAtDeadline(t *testing.T) {
 		t.Errorf("err = %v, want COMMS_ERROR", err)
 	}
 }
+
+// The status names the connection it came over (usb or tcp), and Print waits for the
+// completion reply on that connection either way.
+func TestQLStatusViaConnection(t *testing.T) {
+	d := newQLForTest(t)
+	reply := make([]byte, 32)
+	reply[0], reply[1], reply[2], reply[4], reply[10], reply[11] = 0x80, 0x20, 'B', 0x39, 29, 0x0a
+	done := append([]byte(nil), reply...)
+	done[18] = 0x01
+	tr := &scripted{replies: [][]byte{reply, done}}
+	tr.kind = "usb"
+	st, err := d.Status(context.Background(), tr)
+	if err != nil || st.Via != "usb" {
+		t.Fatalf("via %q, %v", st.Via, err)
+	}
+	res, err := d.Print(context.Background(), tr, qlJob(t, st))
+	if err != nil || !res.Confirmed {
+		t.Errorf("%+v %v", res, err)
+	}
+}
