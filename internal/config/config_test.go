@@ -96,10 +96,17 @@ printers:
 		"bad route":                  "routes: [{profile: 2, printer: nope}]",
 		"hot folder without printer": "hot_folder: {enabled: true}",
 		"hot folder bad pattern":     "hot_folder: {pattern: \"[\"}",
+		"pt over tcp":                "printers: [{id: a, driver: brother-pt, transport: {kind: tcp, host: x}}]",
+		"ql over usb":                "printers: [{id: a, driver: brother-ql, transport: {kind: usb, device: /dev/usb/lp0}}]",
+		"usb without device":         "printers: [{id: a, driver: brother-pt, transport: {kind: usb}}]",
 	} {
 		if _, err := Load(write(bad), true); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	c, err = Load(write("printers: [{id: pt, driver: brother-pt, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}}]"), true)
+	if err != nil || c.Printers[0].Transport.Device != "/dev/usb/lp0" {
+		t.Errorf("brother-pt over usb: %v", err)
 	}
 }
 

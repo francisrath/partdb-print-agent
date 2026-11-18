@@ -376,7 +376,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		st, err := printing.Status(ctx, p)
+		st, err := a.svc.Status(ctx, p)
 		if errors.Is(err, driver.ErrNoReadback) {
 			fmt.Println("connected, but the printer sent no status reply")
 			return nil

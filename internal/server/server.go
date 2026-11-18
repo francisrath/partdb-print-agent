@@ -454,7 +454,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	st, err := printing.Status(ctx, p)
+	st, err := s.Svc.Status(ctx, p)
 	switch {
 	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
