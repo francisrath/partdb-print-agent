@@ -470,3 +470,41 @@ func TestPTStatusWithoutReplyIsNotOK(t *testing.T) {
 		t.Errorf("silent PT: %s", body)
 	}
 }
+
+func TestResultTextCarriesWarnings(t *testing.T) {
+	got := resultText(&printing.Result{Pages: 1, Media: "tze-36", Confirmed: true,
+		Warnings: []string{"label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"}})
+	if want := "1 page(s) on tze-36; warning: label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"; got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
+// A QL configured with the family name (driver: brother) can still be edited in the form.
+func TestSavePrinterAcceptsQLWithFamilyName(t *testing.T) {
+	h := newHarness(t)
+	for i := range h.srv.cfg.Printers {
+		h.srv.cfg.Printers[i].Driver = "brother"
+	}
+	h.post("/printers", url.Values{"id": {"ql"}, "model": {"QL-810W"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-22205"}})
+	if p, _ := h.srv.config().Printer("ql"); p.Media != "dk-22205" {
+		t.Errorf("not saved: %q, printer %+v", h.flash(), p)
+	}
+}
+
+// Whether a silent printer is a problem depends on the model, not on the driver name used.
+func TestPTStatusWithoutReplyFamilyName(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Driver: "brother", Model: "PT-9500PC", Media: "tze-24",
+		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}})
+	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
+	if body := h.do("GET", "/printers/pt/status", nil).Body.String(); !strings.Contains(body, `"ok":false`) {
+		t.Errorf("silent PT: %s", body)
+	}
+}
+
+func TestFormMediaTaggedWithModels(t *testing.T) {
+	h := newHarness(t)
+	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-800 QL-810W QL-820NWB"`) {
+		t.Error("media options don't say which models take them")
+	}
+}

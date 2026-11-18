@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +30,8 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/assets"
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
@@ -216,10 +217,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config()
 	data := map[string]any{
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
-		"Printers": cfg.Printers, "Models": brotherql.Models(),
+		"Printers": cfg.Printers, "Models": formModels(),
 	}
-	caps, _ := brotherql.New().Capabilities(brotherql.Models()[0])
-	data["Media"] = caps.Media
+	data["Media"] = formMedia()
 
 	var in *config.Instance
 	if len(cfg.Instances) > 0 {
@@ -340,15 +340,19 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.update(func(c *config.Config) error {
 		for _, old := range c.Printers {
-			if old.ID == p.ID && old.Driver != "brother-ql" {
-				// the form only knows QL over TCP
-				return fmt.Errorf("printer %q is a %s: edit it in the config file", p.ID, old.Driver)
+			if old.ID != p.ID {
+				continue
 			}
+			// the form only knows network QLs
+			if m, err := old.DeviceModel(); err != nil || !slices.Contains(formModels(), m.ID) || old.Transport.Kind != "tcp" {
+				return fmt.Errorf("printer %q is a %s %s: edit it in the config file", p.ID, old.Driver, old.Model)
+			}
+			p.Driver = old.Driver // keep the name the file uses
 		}
-		if _, err := brotherql.New().Capabilities(p.Model); err != nil {
-			return err
+		if !slices.Contains(formModels(), p.Model) {
+			return fmt.Errorf("unknown Brother QL model %s", p.Model)
 		}
-		if _, ok := brotherql.LookupMedia(p.Media); p.Media != "" && !ok {
+		if _, ok := printing.LookupMedia(&p, p.Media); p.Media != "" && !ok {
 			return fmt.Errorf("unknown media %q", p.Media)
 		}
 		for i := range c.Printers {
@@ -462,7 +466,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	st, err := s.Svc.Status(ctx, p)
 	switch {
-	case errors.Is(err, driver.ErrNoReadback) && p.Driver == "brother-pt":
+	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
 		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
 	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
@@ -586,6 +590,9 @@ func resultText(res *printing.Result) string {
 	s := fmt.Sprintf("%d page(s) on %s", res.Pages, res.Media)
 	if !res.Confirmed {
 		s += ", sent (unconfirmed)"
+	}
+	if len(res.Warnings) > 0 {
+		s += "; warning: " + strings.Join(res.Warnings, "; ")
 	}
 	return s
 }
@@ -728,4 +735,46 @@ func sameOrigin(a, b string) bool {
 	ua, err1 := url.Parse(a)
 	ub, err2 := url.Parse(b)
 	return err1 == nil && err2 == nil && ua.Scheme != "" && ua.Scheme == ub.Scheme && strings.EqualFold(ua.Host, ub.Host)
+}
+
+// formModels are the models the web form can set up: network Brother QLs. Other printers
+// are configured in the config file until the setup wizard.
+func formModels() []string {
+	var out []string
+	for _, m := range devicedb.Default().Models("brother") {
+		if slices.Contains(m.Transports, "tcp") {
+			out = append(out, m.ID)
+		}
+	}
+	return out
+}
+
+// needsStatus: printers that can't print without a status reply (PT) are not OK when silent.
+func needsStatus(p *config.Printer) bool {
+	m, err := p.DeviceModel()
+	return err == nil && m.QuirkBool("needs_status")
+}
+
+type formMediaOption struct {
+	devicedb.Media
+	Models string // space-separated model ids that take it (the form shows those for the selected model)
+}
+
+// formMedia lists the media of all form models, each tagged with the models that take it.
+func formMedia() []formMediaOption {
+	db := devicedb.Default()
+	var out []formMediaOption
+	idx := map[string]int{}
+	for _, id := range formModels() {
+		m, _ := db.Model(id)
+		for _, md := range db.MediaFor(m) {
+			if i, ok := idx[md.ID]; ok {
+				out[i].Models += " " + id
+				continue
+			}
+			idx[md.ID] = len(out)
+			out = append(out, formMediaOption{md, id})
+		}
+	}
+	return out
 }

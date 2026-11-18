@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 )
 
@@ -314,7 +314,7 @@ func blackCols(img *image.Gray, y int) int {
 // (512 dots) and the unprintable 4.5 mm edges are trimmed, so 18 mm stay 18 mm.
 func TestPTRendersAtTapeWidth(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	pages, err := s.Render(pdfgen.Page(36, 20, "0 g 9 0 18 20 re f"), ptPrinter("tze-36", ""), &m)
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +332,7 @@ func TestPTRendersAtTapeWidth(t *testing.T) {
 
 func TestPTWarnsWhenEdgeInked(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	if _, err := s.Render(pdfgen.Page(36, 20, "0 g 0 0 36 20 re f"), ptPrinter("tze-36", ""), &m); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestPTWarnsWhenEdgeInked(t *testing.T) {
 
 func TestPTTestCardFitsPrintArea(t *testing.T) {
 	s, log := logged(t)
-	m, _ := brotherpt.LookupMedia("tze-36")
+	m, _ := devicedb.Default().Media("tze-36")
 	pdf, err := TestCard("PT-9500PC", "test")(&m)
 	if err != nil {
 		t.Fatal(err)
@@ -353,5 +353,61 @@ func TestPTTestCardFitsPrintArea(t *testing.T) {
 	}
 	if strings.Contains(log.String(), "trimmed") {
 		t.Errorf("test card loses its border on the tape edges:\n%s", log)
+	}
+}
+
+// silent is a printer that takes bytes but never answers.
+type silent struct {
+	kind string
+	sent bytes.Buffer
+}
+
+func (s *silent) Open(context.Context) error  { return nil }
+func (s *silent) Write(p []byte) (int, error) { return s.sent.Write(p) }
+func (s *silent) Read([]byte) (int, error)    { return 0, os.ErrDeadlineExceeded }
+func (s *silent) Close() error                { return nil }
+func (s *silent) Kind() string                { return s.kind }
+
+// A PT that doesn't answer can't print (it paces labels on its replies): COMMS_ERROR at
+// once, before the PDF is fetched – not "set media in the config".
+func TestPrintSilentPTFailsFast(t *testing.T) {
+	s := service(t, nil)
+	s.OpenTransport = func(*config.Printer) driver.Transport { return &silent{kind: "usb"} }
+	fetched := false
+	_, err := s.Print(context.Background(), ptPrinter("", ""), "", func(*driver.Media) ([]byte, error) {
+		fetched = true
+		return nil, errors.New("not reached")
+	})
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError || fetched {
+		t.Fatalf("err = %v, fetched = %v; want COMMS_ERROR before fetching", err, fetched)
+	}
+}
+
+// A QL that gives no status (SNMP off, no ESC i S reply) prints blind, as it always has.
+func TestPrintSilentQLPrintsBlind(t *testing.T) {
+	s := service(t, nil)
+	tr := &silent{kind: "tcp"}
+	s.OpenTransport = func(*config.Printer) driver.Transport { return tr }
+	p := &config.Printer{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
+		Transport: config.Transport{Kind: "tcp", Host: "127.0.0.1", Port: 9100}}
+	res, err := s.Print(context.Background(), p, "", PDF(pdfgen.Page(29, 46, pdfgen.Text("QL"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Confirmed || res.Message != "sent (unconfirmed: printer gives no status)" || !bytes.HasSuffix(tr.sent.Bytes(), []byte{0x1a}) {
+		t.Errorf("result %+v, sent %d bytes", res, tr.sent.Len())
+	}
+}
+
+// Ink trimmed off the tape edges reaches the job result (and so Part-DB's job list).
+func TestPrintCarriesTrimWarning(t *testing.T) {
+	f := newFakePT()
+	res, err := service(t, f).Print(context.Background(), ptPrinter("", ""), "", PDF(pdfgen.Page(36, 20, "0 g 0 0 36 20 re f")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) == 0 || !strings.Contains(res.Warnings[0], "trimmed") {
+		t.Errorf("warnings %q", res.Warnings)
 	}
 }

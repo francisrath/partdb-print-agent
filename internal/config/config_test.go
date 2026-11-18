@@ -85,23 +85,26 @@ printers:
 		t.Errorf("PDB_PRINT_ALLOW_HTTP: %v", err)
 	}
 
-	for name, bad := range map[string]string{
-		"no id":                      "printers: [{driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad driver":                 "printers: [{id: a, driver: zpl, transport: {kind: tcp, host: x}}]",
-		"no host":                    "printers: [{id: a, driver: brother-ql, transport: {kind: tcp}}]",
-		"duplicate":                  "printers: [{id: a, driver: brother-ql, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, transport: {kind: tcp, host: x}}]",
-		"bad yaml":                   "printers: [",
-		"bad url":                    "instances: [{id: h, base_url: partdb.local}]",
-		"plain http":                 "instances: [{id: h, base_url: http://partdb.lan}]",
-		"bad route":                  "routes: [{profile: 2, printer: nope}]",
-		"hot folder without printer": "hot_folder: {enabled: true}",
-		"hot folder bad pattern":     "hot_folder: {pattern: \"[\"}",
-		"pt over tcp":                "printers: [{id: a, driver: brother-pt, transport: {kind: tcp, host: x}}]",
-		"ql over usb":                "printers: [{id: a, driver: brother-ql, transport: {kind: usb, device: /dev/usb/lp0}}]",
-		"usb without device":         "printers: [{id: a, driver: brother-pt, transport: {kind: usb}}]",
+	// each case has valid parts except the one it tests; want is part of the expected error
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"no id":                      {"printers: [{driver: brother-ql, model: QL-810W, transport: {kind: tcp, host: x}}]", "id is required"},
+		"bad driver":                 {"printers: [{id: a, driver: zpl, model: QL-810W, transport: {kind: tcp, host: x}}]", "zpl"},
+		"no host":                    {"printers: [{id: a, driver: brother-ql, model: QL-810W, transport: {kind: tcp}}]", "needs a host"},
+		"duplicate":                  {"printers: [{id: a, driver: brother-ql, model: QL-810W, transport: {kind: tcp, host: x}}, {id: a, driver: brother-ql, model: QL-810W, transport: {kind: tcp, host: x}}]", "defined twice"},
+		"no model":                   {"printers: [{id: a, driver: brother-pt, transport: {kind: usb, device: /dev/usb/lp0}}]", "unknown model"},
+		"bad yaml":                   {"printers: [", "yaml"},
+		"bad url":                    {"instances: [{id: h, base_url: partdb.local}]", "base_url"},
+		"plain http":                 {"instances: [{id: h, base_url: http://partdb.lan}]", "http"},
+		"bad route":                  {"routes: [{profile: 2, printer: nope}]", "routes[0]"},
+		"hot folder without printer": {"hot_folder: {enabled: true}", "hot_folder"},
+		"hot folder bad pattern":     {"hot_folder: {pattern: \"[\"}", "pattern"},
+		"pt over tcp":                {"printers: [{id: a, driver: brother-pt, model: PT-9500PC, transport: {kind: tcp, host: x}}]", "connects over usb"},
+		"ql over usb":                {"printers: [{id: a, driver: brother-ql, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0}}]", "connects over tcp"},
+		"usb without device":         {"printers: [{id: a, driver: brother-pt, model: PT-9500PC, transport: {kind: usb}}]", "needs a device"},
 	} {
-		if _, err := Load(write(bad), true); err == nil {
-			t.Errorf("%s: accepted", name)
+		_, err := Load(write(tc.yaml), true)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", name, err, tc.want)
 		}
 	}
 	c, err = Load(write("printers: [{id: pt, driver: brother-pt, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}}]"), true)
@@ -205,6 +208,46 @@ func TestHotFolderPath(t *testing.T) {
 	} {
 		if got, err := (HotFolder{Dir: in}).Path(); err != nil || got != want {
 			t.Errorf("Path(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
+func TestValidateModelDriver(t *testing.T) {
+	write := func(y string) string {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(p, []byte(y), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	ok := map[string]string{
+		"old QL name": "printers: [{id: a, driver: brother-ql, model: QL-810W, transport: {kind: tcp, host: x}}]",
+		"old PT name": "printers: [{id: a, driver: brother-pt, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}}]",
+		"family name": "printers: [{id: a, driver: brother, model: QL-820NWB, transport: {kind: tcp, host: x}, media: dk-11204}]",
+		"pt media":    "printers: [{id: a, driver: brother, model: PT-9500PC, transport: {kind: usb, device: /dev/usb/lp0}, media: tze-24}]",
+	}
+	for name, y := range ok {
+		if _, err := Load(write(y), true); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	bad := map[string][]string{
+		"printers: [{id: a, driver: brother-pt, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0}}]": {"brother-pt", "QL-810W"},
+		"printers: [{id: a, driver: brother, model: QL-9000, transport: {kind: tcp, host: x}}]":                 {"QL-9000", "QL-810W", "PT-9500PC"},
+		"printers: [{id: a, driver: brother, model: PT-9500PC, transport: {kind: tcp, host: x}}]":               {"PT-9500PC", "tcp"},
+		"printers: [{id: a, driver: brother, model: QL-810W, transport: {kind: tcp, host: x}, media: tze-24}]":  {"tze-24", "QL-810W"},
+		"printers: [{id: a, driver: zpl, model: QL-810W, transport: {kind: tcp, host: x}}]":                     {"zpl"},
+	}
+	for y, want := range bad {
+		_, err := Load(write(y), true)
+		if err == nil {
+			t.Errorf("accepted: %s", y)
+			continue
+		}
+		for _, w := range want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: error %q doesn't name %q", y, err, w)
+			}
 		}
 	}
 }

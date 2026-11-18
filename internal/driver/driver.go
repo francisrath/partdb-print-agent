@@ -7,20 +7,76 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"sort"
+	"sync"
+
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 )
 
-// Driver turns rendered pages into a byte stream for one printer family.
+// Driver prints on one printer of a family. It is built per printer from its device-database
+// model and options, and owns the whole print flow after rendering (encode, send, pace, confirm).
 type Driver interface {
-	ID() string
-	Capabilities(model string) (Capabilities, error)
-	// Probe identifies the model and loaded media (nil fields when unknown).
-	Probe(ctx context.Context, t Transport) (*DeviceInfo, error)
-	Validate(pages []*image.Gray, job *Job, media *Media) error
-	// Encode writes the job. Pages are 1 dot per pixel, black < 128, rows in feed order.
-	// ponytail: *image.Gray is mono only; two-colour (phase 2) needs a Raster with planes.
-	Encode(ctx context.Context, w io.Writer, pages []*image.Gray, job *Job, media *Media) error
-	// Status reads the current printer state; returns ErrNoReadback if the transport can't.
+	// Status reads the printer's state; ErrNoReadback if it can't say anything.
 	Status(ctx context.Context, t Transport) (*Status, error)
+	// Print validates, encodes and sends job, then waits for the printer to confirm where it can.
+	Print(ctx context.Context, t Transport, job *Job) (*Result, error)
+	// Encode writes the same byte stream Print would send (for --dry-run).
+	Encode(w io.Writer, job *Job) error
+}
+
+// Options are per-printer settings a driver may need besides the transport.
+type Options struct {
+	Host          string // network printers: for side channels such as SNMP
+	SNMPCommunity string
+	NoSNMP        bool
+}
+
+// Result is what a print did.
+type Result struct {
+	Pages     int
+	Media     string
+	Bytes     int
+	Confirmed bool   // the printer reported completion
+	Message   string // e.g. "printed", "sent (unconfirmed: …)"
+	Warnings  []string
+}
+
+var (
+	regMu    sync.Mutex
+	families = map[string]func(*devicedb.Model, Options) (Driver, error){}
+)
+
+// Register makes a driver family available; call it from the family package's init.
+func Register(family string, newDriver func(*devicedb.Model, Options) (Driver, error)) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	if _, dup := families[family]; dup {
+		panic("driver: family registered twice: " + family)
+	}
+	families[family] = newDriver
+}
+
+// New builds the driver for a model.
+func New(m *devicedb.Model, o Options) (Driver, error) {
+	regMu.Lock()
+	newDriver, ok := families[m.Driver]
+	regMu.Unlock()
+	if !ok {
+		return nil, &Error{Code: Unsupported, Detail: fmt.Sprintf("no driver %q for %s", m.Driver, m.ID)}
+	}
+	return newDriver(m, o)
+}
+
+// Families lists the registered driver families, sorted.
+func Families() []string {
+	regMu.Lock()
+	defer regMu.Unlock()
+	out := make([]string, 0, len(families))
+	for f := range families {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Transport is a byte pipe with optional read-back.
@@ -34,26 +90,16 @@ type Transport interface {
 
 var ErrNoReadback = errors.New("transport has no read-back")
 
-type MediaKind string
-
-const (
-	Continuous MediaKind = "continuous"
-	DieCut     MediaKind = "die_cut"
+// Media and its kinds live in the device database; these aliases keep driver.Media working.
+type (
+	MediaKind = devicedb.MediaKind
+	Media     = devicedb.Media
 )
 
-// Media is a label stock as the renderer and driver see it.
-type Media struct {
-	ID                 string
-	Name               string
-	Kind               MediaKind
-	WidthMM, LengthMM  float64 // LengthMM = 0 for continuous
-	PrintableWidthDots int     // cross-feed
-	// WidthDots is the whole media width in dots when wider than the printable area (tape:
-	// labels are drawn across the full tape and the unprintable edges trimmed); 0 = same.
-	WidthDots           int
-	PrintableLengthDots int // feed; 0 for continuous
-	DPI                 int
-}
+const (
+	Continuous = devicedb.Continuous
+	DieCut     = devicedb.DieCut
+)
 
 type Capabilities struct {
 	DPI      int
@@ -67,9 +113,12 @@ type DeviceInfo struct {
 	Media *Media
 }
 
-// Job holds per-job options; zero value = driver defaults.
+// Job is one print job after rendering.
 type Job struct {
-	Cut string // per_label (default) | last | none
+	Pages  []*image.Gray // 1 dot per pixel, black < 128, rows in feed order
+	Media  *Media
+	Cut    string  // "" = the model's default
+	Status *Status // the status read before printing; nil if the printer gave none
 }
 
 // Code is a normalised status code (architecture §9).
@@ -99,7 +148,9 @@ type Status struct {
 	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
 	// non-laminated, lettering, hg, av); "" otherwise.
 	MediaType string
-	Done      bool // a "printing completed" notification
+	Done      bool   // a "printing completed" notification
+	Idle      bool   // idle when read (QL over SNMP: confirms a job only if it was idle before)
+	Via       string // where the status came from: the driver's own protocol ("" ), or e.g. "snmp", "tcp"
 }
 
 // Error is a printer-side failure with a normalised code.

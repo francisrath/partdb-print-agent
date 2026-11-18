@@ -16,15 +16,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
@@ -88,6 +88,34 @@ func run(ctx context.Context, args []string) error {
 		fmt.Printf("pdb-print %s (%s %s/%s)\n", appVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
+	if cmd == "media" { // needs no config: it's what config errors point to
+		db := devicedb.Default()
+		var names []string // driver names in first-seen order, QLs first as before
+		media := map[string][]driver.Media{}
+		seen := map[string]bool{}
+		for _, f := range driver.Families() {
+			models := db.Models(f)
+			slices.SortStableFunc(models, func(a, b *devicedb.Model) int { return strings.Compare(b.Dialect, a.Dialect) })
+			for _, m := range models {
+				name := config.DriverName(m)
+				if _, ok := media[name]; !ok {
+					names = append(names, name)
+				}
+				for _, md := range db.MediaFor(m) {
+					if !seen[md.ID] {
+						seen[md.ID] = true
+						media[name] = append(media[name], md)
+					}
+				}
+			}
+		}
+		for _, name := range names {
+			for _, md := range media[name] {
+				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", name, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
+			}
+		}
+		return nil
+	}
 
 	if *cfgPath == "" {
 		*cfgPath = os.Getenv("PDB_PRINT_CONFIG")
@@ -127,18 +155,6 @@ func run(ctx context.Context, args []string) error {
 		return a.print(ctx, rest)
 	case "printers":
 		return a.printers(ctx, rest)
-	case "media":
-		ql, _ := brotherql.New().Capabilities("QL-810W")
-		pt, _ := brotherpt.New().Capabilities("PT-9500PC")
-		for _, d := range []struct {
-			id    string
-			media []driver.Media
-		}{{"brother-ql", ql.Media}, {"brother-pt", pt.Media}} {
-			for _, m := range d.media {
-				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", d.id, m.ID, m.Name, m.PrintableWidthDots, m.PrintableLengthDots)
-			}
-		}
-		return nil
 	}
 	g.Usage()
 	return fmt.Errorf("unknown command %q", cmd)

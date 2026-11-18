@@ -75,7 +75,7 @@
       <label>Model <select name="model">{{range .Models}}<option>{{.}}</option>{{end}}</select></label>
       <label>Host / IP <input name="host" required placeholder="192.168.1.50"></label>
       <label>Port <input name="port" type="number" value="9100" min="1" max="65535"></label>
-      <label>Media <select name="media"><option value="">as reported by the printer</option>{{range .Media}}<option value="{{.ID}}">{{.ID}} – {{.Name}}</option>{{end}}</select></label>
+      <label>Media <select name="media"><option value="">as reported by the printer</option>{{range .Media}}<option value="{{.ID}}" data-models="{{.Models}}">{{.ID}} – {{.Name}}</option>{{end}}</select></label>
       <label>Rotate <select name="rotate"><option>auto</option><option>0</option><option>90</option><option>180</option><option>270</option></select></label>
       <label>Cut <select name="cut"><option value="per_label">after each label</option><option value="last">after the last label</option><option value="none">never</option></select></label>
       <button>Save printer</button>

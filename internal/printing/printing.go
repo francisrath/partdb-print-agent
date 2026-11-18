@@ -1,5 +1,6 @@
-// Package printing runs a print job end to end: printer status → media → PDF → raster → driver → transport.
-// It is shared by the CLI and the local server.
+// Package printing runs a print job end to end: printer status → media → PDF → raster → driver.
+// It is shared by the CLI and the local server. Everything printer-specific lives in the
+// driver (internal/driver/...), chosen through the device database (internal/devicedb).
 package printing
 
 import (
@@ -9,22 +10,19 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
-	"net"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
-	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
-	"github.com/francisrath/partdb-print-agent/internal/snmp"
-	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
-	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
+	"github.com/francisrath/partdb-print-agent/internal/transport"
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
 
 // Source returns the PDF to print once the media is known.
@@ -47,17 +45,13 @@ func TestCard(model, version string) Source {
 	}
 }
 
-type Result struct {
-	Pages     int
-	Media     string
-	Bytes     int
-	Confirmed bool // the printer reported completion
-}
+// Result is what a print did.
+type Result = driver.Result
 
-// Service keeps one PDFium renderer warm and serialises jobs (and status queries) per printer.
+// Service keeps one PDFium renderer warm and serialises jobs per printer.
 type Service struct {
 	Log *slog.Logger
-	// OpenTransport returns the connection to a brother-pt printer; nil = by transport kind.
+	// OpenTransport returns the connection to a printer; nil = by transport kind.
 	// Tests put a fake printer here.
 	OpenTransport func(p *config.Printer) driver.Transport
 
@@ -87,13 +81,15 @@ func (s *Service) printerLock(id string) *sync.Mutex {
 	return s.printers[id]
 }
 
-func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*image.Gray, error) {
+// render rasterises pdf for m. Media wider than its print area (tape) is rendered at full
+// width and the edges trimmed; trimmed ink comes back as a warning.
+func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*image.Gray, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.r == nil {
 		r, err := render.New()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		s.r = r
 	}
@@ -108,7 +104,7 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		Threshold:     p.Threshold,
 	})
 	if err != nil || width == m.PrintableWidthDots {
-		return pages, err
+		return pages, nil, err
 	}
 	inked := false
 	for i, pg := range pages {
@@ -117,10 +113,10 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		inked = inked || lost
 	}
 	if inked {
-		s.Log.Warn("label has ink on the tape's unprintable edges; it was trimmed", "media", m.ID,
-			"edge_mm", float64(width-m.PrintableWidthDots)/2/float64(m.DPI)*25.4)
+		edge := float64(width-m.PrintableWidthDots) / 2 / float64(m.DPI) * 25.4
+		return pages, []string{fmt.Sprintf("label has ink on the tape's unprintable edges (%.1f mm); it was trimmed", edge)}, nil
 	}
-	return pages, nil
+	return pages, nil, nil
 }
 
 // trimEdges keeps the centre printable columns of img; lost reports dark pixels cut off.
@@ -143,139 +139,171 @@ func trimEdges(img *image.Gray, printable int) (out *image.Gray, lost bool) {
 
 // Render rasterises pdf for media without printing (previews).
 func (s *Service) Render(pdf []byte, p *config.Printer, m *driver.Media) ([]*image.Gray, error) {
-	return s.render(pdf, p, m)
+	pages, warnings, err := s.render(pdf, p, m)
+	for _, w := range warnings {
+		s.Log.Warn(w, "media", m.ID)
+	}
+	return pages, err
 }
 
-func addr(p *config.Printer) string {
-	return net.JoinHostPort(p.Transport.Host, strconv.Itoa(p.Transport.Port))
-}
-
-// LookupMedia finds a media id in the table of the printer's driver.
+// LookupMedia finds a media id the printer's model can print; with no (known) model, any
+// media in the device database.
 func LookupMedia(p *config.Printer, id string) (driver.Media, bool) {
-	if p.Driver == "brother-pt" {
-		return brotherpt.LookupMedia(id)
+	db := devicedb.Default()
+	if m, ok := db.Model(p.Model); ok {
+		for _, md := range db.MediaFor(m) {
+			if md.ID == id {
+				return md, true
+			}
+		}
+		return driver.Media{}, false
 	}
-	return brotherql.LookupMedia(id)
+	return db.Media(id)
 }
 
-func (s *Service) transport(p *config.Printer) driver.Transport {
+func options(p *config.Printer) driver.Options {
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP}
+}
+
+// lazyTransport opens the connection on first use, so a driver that gets its answer elsewhere
+// (a QL over SNMP) never connects. Open errors come back from the Read/Write that triggered them.
+type lazyTransport struct {
+	ctx    context.Context
+	t      driver.Transport
+	opened bool
+	err    error
+}
+
+func (l *lazyTransport) open() error {
+	if !l.opened {
+		l.opened, l.err = true, l.t.Open(l.ctx)
+	}
+	return l.err
+}
+
+func (l *lazyTransport) Open(context.Context) error { return l.open() }
+func (l *lazyTransport) Kind() string               { return l.t.Kind() }
+
+func (l *lazyTransport) Write(p []byte) (int, error) {
+	if err := l.open(); err != nil {
+		return 0, err
+	}
+	return l.t.Write(p)
+}
+
+func (l *lazyTransport) Read(p []byte) (int, error) {
+	if err := l.open(); err != nil {
+		return 0, err
+	}
+	return l.t.Read(p)
+}
+
+func (l *lazyTransport) Close() error {
+	if l.opened && l.err == nil {
+		return l.t.Close()
+	}
+	return nil
+}
+
+func (s *Service) connect(ctx context.Context, p *config.Printer) (*lazyTransport, error) {
 	if s.OpenTransport != nil {
-		return s.OpenTransport(p)
+		return &lazyTransport{ctx: ctx, t: s.OpenTransport(p)}, nil
 	}
-	if p.Transport.Kind == "usb" {
-		return usb.New(p.Transport.Device)
+	t, err := transport.New(p.Transport)
+	if err != nil {
+		return nil, err
 	}
-	return tcp.New(addr(p))
+	return &lazyTransport{ctx: ctx, t: t}, nil
 }
 
-// Status queries the printer. A PT that is printing a job answers BUSY without being
-// asked (it must not get a status request while it prints). brother-ql: SNMP first, then
-// the driver's status over TCP. driver.ErrNoReadback if the printer doesn't answer.
+// printer resolves the printer's model and builds its driver.
+func printer(p *config.Printer) (*devicedb.Model, driver.Driver, error) {
+	m, err := p.DeviceModel()
+	if err != nil {
+		return nil, nil, err
+	}
+	d, err := driver.New(m, options(p))
+	return m, d, err
+}
+
+// commsError maps errors that aren't the driver's own (e.g. failing to connect) to COMMS_ERROR.
+func commsError(err error) error {
+	var de *driver.Error
+	if err == nil || errors.Is(err, driver.ErrNoReadback) || errors.As(err, &de) || errors.Is(err, context.Canceled) {
+		return err
+	}
+	return &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+}
+
+// Status queries the printer. Models that must not be asked while printing (PT) answer BUSY
+// during a job without being asked. driver.ErrNoReadback if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
-	if p.Driver == "brother-pt" {
+	m, drv, err := printer(p)
+	if err != nil {
+		return nil, err
+	}
+	if m.QuirkString("status_while_printing") == "busy" {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
-			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: p.Model}, nil
+			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil
 		}
 		defer lock.Unlock()
-		t := s.transport(p)
-		if err := t.Open(ctx); err != nil {
-			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
-		}
-		defer t.Close()
-		return brotherpt.New().Status(ctx, t)
 	}
-	if ss, err := querySNMP(ctx, p); err == nil {
-		return statusFromSNMP(ss), nil
-	}
-	t := tcp.New(addr(p))
-	if err := t.Open(ctx); err != nil {
-		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+	t, err := s.connect(ctx, p)
+	if err != nil {
+		return nil, err
 	}
 	defer t.Close()
-	return brotherql.New().Status(ctx, t)
+	st, err := drv.Status(ctx, t)
+	return st, commsError(err)
 }
 
-func querySNMP(ctx context.Context, p *config.Printer) (*snmp.State, error) {
-	if p.NoSNMP {
-		return nil, errors.New("snmp disabled")
-	}
-	community := p.SNMPCommunity
-	if community == "" {
-		community = "public"
-	}
-	return snmp.Query(ctx, p.Transport.Host, community, 2*time.Second)
-}
-
-func statusFromSNMP(ss *snmp.State) *driver.Status {
-	st := &driver.Status{Code: driver.OK, Detail: ss.Display, Model: strings.TrimPrefix(ss.Model, "Brother ")}
-	if prob := ss.Problem(); prob != nil {
-		st.Code, st.Detail = prob.Code, prob.Detail
-	}
-	if kind, w, l, ok := ss.LoadedMedia(); ok {
-		if m, ok := brotherql.MediaFor(kind, w, l); ok {
-			st.Media = &m
-		} else {
-			st.Media = &driver.Media{ID: "unknown", Kind: kind, WidthMM: float64(w), LengthMM: float64(l)}
-		}
-	}
-	return st
-}
-
-// Print checks the printer (SNMP, else TCP status), settles the media (config or what the
-// printer reports), gets the PDF from source, renders, encodes and sends it, then waits for
-// the printer to confirm. With dryRun set, the byte stream goes to that file instead.
+// Print checks the printer, settles the media (config or what the printer reports), gets the
+// PDF from source, renders it and hands it to the driver, which sends it and waits for the
+// printer to confirm. With dryRun set, the byte stream goes to that file instead.
 func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (*Result, error) {
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
-	if p.Driver == "brother-pt" {
-		return s.printPT(ctx, p, dryRun, source)
-	}
 
-	drv := brotherql.New()
-	if _, err := drv.Capabilities(p.Model); err != nil {
+	model, drv, err := printer(p)
+	if err != nil {
 		return nil, err
 	}
-	var t *tcp.Transport
-	readback, viaSNMP, wasIdle := false, false, false
-	media, ok := brotherql.LookupMedia(p.Media)
+	media, ok := LookupMedia(p, p.Media)
 	if p.Media != "" && !ok {
 		return nil, fmt.Errorf("unknown media %q", p.Media)
 	}
+	var t *lazyTransport
+	var st *driver.Status
 	if dryRun == "" {
-		var st *driver.Status
-		if ss, err := querySNMP(ctx, p); err == nil {
-			st, viaSNMP, wasIdle = statusFromSNMP(ss), true, ss.Idle
-		} else {
-			s.Log.Debug("no SNMP status", "printer", p.ID, "err", err)
-		}
-		t = tcp.New(addr(p))
-		if err := t.Open(ctx); err != nil {
-			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+		if t, err = s.connect(ctx, p); err != nil {
+			return nil, err
 		}
 		defer t.Close()
-		if !viaSNMP {
-			var err error
-			st, err = drv.Status(ctx, t)
-			switch {
-			case errors.Is(err, driver.ErrNoReadback):
-				s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
-			case err != nil:
-				return nil, err
-			default:
-				readback = true
-			}
+		st, err = drv.Status(ctx, t)
+		switch {
+		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
+			return nil, &driver.Error{Code: driver.CommsError, Detail: "printer sent no status reply"}
+		case errors.Is(err, driver.ErrNoReadback):
+			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
+			st = nil
+		case err != nil:
+			return nil, commsError(err)
+		}
+		// connect now, before fetching and rendering, even if the status came over SNMP
+		if err := t.open(); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
 		if st != nil {
-			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "via", map[bool]string{true: "snmp", false: "tcp"}[viaSNMP])
+			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "type", st.MediaType, "via", st.Via)
 			if st.Code != driver.OK {
 				return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 			}
 			switch {
 			case st.Media == nil:
 			case st.Media.ID == "unknown":
-				s.Log.Warn("printer reports a roll this agent doesn't know; using the configured media", "loaded", MediaName(st.Media))
+				s.Log.Warn("printer reports media this agent doesn't know; using the configured media", "loaded", MediaName(st.Media))
 			case p.Media != "" && st.Media.ID != p.Media:
 				return nil, &driver.Error{Code: driver.MediaMismatch,
 					Detail: fmt.Sprintf("config says %s, printer has %s loaded", p.Media, MediaName(st.Media))}
@@ -293,57 +321,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		return nil, err
 	}
 	start := time.Now()
-	pages, err := s.rasterise(pdf, p, &media)
-	if err != nil {
-		return nil, err
-	}
-
-	var job bytes.Buffer
-	if err := drv.Encode(ctx, &job, pages, &driver.Job{Cut: p.Cut}, &media); err != nil {
-		return nil, err
-	}
-	res := &Result{Pages: len(pages), Media: media.ID, Bytes: job.Len()}
-	if dryRun != "" {
-		return res, os.WriteFile(dryRun, job.Bytes(), 0o644)
-	}
-	if _, err := t.Write(job.Bytes()); err != nil {
-		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
-	}
-	timeout := 30*time.Second + time.Duration(len(pages))*5*time.Second
-	msg := "sent (unconfirmed: printer gives no status)"
-	switch {
-	case viaSNMP:
-		done, err := s.waitSNMP(ctx, p, timeout)
-		switch {
-		case err != nil:
-			return nil, err
-		case done && wasIdle:
-			msg, res.Confirmed = "printed", true
-		case done:
-			// it was busy when we sent: the printing we saw may have been another job
-			msg = "sent (unconfirmed: printer was busy with another job)"
-		default:
-			msg = "sent (unconfirmed: printer didn't report printing)"
-		}
-	case readback:
-		err := brotherql.WaitDone(ctx, t, len(pages), timeout)
-		switch {
-		case errors.Is(err, driver.ErrNoReadback):
-			msg = "sent (unconfirmed: no completion status received)"
-		case err != nil:
-			return nil, err
-		default:
-			msg, res.Confirmed = "printed", true
-		}
-	}
-	s.Log.Info(msg, "printer", p.ID, "pages", len(pages), "bytes", job.Len(), "took", time.Since(start).Round(time.Millisecond))
-	return res, nil
-}
-
-// rasterise renders pdf for media and maps render errors to driver codes.
-func (s *Service) rasterise(pdf []byte, p *config.Printer, media *driver.Media) ([]*image.Gray, error) {
-	start := time.Now()
-	pages, err := s.render(pdf, p, media)
+	pages, warnings, err := s.render(pdf, p, &media)
 	if errors.Is(err, render.ErrSize) {
 		return nil, &driver.Error{Code: driver.MediaMismatch, Detail: err.Error() + " (set allow_scaling to print it scaled)"}
 	}
@@ -351,47 +329,29 @@ func (s *Service) rasterise(pdf []byte, p *config.Printer, media *driver.Media) 
 		return nil, &driver.Error{Code: driver.RenderError, Detail: err.Error()}
 	}
 	s.Log.Info("rendered", "pages", len(pages), "media", media.ID, "took", time.Since(start).Round(time.Millisecond))
-	return pages, nil
-}
-
-// waitSNMP polls until the printer has printed and is idle again (done), reports an
-// error, or the timeout passes (not done). SNMP has no per-job id, so Print only treats
-// "done" as confirmation when the printer was idle before the job was sent.
-// Observed on a QL-810W: idle → printing → other ("BUSY", cutting) → idle; errors show
-// as device down plus a Printer-MIB alert.
-// ponytail: "idle for 1 s after activity" = done; a printer that pauses longer between
-// pages of a big job would be reported done early.
-func (s *Service) waitSNMP(ctx context.Context, p *config.Printer, timeout time.Duration) (bool, error) {
-	const poll = 250 * time.Millisecond
-	deadline := time.Now().Add(timeout)
-	active, idle := false, 0
-	for first := true; time.Now().Before(deadline); first = false {
-		wait := poll
-		if first {
-			wait = 0 // a short job can finish within one poll interval
-		}
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-time.After(wait):
-		}
-		ss, err := querySNMP(ctx, p)
-		if err != nil {
-			continue
-		}
-		if prob := ss.Problem(); prob != nil {
-			return false, prob
-		}
-		switch {
-		case ss.Printing:
-			active, idle = true, 0
-		case ss.Idle && active:
-			if idle++; idle >= 4 {
-				return true, nil
-			}
-		}
+	for _, w := range warnings {
+		s.Log.Warn(w, "printer", p.ID)
 	}
-	return false, nil
+
+	job := &driver.Job{Pages: pages, Media: &media, Cut: p.Cut, Status: st}
+	if dryRun != "" {
+		var b bytes.Buffer
+		if err := drv.Encode(&b, job); err != nil {
+			return nil, err
+		}
+		res := &Result{Pages: len(pages), Media: media.ID, Bytes: b.Len(), Warnings: warnings}
+		return res, os.WriteFile(dryRun, b.Bytes(), 0o644)
+	}
+	res, err := drv.Print(ctx, t, job)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range res.Warnings {
+		s.Log.Warn(w, "printer", p.ID)
+	}
+	res.Warnings = append(warnings, res.Warnings...)
+	s.Log.Info(res.Message, "printer", p.ID, "pages", res.Pages, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
+	return res, nil
 }
 
 func MediaName(m *driver.Media) string {

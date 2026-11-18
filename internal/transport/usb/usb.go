@@ -7,7 +7,15 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/transport"
 )
+
+func init() {
+	transport.Register("usb", func(c config.Transport) (driver.Transport, error) { return New(c.Device), nil })
+}
 
 const pollInterval = 50 * time.Millisecond
 
