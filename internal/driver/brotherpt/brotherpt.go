@@ -125,8 +125,8 @@ func (d *Driver) EncodePages(pages []*image.Gray, job *driver.Job, media *driver
 }
 
 // packLine maps image row y onto head pins from pin 0 (MSB of the first byte, p.10–11).
-// Image column x lands on pin offsetPins+x; narrower pages are centred.
-// ponytail: orientation unverified until a label is printed; flip to (w-1-x) if mirrored.
+// The image's rightmost column lands on the first print-area pin (x=0 on pin offsetPins+x
+// printed mirrored on a real PT-9500PC, 2026-11-18); narrower pages are centred.
 func packLine(p *image.Gray, y int, spec mediaSpec, lineBytes int) ([]byte, bool) {
 	line := make([]byte, lineBytes)
 	r := p.Bounds()
@@ -136,7 +136,7 @@ func packLine(p *image.Gray, y int, spec mediaSpec, lineBytes int) ([]byte, bool
 	blank := true
 	for x, v := range row {
 		if v < 128 {
-			pin := off + x
+			pin := off + (w - 1 - x)
 			line[pin/8] |= 0x80 >> (pin % 8)
 			blank = false
 		}

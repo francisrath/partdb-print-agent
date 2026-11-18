@@ -259,3 +259,21 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("%+v %v", s, err)
 	}
 }
+
+// TestColumnZeroOnLastPin pins the orientation found on hardware (2026-11-18): with image
+// column x on pin offsetPins+x the label came out mirrored, so column 0 belongs on the
+// print area's last pin.
+func TestColumnZeroOnLastPin(t *testing.T) {
+	page := white(384, 60)
+	for y := range 60 {
+		page.Pix[y*page.Stride] = 0 // column 0 black
+	}
+	_, pages, err := New().EncodePages([]*image.Gray{page}, &driver.Job{}, media(t, "tze-36"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, _ := pageLines(t, pages[0])
+	if l := lines[0]; l[47] != 0x01 || l[0] != 0 {
+		t.Errorf("column 0 → first byte %02x, last byte %02x; want pin 383 only", l[0], l[47])
+	}
+}
