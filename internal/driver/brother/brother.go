@@ -52,31 +52,48 @@ func packbits(src []byte) []byte {
 	return out
 }
 
-// readReply reads one 32-byte status reply. A read timeout in the middle of a reply waits on
-// (twice) for the rest, so a pause can't shift the stream by a partial status. No reply →
-// driver.ErrNoReadback (wrapping the cause: EOF means the connection is gone).
-func readReply(t driver.Transport) ([]byte, error) {
-	buf := make([]byte, 32)
-	for n, pauses := 0, 0; n < len(buf); {
-		k, err := t.Read(buf[n:])
-		n += k
-		if err == nil {
+// replyReader reads 32-byte status replies and keeps a partial reply across read timeouts,
+// so a pause in the middle of a reply never shifts the stream.
+type replyReader struct {
+	t   driver.Transport
+	buf [32]byte
+	n   int // bytes of the current reply read so far
+}
+
+// read returns the next complete reply. A read timeout (or no read-back) returns
+// driver.ErrNoReadback wrapping the cause, keeping any partial reply for the next call.
+func (r *replyReader) read() ([]byte, error) {
+	for r.n < len(r.buf) {
+		k, err := r.t.Read(r.buf[r.n:])
+		r.n += k
+		if err == nil || r.n == len(r.buf) {
 			continue
-		}
-		if n > 0 && n < len(buf) && errors.Is(err, os.ErrDeadlineExceeded) && pauses < 2 {
-			pauses++
-			continue
-		}
-		if n == len(buf) {
-			break
-		}
-		if n > 0 { // the rest of this reply never came: retrying would read a shifted stream
-			return nil, &driver.Error{Code: driver.CommsError, Detail: fmt.Sprintf("incomplete status reply (%d of %d bytes): %v", n, len(buf), err)}
 		}
 		if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, driver.ErrNoReadback) {
-			return nil, fmt.Errorf("%w: %w", driver.ErrNoReadback, err)
+			return nil, fmt.Errorf("%w: %w", driver.ErrNoReadback, err) // keep the cause: EOF means the connection is gone
 		}
 		return nil, err
 	}
-	return buf, nil
+	r.n = 0
+	return append([]byte(nil), r.buf[:]...), nil
+}
+
+// incomplete is the error for a reply that started but never finished.
+func (r *replyReader) incomplete(cause error) error {
+	return &driver.Error{Code: driver.CommsError, Detail: fmt.Sprintf("incomplete status reply (%d of %d bytes): %v", r.n, len(r.buf), cause)}
+}
+
+// readReply reads one reply for a one-off status request: a reply that stops partway gets
+// two more read timeouts to finish, then it's a framing error (never retried on a shifted stream).
+func readReply(t driver.Transport) ([]byte, error) {
+	r := &replyReader{t: t}
+	for pauses := 0; ; pauses++ {
+		b, err := r.read()
+		if err == nil || r.n == 0 {
+			return b, err
+		}
+		if !errors.Is(err, driver.ErrNoReadback) || errors.Is(err, io.EOF) || pauses == 2 {
+			return nil, r.incomplete(err)
+		}
+	}
 }

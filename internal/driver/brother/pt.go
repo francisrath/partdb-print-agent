@@ -326,16 +326,20 @@ func (d *pt) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 // returns a driver.Error; no completion within timeout returns driver.ErrNoReadback.
 func (d *pt) waitPage(ctx context.Context, t driver.Transport, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	r := &replyReader{t: t} // keeps a partial reply until the deadline
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if !time.Now().Before(deadline) {
+			if r.n > 0 {
+				return r.incomplete(driver.ErrNoReadback)
+			}
 			return driver.ErrNoReadback
 		}
-		b, err := readReply(t)
+		b, err := r.read()
 		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) {
-			continue // read timed out: still printing
+			continue // read timed out: still printing (or mid-reply)
 		}
 		if err != nil {
 			return err

@@ -342,9 +342,12 @@ func (s *scripted) Read(p []byte) (int, error) {
 		time.Sleep(20 * time.Millisecond)
 		return 0, os.ErrDeadlineExceeded
 	}
-	n := copy(p, s.replies[0])
+	chunk := s.replies[0]
 	s.replies = s.replies[1:]
-	return n, nil
+	if chunk == nil { // a read timeout in the script
+		return 0, os.ErrDeadlineExceeded
+	}
+	return copy(p, chunk), nil
 }
 
 func TestWaitPageSkipsPhaseChange(t *testing.T) {
@@ -555,5 +558,25 @@ func TestPartialReplyIsAnError(t *testing.T) {
 	var de *driver.Error
 	if !errors.As(err, &de) || de.Code != driver.CommsError || errors.Is(err, driver.ErrNoReadback) {
 		t.Errorf("err = %v, want COMMS_ERROR (not ErrNoReadback)", err)
+	}
+}
+
+// A completion reply split by long pauses (more than a couple of read timeouts) still
+// counts as long as it completes before the page deadline.
+func TestWaitPageResumesSplitReply(t *testing.T) {
+	done := reply(func(b []byte) { b[18] = 0x01 })
+	tr := &scripted{replies: [][]byte{done[:10], nil, nil, nil, nil, nil, done[10:]}}
+	if err := newPTForTest(t).waitPage(context.Background(), tr, 5*time.Second); err != nil {
+		t.Errorf("split completion: %v", err)
+	}
+}
+
+// Still incomplete at the deadline: a framing error, not "no reply" (the page may have printed).
+func TestWaitPagePartialAtDeadline(t *testing.T) {
+	done := reply(func(b []byte) { b[18] = 0x01 })
+	err := newPTForTest(t).waitPage(context.Background(), &scripted{replies: [][]byte{done[:10]}}, 200*time.Millisecond)
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError {
+		t.Errorf("err = %v, want COMMS_ERROR", err)
 	}
 }

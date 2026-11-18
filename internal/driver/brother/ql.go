@@ -311,14 +311,18 @@ func (d *ql) waitSNMP(ctx context.Context, timeout time.Duration) (bool, error) 
 // Only call it after a status request succeeded on t; returns driver.ErrNoReadback on timeout.
 func waitDone(ctx context.Context, t driver.Transport, n int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	r := &replyReader{t: t} // keeps a partial reply until the deadline
 	for done := 0; done < n; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if !time.Now().Before(deadline) {
+			if r.n > 0 {
+				return r.incomplete(driver.ErrNoReadback)
+			}
 			return driver.ErrNoReadback // printer keeps talking but never reports completion
 		}
-		b, err := readReply(t)
+		b, err := r.read()
 		if errors.Is(err, driver.ErrNoReadback) && !errors.Is(err, io.EOF) && time.Now().Before(deadline) {
 			continue // read timed out: long label still printing
 		}
