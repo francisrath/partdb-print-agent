@@ -18,6 +18,10 @@ func TestTransportRegistry(t *testing.T) {
 	if u, ok := tr.(*usb.Transport); err != nil || !ok || u.Device != "/dev/usb/lp3" {
 		t.Errorf("usb: %#v %v", tr, err)
 	}
+	tr, err = transport.New(config.Transport{Kind: "usb", USBID: "04f9:209c", Serial: "X1"})
+	if u, ok := tr.(*usb.Transport); err != nil || !ok || u.USBID != "04f9:209c" || u.Serial != "X1" {
+		t.Errorf("usb by id: %#v %v", tr, err)
+	}
 	if _, err := transport.New(config.Transport{Kind: "carrier-pigeon"}); err == nil {
 		t.Error("unknown kind accepted")
 	}
