@@ -86,6 +86,7 @@ func TestLint(t *testing.T) {
 		"second document":  {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-a") + "---\n" + model("B", "04f9:0002", "tape-a")}, []string{"a.yaml", "one YAML document"}},
 		"null model":       {map[string]string{"data/a.yaml": "models: [null]\n"}, []string{"a.yaml", "empty model"}},
 		"same status code": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {status_code: 0x39}}\n  - {id: Q2, driver: brother, dialect: ql, match: {status_code: 0x39}}\n"}, []string{"Q1", "Q2", "0x39"}},
+		"bad snmp pattern": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {snmp_descr: \"QL-(\"}}\n"}, []string{"Q1", "snmp_descr"}},
 		"media too wide":   {map[string]string{"data/m.yaml": "media:\n  - {id: wide, name: w, kind: continuous, width_mm: 62, printable_width_dots: 696, offset_pins: 32, dpi: 300}\n", "data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, head_pins: 720, media: [wide]}\n"}, []string{"Q1", "wide", "720"}},
 	} {
 		fsys := fstest.MapFS{}

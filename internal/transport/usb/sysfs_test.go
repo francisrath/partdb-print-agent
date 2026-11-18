@@ -116,3 +116,20 @@ func TestFindAmbiguousWithoutSerials(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A printer that can't be inspected (e.g. permissions) must not be skipped silently:
+// Find would then pick the other of two identical printers.
+func TestListReportsInspectionErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	sys := fakeSysfs(t, map[string][4]string{"lp0": {"04f9", "200f", "A", ptID}, "lp1": {"04f9", "200f", "B", ptID}})
+	dev, err := filepath.EvalSymlinks(filepath.Join(sys, "class", "usbmisc", "lp1", "device"))
+	must(t, err)
+	parent := filepath.Dir(dev)
+	must(t, os.Chmod(filepath.Join(parent, "idProduct"), 0))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(parent, "idProduct"), 0o644) })
+	if _, err := Find(sys, "04f9:200f", ""); err == nil || strings.Contains(err.Error(), "lp0") && !strings.Contains(err.Error(), "lp1") {
+		t.Errorf("err = %v, want the inspection error", err)
+	}
+}

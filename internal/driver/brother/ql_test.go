@@ -375,3 +375,16 @@ func TestQLStatusViaConnection(t *testing.T) {
 		t.Errorf("%+v %v", res, err)
 	}
 }
+
+// A USB QL never takes its status from SNMP (a leftover host could be another printer).
+func TestQLStatusOverUSBIgnoresSNMP(t *testing.T) {
+	d := newQLForTest(t)
+	d.query = func(context.Context) (*snmp.State, error) { return &snmp.State{Idle: true}, nil }
+	reply := make([]byte, 32)
+	reply[0], reply[1], reply[2], reply[4], reply[10], reply[11] = 0x80, 0x20, 'B', 0x39, 29, 0x0a
+	tr := &scripted{kind: "usb", replies: [][]byte{reply}}
+	st, err := d.Status(context.Background(), tr)
+	if err != nil || st.Via != "usb" {
+		t.Errorf("via %v, %v", st, err)
+	}
+}

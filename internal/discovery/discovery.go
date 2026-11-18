@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"regexp"
 	"slices"
 	"strconv"
 	"sync"
@@ -181,7 +180,7 @@ func bySNMP(db *devicedb.DB, descr string) *devicedb.Model {
 	}
 	for _, id := range db.ModelIDs() {
 		m, _ := db.Model(id)
-		if m.Match.SNMPDescr != "" && regexp.MustCompile(m.Match.SNMPDescr).MatchString(descr) {
+		if m.MatchesSNMP(descr) {
 			return m
 		}
 	}

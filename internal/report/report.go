@@ -239,10 +239,19 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 	}
 	s := string(b)
 	n := 0
+	var serials []string
 	for _, c := range r.Candidates {
-		if c.Serial != "" && strings.Contains(s, c.Serial) {
+		serials = append(serials, c.Serial)
+		for k, v := range c.IEEE1284 { // serials printers report in their IEEE 1284 device ID
+			if k == "SN" || k == "SER" || k == "SERN" || k == "SERIAL" || k == "SERIALNUMBER" {
+				serials = append(serials, v)
+			}
+		}
+	}
+	for _, sn := range serials {
+		if len(sn) > 2 && strings.Contains(s, sn) {
 			n++
-			s = strings.ReplaceAll(s, c.Serial, fmt.Sprintf("serial-%d", n))
+			s = strings.ReplaceAll(s, sn, fmt.Sprintf("serial-%d", n))
 		}
 	}
 	if h, _ := os.Hostname(); len(h) > 2 {

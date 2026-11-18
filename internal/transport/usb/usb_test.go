@@ -109,3 +109,40 @@ func TestWritePassesThrough(t *testing.T) {
 		t.Fatalf("close unopened: %v", err)
 	}
 }
+
+// blockingLP is a usblp device whose read blocks (no O_NONBLOCK) until its deadline.
+type blockingLP struct {
+	fakeLP
+	mu       sync.Mutex
+	deadline time.Time
+}
+
+func (b *blockingLP) SetReadDeadline(t time.Time) error {
+	b.mu.Lock()
+	b.deadline = t
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *blockingLP) Read([]byte) (int, error) {
+	b.mu.Lock()
+	d := b.deadline
+	b.mu.Unlock()
+	if d.IsZero() {
+		time.Sleep(10 * time.Second) // would hang without a deadline
+	}
+	time.Sleep(time.Until(d))
+	return 0, os.ErrDeadlineExceeded
+}
+
+// A read that blocks inside the device is bounded by the transport's deadline too.
+func TestReadDeadlineReachesTheDevice(t *testing.T) {
+	tr := New("/dev/usb/lp0")
+	tr.ReadTimeout = 200 * time.Millisecond
+	tr.OpenFile = func(string) (io.ReadWriteCloser, error) { return &blockingLP{}, nil }
+	must(t, tr.Open(t.Context()))
+	start := time.Now()
+	if _, err := tr.Read(make([]byte, 32)); !errors.Is(err, os.ErrDeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("err %v after %v", err, time.Since(start))
+	}
+}

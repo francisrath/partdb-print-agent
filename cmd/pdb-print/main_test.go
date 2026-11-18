@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -277,5 +278,19 @@ func TestDiscoverWithoutConfig(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("discover didn't connect")
+	}
+}
+
+func TestConfirmStopsOnCancel(t *testing.T) {
+	r, w := io.Pipe() // nothing is ever typed
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	if confirm(ctx, bufio.NewReader(r), "print?") || time.Since(start) > time.Second {
+		t.Errorf("confirm didn't give up on cancel (%v)", time.Since(start))
+	}
+	if !confirm(context.Background(), bufio.NewReader(strings.NewReader("y\n")), "print?") {
+		t.Error("y not accepted")
 	}
 }

@@ -52,8 +52,10 @@ var qlStatusRequest = append(make([]byte, qlInvalidateN), 0x1b, '@', 0x1b, 'i', 
 // Status reads the printer over SNMP (network QLs give no status on 9100), else asks over
 // the transport with ESC i S.
 func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
-	if ss, err := d.query(ctx); err == nil {
-		return d.statusFromSNMP(ss), nil
+	if t.Kind() == "tcp" { // SNMP is about the network printer; over USB the printer answers itself
+		if ss, err := d.query(ctx); err == nil {
+			return d.statusFromSNMP(ss), nil
+		}
 	}
 	if _, err := t.Write(qlStatusRequest); err != nil {
 		return nil, err

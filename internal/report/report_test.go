@@ -18,14 +18,15 @@ import (
 func TestRedact(t *testing.T) {
 	host, _ := os.Hostname()
 	r := &Report{
-		Candidates: []discovery.Candidate{{Kind: "tcp", Host: "192.168.1.40", Port: 9100}, {Kind: "usb", Device: "/dev/usb/lp0", Serial: "000G5G313834"}},
-		Queries:    []Query{{Target: "192.168.1.40:9100", Name: "~HI", Reply: "IP 192.168.1.40 MAC aa:bb:cc:dd:ee:ff on " + host + " serial 000G5G313834"}},
+		Candidates: []discovery.Candidate{{Kind: "tcp", Host: "192.168.1.40", Port: 9100}, {Kind: "usb", Device: "/dev/usb/lp0", Serial: "000G5G313834"},
+			{Kind: "usb", Device: "/dev/usb/lp1", IEEE1284: map[string]string{"MDL": "X", "SN": "K7Q22Z9"}}},
+		Queries: []Query{{Target: "192.168.1.40:9100", Name: "~HI", Reply: "IP 192.168.1.40 MAC aa:bb:cc:dd:ee:ff on " + host + " serial 000G5G313834"}},
 	}
 	b, err := r.JSON(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"192.168.1.40", "aa:bb:cc:dd:ee:ff", "000G5G313834", host, strings.ToUpper(host), "008092A1B2C3", "fe80::1ff:fe23:4567:890a"} {
+	for _, secret := range []string{"192.168.1.40", "aa:bb:cc:dd:ee:ff", "000G5G313834", host, strings.ToUpper(host), "008092A1B2C3", "fe80::1ff:fe23:4567:890a", "K7Q22Z9"} {
 		if secret != "" && bytes.Contains(bytes.ToLower(b), bytes.ToLower([]byte(secret))) {
 			t.Errorf("%q not masked:\n%s", secret, b)
 		}

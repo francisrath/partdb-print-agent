@@ -62,6 +62,7 @@ type Service struct {
 
 	mu       sync.Mutex // guards r, printers and online
 	online   map[string]onlineState
+	probes   map[string]*sync.Mutex // one online check per printer at a time
 	r        *render.Renderer
 	printers map[string]*sync.Mutex
 }
@@ -75,16 +76,18 @@ func (s *Service) Close() {
 	}
 }
 
-func (s *Service) printerLock(id string) *sync.Mutex {
+func (s *Service) printerLock(id string) *sync.Mutex { return s.lockFor(&s.printers, id) }
+
+func (s *Service) lockFor(locks *map[string]*sync.Mutex, id string) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.printers == nil {
-		s.printers = map[string]*sync.Mutex{}
+	if *locks == nil {
+		*locks = map[string]*sync.Mutex{}
 	}
-	if s.printers[id] == nil {
-		s.printers[id] = &sync.Mutex{}
+	if (*locks)[id] == nil {
+		(*locks)[id] = &sync.Mutex{}
 	}
-	return s.printers[id]
+	return (*locks)[id]
 }
 
 // render rasterises pdf for m. Media wider than its print area (tape) is rendered at full

@@ -41,20 +41,31 @@ func List(sysfs string) ([]Printer, error) {
 			continue
 		}
 		iface, err := filepath.EvalSymlinks(filepath.Join(sysfs, "class", "usbmisc", e.Name(), "device"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue // unplugged while we looked
+		}
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		dev := filepath.Dir(iface)
-		read := func(dir, name string) string {
-			b, _ := os.ReadFile(filepath.Join(dir, name))
+		var firstErr error
+		read := func(dir, name string, optional bool) string {
+			b, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil && !(optional && errors.Is(err, os.ErrNotExist)) && firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", e.Name(), err)
+			}
 			return strings.TrimSpace(string(b))
 		}
-		out = append(out, Printer{
+		p := Printer{
 			Device:   "/dev/usb/" + e.Name(),
-			USBID:    strings.ToLower(read(dev, "idVendor") + ":" + read(dev, "idProduct")),
-			Serial:   read(dev, "serial"),
-			IEEE1284: ParseIEEE1284(read(iface, "ieee1284_id")),
-		})
+			USBID:    strings.ToLower(read(dev, "idVendor", false) + ":" + read(dev, "idProduct", false)),
+			Serial:   read(dev, "serial", true),
+			IEEE1284: ParseIEEE1284(read(iface, "ieee1284_id", true)),
+		}
+		if firstErr != nil {
+			return nil, firstErr // a printer we can't inspect must not be skipped silently
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Device < out[j].Device })
 	return out, nil

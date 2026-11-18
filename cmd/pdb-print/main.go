@@ -547,14 +547,13 @@ func reportCmd(ctx context.Context, args []string) error {
 	r, err := report.Run(ctx, report.Options{
 		Version: appVersion(), DB: devicedb.Default(), Targets: targets, Port: *port, Identify: *identify, Print: *print,
 		Out: os.Stdout, Svc: svc,
-		Confirm: func(q string) bool {
-			fmt.Printf("%s [y/N] ", q)
-			answer, _ := in.ReadString('\n')
-			return strings.EqualFold(strings.TrimSpace(answer), "y")
-		},
+		Confirm: func(q string) bool { return confirm(ctx, in, q) },
 	})
 	if err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err // Ctrl-C at a prompt: no half report
 	}
 	b, err := r.JSON(*raw)
 	if err != nil {
@@ -568,4 +567,24 @@ func reportCmd(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("Wrote %s. Attach it to a GitHub issue for the printer (check it first: addresses and serials are masked unless --raw).\n", *out)
 	return nil
+}
+
+// confirm asks a y/N question on the terminal; Ctrl-C (ctx done) answers no at once.
+func confirm(ctx context.Context, in *bufio.Reader, q string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	fmt.Printf("%s [y/N] ", q)
+	answer := make(chan string, 1)
+	go func() { // a terminal read can't be interrupted; it is left to finish on its own
+		line, _ := in.ReadString('\n')
+		answer <- line
+	}()
+	select {
+	case a := <-answer:
+		return strings.EqualFold(strings.TrimSpace(a), "y")
+	case <-ctx.Done():
+		fmt.Println()
+		return false
+	}
 }

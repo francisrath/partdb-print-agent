@@ -67,6 +67,9 @@ func (t *Transport) Read(p []byte) (int, error) {
 		to = 2 * time.Second
 	}
 	deadline := time.Now().Add(to)
+	if d, ok := t.f.(interface{ SetReadDeadline(time.Time) error }); ok {
+		_ = d.SetReadDeadline(deadline) // a read blocking inside usblp ends at the deadline too
+	}
 	for {
 		n, err := t.f.Read(p)
 		if n > 0 {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
@@ -82,27 +84,55 @@ func TestStatusUSBDuringJobIsBusy(t *testing.T) {
 
 // Two heartbeats at once: the one that can't take the lock uses the last known state
 // instead of claiming "printing"; the cache follows the printer's address.
-func TestOnlineConcurrentUsesLastState(t *testing.T) {
+// The cache follows the printer's address.
+func TestOnlineCacheFollowsAddress(t *testing.T) {
+	s := service(t, nil)
+	s.OnlineCheck = func(*config.Printer) bool { return false }
+	if s.Online(tcpPrinter("ql", "127.0.0.1:9")) {
+		t.Fatal("offline printer online")
+	}
+	calls := 0
+	s.OnlineCheck = func(*config.Printer) bool { calls++; return true }
+	if !s.Online(tcpPrinter("ql", "127.0.0.1:10")) || calls != 1 {
+		t.Error("cache ignored the changed address")
+	}
+}
+
+// A printing job makes the printer online even if the last check said offline.
+func TestOnlineJobBeatsStaleOffline(t *testing.T) {
 	s := service(t, nil)
 	s.OnlineCheck = func(*config.Printer) bool { return false }
 	p := tcpPrinter("ql", "127.0.0.1:9")
-	if s.Online(p) {
-		t.Fatal("offline printer online")
-	}
+	s.Online(p)
 	s.mu.Lock()
-	s.online[onlineKey(p)] = onlineState{} // expired
+	s.online[onlineKey(p)] = onlineState{} // expired "offline"
 	s.mu.Unlock()
 	lock := s.printerLock(p.ID)
-	lock.Lock()
-	got := s.Online(p) // lock held by "the other heartbeat"
-	lock.Unlock()
-	if got {
-		t.Error("printer reported online while another check held the lock")
+	lock.Lock() // a job
+	defer lock.Unlock()
+	if !s.Online(p) {
+		t.Error("printer printing a job reported offline")
 	}
-	moved := tcpPrinter("ql", "127.0.0.1:10")
+}
+
+// Two heartbeats at once share one real check instead of guessing.
+func TestOnlineConcurrentShareOneCheck(t *testing.T) {
+	s := service(t, nil)
+	var mu sync.Mutex
 	calls := 0
-	s.OnlineCheck = func(*config.Printer) bool { calls++; return true }
-	if !s.Online(moved) || calls != 1 {
-		t.Error("cache ignored the changed address")
+	s.OnlineCheck = func(*config.Printer) bool {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		time.Sleep(150 * time.Millisecond)
+		return false
+	}
+	p := tcpPrinter("ql", "127.0.0.1:9")
+	res := make(chan bool, 2)
+	for range 2 {
+		go func() { res <- s.Online(p) }()
+	}
+	if a, b := <-res, <-res; a || b || calls != 1 {
+		t.Errorf("results %v %v, %d checks; want both offline from one check", a, b, calls)
 	}
 }
