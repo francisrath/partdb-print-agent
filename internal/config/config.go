@@ -23,6 +23,9 @@ type Config struct {
 	Printers  []Printer  `yaml:"printers,omitempty"`
 	Routes    []Route    `yaml:"routes,omitempty"`
 	HotFolder HotFolder  `yaml:"hot_folder,omitempty"`
+	// Pdftoppm: auto (default: use poppler's pdftoppm if on PATH, else PDFium) | off | a path.
+	// PDB_PRINT_PDFTOPPM overrides it.
+	Pdftoppm string `yaml:"pdftoppm,omitempty"`
 	// AgentID identifies this agent to Part-DB's print job API (a random UUID, generated once).
 	AgentID string `yaml:"agent_id,omitempty"`
 }

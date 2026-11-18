@@ -97,6 +97,11 @@ On a Raspberry Pi: use the `linux_armv6` release on 32-bit Raspberry Pi OS (Pi 1
 `linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve` from a systemd
 unit with the API token in an `EnvironmentFile` (`PDB_PRINT_TOKEN=…`), since a headless Pi has no keychain.
 The web UI stays on `127.0.0.1:8631`: reach it with `ssh -L 8631:127.0.0.1:8631 pi-host`.
+On 32-bit ARM the built-in PDF renderer is slow (up to a minute or two per label on a Pi 1), so
+install poppler (`sudo apt install poppler-utils`): pdb-print then renders with `pdftoppm` in
+about a second. It's used automatically whenever it's on `PATH`; `pdftoppm: off` in the config
+(or `PDB_PRINT_PDFTOPPM=off`) turns that off. Note that poppler parses PDFs natively, while the
+built-in renderer runs in a WebAssembly sandbox.
 
 ### Hot folder
 

@@ -143,6 +143,15 @@ func run(ctx context.Context, args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
+	pdftoppm := cfg.Pdftoppm
+	if v := os.Getenv("PDB_PRINT_PDFTOPPM"); v != "" {
+		pdftoppm = v
+	}
+	if a.svc.Pdftoppm, err = render.FindPdftoppm(pdftoppm); err != nil {
+		log.Warn("pdftoppm not usable, rendering with PDFium", "err", err)
+	} else if a.svc.Pdftoppm != nil {
+		log.Debug("rendering with pdftoppm", "path", a.svc.Pdftoppm.Bin)
+	}
 	defer a.svc.Close()
 	a.log.Debug("config", "path", path)
 

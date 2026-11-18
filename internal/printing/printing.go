@@ -48,9 +48,11 @@ func TestCard(model, version string) Source {
 // Result is what a print did.
 type Result = driver.Result
 
-// Service keeps one PDFium renderer warm and serialises jobs per printer.
+// Service renders with pdftoppm when set, else (or when it fails) with one PDFium renderer
+// kept warm, and serialises jobs per printer.
 type Service struct {
-	Log *slog.Logger
+	Log      *slog.Logger
+	Pdftoppm *render.Pdftoppm // nil = always PDFium
 	// OpenTransport returns the connection to a printer; nil = by transport kind.
 	// Tests put a fake printer here.
 	OpenTransport func(p *config.Printer) driver.Transport
@@ -86,15 +88,8 @@ func (s *Service) printerLock(id string) *sync.Mutex {
 func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*image.Gray, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.r == nil {
-		r, err := render.New()
-		if err != nil {
-			return nil, nil, err
-		}
-		s.r = r
-	}
 	width := max(m.WidthDots, m.PrintableWidthDots)
-	pages, err := s.r.Render(pdf, render.Options{
+	opt := render.Options{
 		WidthDots:     width,
 		LengthDots:    m.PrintableLengthDots,
 		MediaWidthMM:  m.WidthMM,
@@ -102,7 +97,24 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		CheckSize:     !p.AllowScaling,
 		Rotate:        p.Rotate,
 		Threshold:     p.Threshold,
-	})
+	}
+	var pages []*image.Gray
+	err := render.ErrPdftoppm
+	if s.Pdftoppm != nil {
+		if pages, err = s.Pdftoppm.Render(pdf, opt); errors.Is(err, render.ErrPdftoppm) {
+			s.Log.Warn("pdftoppm failed, rendering with PDFium", "err", err)
+		}
+	}
+	if errors.Is(err, render.ErrPdftoppm) {
+		if s.r == nil {
+			r, err := render.New()
+			if err != nil {
+				return nil, nil, err
+			}
+			s.r = r
+		}
+		pages, err = s.r.Render(pdf, opt)
+	}
 	if err != nil || width == m.PrintableWidthDots {
 		return pages, nil, err
 	}

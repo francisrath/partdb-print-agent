@@ -2,6 +2,9 @@
 # Linux: ~/.config/pdb-print/config.yaml, Windows: %AppData%\pdb-print\config.yaml)
 # or pass --config FILE.
 log_level: info
+# Render with poppler's pdftoppm when it is installed (much faster on a 32-bit Raspberry Pi);
+# otherwise, or if it fails, with the built-in PDFium. auto (default) | off | /path/to/pdftoppm
+# pdftoppm: auto
 printers:
   - id: ql810
     name: Brother QL-810W
