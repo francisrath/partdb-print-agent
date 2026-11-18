@@ -1,0 +1,72 @@
+// Package usb is the USB printer-class transport via the Linux usblp driver (/dev/usb/lpN).
+package usb
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"time"
+)
+
+const pollInterval = 50 * time.Millisecond
+
+type Transport struct {
+	Device      string        // /dev/usb/lp0
+	ReadTimeout time.Duration // per Read; 0 = 2s
+	// OpenFile opens Device; nil = os.OpenFile read/write. Tests swap in a fake.
+	OpenFile func(device string) (io.ReadWriteCloser, error)
+	f        io.ReadWriteCloser
+}
+
+func New(device string) *Transport { return &Transport{Device: device} }
+
+func (t *Transport) Kind() string { return "usb" }
+
+func (t *Transport) Open(ctx context.Context) error {
+	open := t.OpenFile
+	if open == nil {
+		open = func(d string) (io.ReadWriteCloser, error) { return os.OpenFile(d, os.O_RDWR, 0) }
+	}
+	f, err := open(t.Device)
+	if err != nil {
+		return err
+	}
+	t.f = f
+	return nil
+}
+
+func (t *Transport) Write(p []byte) (int, error) { return t.f.Write(p) }
+
+// Read returns os.ErrDeadlineExceeded when the printer says nothing within ReadTimeout.
+// usblp doesn't block: with nothing queued a read returns 0 bytes, which os.File reports
+// as io.EOF (measured on a Pi 2 with a PT-9500PC, 2026-11-18). So poll until data arrives.
+func (t *Transport) Read(p []byte) (int, error) {
+	to := t.ReadTimeout
+	if to == 0 {
+		to = 2 * time.Second
+	}
+	deadline := time.Now().Add(to)
+	for {
+		n, err := t.f.Read(p)
+		if n > 0 {
+			return n, nil
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		if !time.Now().Before(deadline) {
+			return 0, os.ErrDeadlineExceeded
+		}
+		time.Sleep(pollInterval)
+	}
+}
+
+func (t *Transport) Close() error {
+	if t.f == nil {
+		return nil
+	}
+	err := t.f.Close()
+	t.f = nil
+	return err
+}

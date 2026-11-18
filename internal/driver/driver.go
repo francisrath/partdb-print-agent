@@ -43,12 +43,15 @@ const (
 
 // Media is a label stock as the renderer and driver see it.
 type Media struct {
-	ID                  string
-	Name                string
-	Kind                MediaKind
-	WidthMM, LengthMM   float64 // LengthMM = 0 for continuous
-	PrintableWidthDots  int     // cross-feed
-	PrintableLengthDots int     // feed; 0 for continuous
+	ID                 string
+	Name               string
+	Kind               MediaKind
+	WidthMM, LengthMM  float64 // LengthMM = 0 for continuous
+	PrintableWidthDots int     // cross-feed
+	// WidthDots is the whole media width in dots when wider than the printable area (tape:
+	// labels are drawn across the full tape and the unprintable edges trimmed); 0 = same.
+	WidthDots           int
+	PrintableLengthDots int // feed; 0 for continuous
 	DPI                 int
 }
 
@@ -93,7 +96,10 @@ type Status struct {
 	Detail string
 	Model  string
 	Media  *Media // loaded media, if the printer reports it
-	Done   bool   // a "printing completed" notification
+	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
+	// non-laminated, lettering, hg, av); "" otherwise.
+	MediaType string
+	Done      bool // a "printing completed" notification
 }
 
 // Error is a printer-side failure with a normalised code.

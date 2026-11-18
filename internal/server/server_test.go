@@ -432,3 +432,41 @@ func TestAgentJobsHooks(t *testing.T) {
 		t.Errorf("unknown printer: %v", err)
 	}
 }
+
+func TestSavePrinterKeepsNonQL(t *testing.T) {
+	h := newHarness(t)
+	pt := config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Media: "tze-24", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}}
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, pt)
+	// the form as the UI sends it for this printer: its own model and media, which the QL checks don't know
+	h.post("/printers", url.Values{"id": {"pt"}, "model": {"PT-9500PC"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"tze-24"}})
+	if !strings.Contains(h.flash(), "config file") {
+		t.Errorf("flash %q", h.flash())
+	}
+	if p, err := h.srv.config().Printer("pt"); err != nil || p.Driver != "brother-pt" || p.Transport.Device != "/dev/usb/lp0" {
+		t.Errorf("non-QL printer overwritten from the UI: %+v %v", p, err)
+	}
+	if w := h.do("GET", "/", nil); !strings.Contains(w.Body.String(), "/dev/usb/lp0") {
+		t.Error("printer table doesn't show the USB device")
+	}
+}
+
+// silentPT is a USB printer that never answers.
+type silentPT struct{}
+
+func (silentPT) Open(context.Context) error  { return nil }
+func (silentPT) Write(p []byte) (int, error) { return len(p), nil }
+func (silentPT) Read([]byte) (int, error)    { return 0, os.ErrDeadlineExceeded }
+func (silentPT) Close() error                { return nil }
+func (silentPT) Kind() string                { return "usb" }
+
+// A PT that gives no status can't print (jobs need its replies), unlike a QL over TCP.
+func TestPTStatusWithoutReplyIsNotOK(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Media: "tze-24",
+		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}})
+	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
+	w := h.do("GET", "/printers/pt/status", nil)
+	if body := w.Body.String(); !strings.Contains(body, `"ok":false`) || strings.Contains(body, "TCP") {
+		t.Errorf("silent PT: %s", body)
+	}
+}

@@ -76,12 +76,12 @@ const KeyringService = "pdb-print"
 type Printer struct {
 	ID        string    `yaml:"id"`
 	Name      string    `yaml:"name"`
-	Driver    string    `yaml:"driver"` // brother-ql
-	Model     string    `yaml:"model"`  // QL-810W
+	Driver    string    `yaml:"driver"` // brother-ql | brother-pt
+	Model     string    `yaml:"model"`  // QL-810W | PT-9500PC
 	Transport Transport `yaml:"transport"`
-	Media     string    `yaml:"media"`  // dk-22210; empty = use what the printer reports
+	Media     string    `yaml:"media"`  // dk-22210, tze-24; empty = use what the printer reports
 	Rotate    string    `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
-	Cut       string    `yaml:"cut"`    // per_label (default) | last | none
+	Cut       string    `yaml:"cut"`    // per_label | last (QL) | none | chain, half (PT); see config.example.yaml
 	Threshold uint8     `yaml:"threshold"`
 	// SNMP (UDP 161) reports the loaded roll and errors; network QLs give no status on 9100.
 	SNMPCommunity string `yaml:"snmp_community,omitempty"` // default "public"
@@ -92,9 +92,10 @@ type Printer struct {
 }
 
 type Transport struct {
-	Kind string `yaml:"kind"` // tcp
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"` // default 9100
+	Kind   string `yaml:"kind"` // tcp (brother-ql) | usb (brother-pt)
+	Host   string `yaml:"host,omitempty"`
+	Port   int    `yaml:"port,omitempty"`   // default 9100
+	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux)
 }
 
 // DefaultPath is <user config dir>/pdb-print/config.yaml.
@@ -185,14 +186,20 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("printer %q defined twice", p.ID)
 		}
 		seen[p.ID] = true
-		if p.Driver != "brother-ql" {
-			return fmt.Errorf("printer %q: unsupported driver %q (MVP supports brother-ql)", p.ID, p.Driver)
-		}
-		if p.Transport.Kind != "tcp" || p.Transport.Host == "" {
-			return fmt.Errorf("printer %q: transport must be kind tcp with a host", p.ID)
-		}
-		if p.Transport.Port == 0 {
-			p.Transport.Port = 9100
+		switch p.Driver {
+		case "brother-ql":
+			if p.Transport.Kind != "tcp" || p.Transport.Host == "" {
+				return fmt.Errorf("printer %q: brother-ql needs transport kind tcp with a host", p.ID)
+			}
+			if p.Transport.Port == 0 {
+				p.Transport.Port = 9100
+			}
+		case "brother-pt":
+			if p.Transport.Kind != "usb" || p.Transport.Device == "" {
+				return fmt.Errorf("printer %q: brother-pt needs transport kind usb with a device (e.g. /dev/usb/lp0)", p.ID)
+			}
+		default:
+			return fmt.Errorf("printer %q: unsupported driver %q (brother-ql or brother-pt)", p.ID, p.Driver)
 		}
 	}
 	if c.HotFolder.Enabled && !seen[c.HotFolder.Printer] {

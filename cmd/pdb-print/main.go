@@ -23,6 +23,7 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
@@ -127,9 +128,15 @@ func run(ctx context.Context, args []string) error {
 	case "printers":
 		return a.printers(ctx, rest)
 	case "media":
-		c, _ := brotherql.New().Capabilities("QL-810W")
-		for _, m := range c.Media {
-			fmt.Printf("%-10s %-20s %4d×%-4d dots\n", m.ID, m.Name, m.PrintableWidthDots, m.PrintableLengthDots)
+		ql, _ := brotherql.New().Capabilities("QL-810W")
+		pt, _ := brotherpt.New().Capabilities("PT-9500PC")
+		for _, d := range []struct {
+			id    string
+			media []driver.Media
+		}{{"brother-ql", ql.Media}, {"brother-pt", pt.Media}} {
+			for _, m := range d.media {
+				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", d.id, m.ID, m.Name, m.PrintableWidthDots, m.PrintableLengthDots)
+			}
 		}
 		return nil
 	}
@@ -183,7 +190,7 @@ func (a *app) render(args []string) error {
 	if *mediaID != "" {
 		p.Media = *mediaID
 	}
-	m, ok := brotherql.LookupMedia(p.Media)
+	m, ok := printing.LookupMedia(p, p.Media)
 	if !ok {
 		return fmt.Errorf("unknown or missing media %q (see `pdb-print media`)", p.Media)
 	}
@@ -368,7 +375,11 @@ func (a *app) printers(ctx context.Context, args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "list":
 		for _, p := range a.cfg.Printers {
-			fmt.Printf("%-10s %-10s %-10s %s:%d media=%s\n", p.ID, p.Driver, p.Model, p.Transport.Host, p.Transport.Port, p.Media)
+			where := fmt.Sprintf("%s:%d", p.Transport.Host, p.Transport.Port)
+			if p.Transport.Kind == "usb" {
+				where = p.Transport.Device
+			}
+			fmt.Printf("%-10s %-10s %-10s %s media=%s\n", p.ID, p.Driver, p.Model, where, p.Media)
 		}
 		return nil
 	case len(args) == 2 && args[0] == "status":
@@ -376,7 +387,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		st, err := printing.Status(ctx, p)
+		st, err := a.svc.Status(ctx, p)
 		if errors.Is(err, driver.ErrNoReadback) {
 			fmt.Println("connected, but the printer sent no status reply")
 			return nil

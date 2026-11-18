@@ -18,11 +18,13 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/driver/brotherpt"
 	"github.com/francisrath/partdb-print-agent/internal/driver/brotherql"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/snmp"
 	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
+	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
 )
 
 // Source returns the PDF to print once the media is known.
@@ -37,9 +39,11 @@ func TestCard(model, version string) Source {
 		if length == 0 {
 			length = 40 // continuous: any length will do
 		}
-		return pdfgen.TestCard(m.WidthMM, length, []string{
-			"pdb-print test", model, m.ID, fmt.Sprintf("%d dots", m.PrintableWidthDots), version,
-		}), nil
+		lines := []string{"pdb-print test", model, m.ID, fmt.Sprintf("%d dots", m.PrintableWidthDots), version}
+		if m.WidthDots > m.PrintableWidthDots { // tape: card on the print area, edges left clear
+			return pdfgen.TestCardOn(m.WidthMM, float64(m.PrintableWidthDots)/float64(m.DPI)*25.4, length, lines), nil
+		}
+		return pdfgen.TestCard(m.WidthMM, length, lines), nil
 	}
 }
 
@@ -50,9 +54,12 @@ type Result struct {
 	Confirmed bool // the printer reported completion
 }
 
-// Service keeps one PDFium renderer warm and serialises jobs per printer.
+// Service keeps one PDFium renderer warm and serialises jobs (and status queries) per printer.
 type Service struct {
 	Log *slog.Logger
+	// OpenTransport returns the connection to a brother-pt printer; nil = by transport kind.
+	// Tests put a fake printer here.
+	OpenTransport func(p *config.Printer) driver.Transport
 
 	mu       sync.Mutex // guards r and printers
 	r        *render.Renderer
@@ -90,8 +97,9 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		}
 		s.r = r
 	}
-	return s.r.Render(pdf, render.Options{
-		WidthDots:     m.PrintableWidthDots,
+	width := max(m.WidthDots, m.PrintableWidthDots)
+	pages, err := s.r.Render(pdf, render.Options{
+		WidthDots:     width,
 		LengthDots:    m.PrintableLengthDots,
 		MediaWidthMM:  m.WidthMM,
 		MediaLengthMM: m.LengthMM,
@@ -99,6 +107,38 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		Rotate:        p.Rotate,
 		Threshold:     p.Threshold,
 	})
+	if err != nil || width == m.PrintableWidthDots {
+		return pages, err
+	}
+	inked := false
+	for i, pg := range pages {
+		var lost bool
+		pages[i], lost = trimEdges(pg, m.PrintableWidthDots)
+		inked = inked || lost
+	}
+	if inked {
+		s.Log.Warn("label has ink on the tape's unprintable edges; it was trimmed", "media", m.ID,
+			"edge_mm", float64(width-m.PrintableWidthDots)/2/float64(m.DPI)*25.4)
+	}
+	return pages, nil
+}
+
+// trimEdges keeps the centre printable columns of img; lost reports dark pixels cut off.
+func trimEdges(img *image.Gray, printable int) (out *image.Gray, lost bool) {
+	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	off := (w - printable) / 2
+	out = image.NewGray(image.Rect(0, 0, printable, h))
+	for y := 0; y < h; y++ {
+		row := img.Pix[y*img.Stride : y*img.Stride+w]
+		copy(out.Pix[y*out.Stride:], row[off:off+printable])
+		for x, v := range row {
+			if v < 128 && (x < off || x >= off+printable) {
+				lost = true
+				break
+			}
+		}
+	}
+	return out, lost
 }
 
 // Render rasterises pdf for media without printing (previews).
@@ -110,9 +150,41 @@ func addr(p *config.Printer) string {
 	return net.JoinHostPort(p.Transport.Host, strconv.Itoa(p.Transport.Port))
 }
 
-// Status queries the printer: SNMP first, then the driver's status over TCP.
-// driver.ErrNoReadback if neither answers.
-func Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
+// LookupMedia finds a media id in the table of the printer's driver.
+func LookupMedia(p *config.Printer, id string) (driver.Media, bool) {
+	if p.Driver == "brother-pt" {
+		return brotherpt.LookupMedia(id)
+	}
+	return brotherql.LookupMedia(id)
+}
+
+func (s *Service) transport(p *config.Printer) driver.Transport {
+	if s.OpenTransport != nil {
+		return s.OpenTransport(p)
+	}
+	if p.Transport.Kind == "usb" {
+		return usb.New(p.Transport.Device)
+	}
+	return tcp.New(addr(p))
+}
+
+// Status queries the printer. A PT that is printing a job answers BUSY without being
+// asked (it must not get a status request while it prints). brother-ql: SNMP first, then
+// the driver's status over TCP. driver.ErrNoReadback if the printer doesn't answer.
+func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
+	if p.Driver == "brother-pt" {
+		lock := s.printerLock(p.ID)
+		if !lock.TryLock() {
+			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: p.Model}, nil
+		}
+		defer lock.Unlock()
+		t := s.transport(p)
+		if err := t.Open(ctx); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+		}
+		defer t.Close()
+		return brotherpt.New().Status(ctx, t)
+	}
 	if ss, err := querySNMP(ctx, p); err == nil {
 		return statusFromSNMP(ss), nil
 	}
@@ -157,6 +229,9 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	if p.Driver == "brother-pt" {
+		return s.printPT(ctx, p, dryRun, source)
+	}
 
 	drv := brotherql.New()
 	if _, err := drv.Capabilities(p.Model); err != nil {
@@ -218,14 +293,10 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		return nil, err
 	}
 	start := time.Now()
-	pages, err := s.render(pdf, p, &media)
-	if errors.Is(err, render.ErrSize) {
-		return nil, &driver.Error{Code: driver.MediaMismatch, Detail: err.Error() + " (set allow_scaling to print it scaled)"}
-	}
+	pages, err := s.rasterise(pdf, p, &media)
 	if err != nil {
-		return nil, &driver.Error{Code: driver.RenderError, Detail: err.Error()}
+		return nil, err
 	}
-	s.Log.Info("rendered", "pages", len(pages), "media", media.ID, "took", time.Since(start).Round(time.Millisecond))
 
 	var job bytes.Buffer
 	if err := drv.Encode(ctx, &job, pages, &driver.Job{Cut: p.Cut}, &media); err != nil {
@@ -267,6 +338,20 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	}
 	s.Log.Info(msg, "printer", p.ID, "pages", len(pages), "bytes", job.Len(), "took", time.Since(start).Round(time.Millisecond))
 	return res, nil
+}
+
+// rasterise renders pdf for media and maps render errors to driver codes.
+func (s *Service) rasterise(pdf []byte, p *config.Printer, media *driver.Media) ([]*image.Gray, error) {
+	start := time.Now()
+	pages, err := s.render(pdf, p, media)
+	if errors.Is(err, render.ErrSize) {
+		return nil, &driver.Error{Code: driver.MediaMismatch, Detail: err.Error() + " (set allow_scaling to print it scaled)"}
+	}
+	if err != nil {
+		return nil, &driver.Error{Code: driver.RenderError, Detail: err.Error()}
+	}
+	s.Log.Info("rendered", "pages", len(pages), "media", media.ID, "took", time.Since(start).Round(time.Millisecond))
+	return pages, nil
 }
 
 // waitSNMP polls until the printer has printed and is idle again (done), reports an

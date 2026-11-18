@@ -52,7 +52,7 @@ bin/pdb-print print --profile 2 --ids 32 --printer ql810      # fetch from Part-
 bin/pdb-print print --profile 2 --ids 32,112-125 --type part --printer ql810
 bin/pdb-print print label.pdf --printer ql810                 # local PDF
 bin/pdb-print render label.pdf --printer ql810 -o /tmp        # PNG preview at head dots
-bin/pdb-print media                                           # known Brother QL media
+bin/pdb-print media                                           # known Brother QL media and PT tapes
 ```
 ### Web UI and bookmarklet
 
@@ -68,7 +68,8 @@ A proposed Part-DB change adds a Print button and printer icons to Part-DB itsel
 [#1625](https://github.com/Part-DB/Part-DB-server/issues/1625)). With such a Part-DB, click
 "Connect Part-DB's print button to this agent" in the UI once; the button then works like the bookmarklet.
 
-With a Part-DB that has the proposed print job API, `serve` also fetches print jobs from Part-DB: it reports
+**Experimental:** with a Part-DB that has the proposed print job API (not in upstream Part-DB yet; the API may
+still change), `serve` also fetches print jobs from Part-DB: it reports
 its printers every 30 s, and Part-DB's Print buttons (from any device, also a phone) send jobs to them. Nothing
 to set up beyond the API token; the agent identifies itself with a random `agent_id` saved in the config.
 If Part-DB has a Mercure hub set up, jobs arrive within a second; otherwise they wait for the next 30 s poll.
@@ -78,6 +79,24 @@ Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll
 (cover open, wrong media, empty) and, after sending, whether the label actually printed. A job is
 refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
 label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead).
+
+### Brother P-touch PT-9500PC (USB, Linux)
+
+`driver: brother-pt` drives a PT-9500PC tape printer over USB through Linux's `usblp` driver
+(`/dev/usb/lp0`; add the user to group `lp`). It reads the loaded tape and errors before each job,
+sends a batch label by label and waits for each to be printed. Labels print at true size: design the
+Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm on 36 mm tape,
+about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for 36 mm tape
+inset it in the profile's additional CSS, e.g. for a 50×36 mm profile:
+`@page { margin: 0; } .page-inner { top: 5mm; left: 2mm; width: 46mm; height: 26mm; }`. The cutter sits ~25 mm past the print head, so by default the last label
+waits in the printer and comes out, cut, with the next print (or press the cut button); a batch on
+laminated tape comes out as one half-cut strip. `cut: per_label` feeds and cuts at once instead, at the
+cost of a blank leader per job. See `config.example.yaml`.
+
+On a Raspberry Pi: use the `linux_armv6` release on 32-bit Raspberry Pi OS (Pi 1, Zero, Pi 2 v1.1) or
+`linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve` from a systemd
+unit with the API token in an `EnvironmentFile` (`PDB_PRINT_TOKEN=…`), since a headless Pi has no keychain.
+The web UI stays on `127.0.0.1:8631`: reach it with `ssh -L 8631:127.0.0.1:8631 pi-host`.
 
 ### Hot folder
 
@@ -94,7 +113,8 @@ Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen-icons.sh`
 (needs `brew install librsvg imagemagick`, plus `iconutil` from macOS); the output is committed.
 
-Status-only hardware check: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`.
+Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brotherql`,
+`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brotherpt`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
