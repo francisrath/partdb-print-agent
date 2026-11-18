@@ -3,12 +3,16 @@
 package render
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	"io"
+	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
+	goruntime "runtime"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -17,6 +21,8 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 const (
@@ -48,7 +54,8 @@ type Options struct {
 type Renderer struct {
 	pool      pdfium.Pool
 	instance  pdfium.Pdfium
-	maxPixels int // MaxPixels; lowered in tests
+	cache     wazero.CompilationCache // nil without a compilation cache
+	maxPixels int                     // MaxPixels; lowered in tests
 }
 
 // ReadFile reads a PDF from disk without ever holding more than MaxPDFBytes+1 bytes,
@@ -70,25 +77,85 @@ func ReadFile(path string) ([]byte, error) {
 }
 
 // New compiles the PDFium wasm module; this takes a moment, so reuse the Renderer.
-func New() (*Renderer, error) {
+// On amd64/arm64 the compiled code is cached under the user cache dir, so only the
+// first start after an upgrade pays the compile (≈40 s on a Raspberry Pi 3).
+func New() (*Renderer, error) { return newRenderer(cacheDir()) }
+
+// cacheDir is where wazero keeps compiled PDFium, or "" for no cache. 32-bit ARM
+// and other platforms run the interpreter, which has nothing to cache.
+func cacheDir() string {
+	if goruntime.GOARCH != "amd64" && goruntime.GOARCH != "arm64" {
+		return ""
+	}
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "pdb-print", "wazero")
+}
+
+// newRenderer starts PDFium with a compilation cache in dir ("" = none). A cache
+// that can't be created or read is logged, wiped and skipped: it never stops rendering.
+func newRenderer(dir string) (*Renderer, error) {
+	if dir != "" {
+		r, err := start(dir)
+		if err == nil {
+			return r, nil
+		}
+		slog.Warn("pdfium compilation cache unusable, starting without it", "dir", dir, "err", err)
+		_ = os.RemoveAll(dir) // rebuilt on the next start
+	}
+	return start("")
+}
+
+func start(dir string) (r *Renderer, err error) {
+	// Same features go-pdfium uses by default: its PDFium build needs exception handling.
+	rc := wazero.NewRuntimeConfig().WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling)
+	var cache wazero.CompilationCache
+	closeCache := func() {
+		if cache != nil {
+			_ = cache.Close(context.Background())
+		}
+	}
+	if dir != "" {
+		if cache, err = wazero.NewCompilationCacheWithDir(dir); err != nil {
+			return nil, err
+		}
+		rc = rc.WithCompilationCache(cache)
+		// A tampered cache entry can panic inside wazero's loader (v1.12.0 indexes an empty
+		// executable); turn that into an error so newRenderer wipes the cache and retries.
+		defer func() {
+			if p := recover(); p != nil {
+				closeCache()
+				r, err = nil, fmt.Errorf("load compilation cache: %v", p)
+			}
+		}()
+	}
 	pool, err := webassembly.Init(webassembly.Config{
 		MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
-		FSConfig: wazero.NewFSConfig(), // nothing mounted: PDFs only ever arrive as bytes
+		FSConfig:      wazero.NewFSConfig(), // nothing mounted: PDFs only ever arrive as bytes
+		RuntimeConfig: rc,
 	})
 	if err != nil {
+		closeCache()
 		return nil, fmt.Errorf("init pdfium: %w", err)
 	}
 	inst, err := pool.GetInstance(30 * time.Second)
 	if err != nil {
 		_ = pool.Close()
+		closeCache()
 		return nil, fmt.Errorf("pdfium instance: %w", err)
 	}
-	return &Renderer{pool: pool, instance: inst, maxPixels: MaxPixels}, nil
+	return &Renderer{pool: pool, instance: inst, cache: cache, maxPixels: MaxPixels}, nil
 }
 
 func (r *Renderer) Close() error {
 	_ = r.instance.Close()
-	return r.pool.Close()
+	err := r.pool.Close()
+	if r.cache != nil {
+		_ = r.cache.Close(context.Background())
+	}
+	return err
 }
 
 // Render returns one black/white image per page; pixel values are 0 (black) or 255.
