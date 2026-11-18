@@ -64,6 +64,10 @@ printers, then drag the generated bookmarklet to your bookmarks bar. On a part o
 in Part-DB, clicking it opens a small window that prints the label. The bookmarklet signs each request
 with a per-install key, so other websites can't print through the agent without a click.
 
+A proposed Part-DB change adds a Print button and printer icons to Part-DB itself (draft, see
+[#1625](https://github.com/Part-DB/Part-DB-server/issues/1625)). With such a Part-DB, click
+"Connect Part-DB's print button to this agent" in the UI once; the button then works like the bookmarklet.
+
 Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll, errors
 (cover open, wrong media, empty) and, after sending, whether the label actually printed. A job is
 refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
