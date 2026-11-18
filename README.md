@@ -52,8 +52,21 @@ bin/pdb-print print --profile 2 --ids 32 --printer ql810      # fetch from Part-
 bin/pdb-print print --profile 2 --ids 32,112-125 --type part --printer ql810
 bin/pdb-print print label.pdf --printer ql810                 # local PDF
 bin/pdb-print render label.pdf --printer ql810 -o /tmp        # PNG preview at head dots
-bin/pdb-print media                                           # known Brother QL media and PT tapes
+bin/pdb-print media                                           # known media and the models that take them
+bin/pdb-print discover                                        # find printers on USB and the network
 ```
+
+`discover` only connects to the print port and asks SNMP; it never sends anything a printer could
+print. For a printer pdb-print doesn't support yet, `pdb-print report` writes a file to attach to a
+GitHub issue: discovery data, SNMP values and, with `--identify` (asks per printer, since a printer
+that doesn't understand a query may print it), the replies to each printer language's identify
+query; `--print` adds a test label on supported printers. IP/MAC addresses, serial numbers and the
+host name are masked unless `--raw`.
+
+Each printer in the config names its `model` (from the device database; it picks the driver). USB
+printers on Linux are found by `usb_id` (and `serial`, for two identical printers) at every job, so
+replugging doesn't matter; `device: /dev/usb/lpN` works too. The agent reports each printer's online
+state to Part-DB with every heartbeat.
 ### Web UI and bookmarklet
 
 ```sh
@@ -82,8 +95,8 @@ label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead)
 
 ### Brother P-touch PT-9500PC (USB, Linux)
 
-`driver: brother-pt` drives a PT-9500PC tape printer over USB through Linux's `usblp` driver
-(`/dev/usb/lp0`; add the user to group `lp`). It reads the loaded tape and errors before each job,
+`model: PT-9500PC` drives the tape printer over USB through Linux's `usblp` driver (add the user to
+group `lp`). Brother QLs also work over USB the same way (QL-800, QL-810W, QL-820NWB). It reads the loaded tape and errors before each job,
 sends a batch label by label and waits for each to be printed. Labels print at true size: design the
 Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm on 36 mm tape,
 about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for 36 mm tape
