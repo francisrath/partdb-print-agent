@@ -57,8 +57,11 @@ type Service struct {
 	// OpenTransport returns the connection to a printer; nil = by transport kind.
 	// Tests put a fake printer here.
 	OpenTransport func(p *config.Printer) driver.Transport
+	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
+	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r and printers
+	mu       sync.Mutex // guards r, printers and online
+	online   map[string]onlineState
 	r        *render.Renderer
 	printers map[string]*sync.Mutex
 }

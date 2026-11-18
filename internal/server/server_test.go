@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -494,5 +495,18 @@ func TestFormMediaTaggedWithModels(t *testing.T) {
 	h := newHarness(t)
 	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-810W QL-820NWB"`) {
 		t.Error("media options don't say which models take them")
+	}
+}
+
+func TestAgentPrintersReportOnline(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Svc.OnlineCheck = func(p *config.Printer) bool { return p.ID == "ql" }
+	ps := h.srv.AgentPrinters()
+	if len(ps) != 1 || !ps[0].Online {
+		t.Errorf("%+v", ps)
+	}
+	b, _ := json.Marshal(ps[0])
+	if !strings.Contains(string(b), `"online":true`) {
+		t.Errorf("heartbeat JSON %s", b)
 	}
 }

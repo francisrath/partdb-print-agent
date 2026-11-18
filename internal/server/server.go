@@ -534,10 +534,16 @@ func (s *Server) EnsureAgentID() (string, error) {
 
 // AgentPrinters are the configured printers, as reported to Part-DB.
 func (s *Server) AgentPrinters() []partdb.AgentPrinter {
-	var out []partdb.AgentPrinter
-	for _, p := range s.config().Printers {
-		out = append(out, partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media})
+	ps := s.config().Printers
+	out := make([]partdb.AgentPrinter, len(ps))
+	var wg sync.WaitGroup
+	for i := range ps {
+		p := &ps[i]
+		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media}
+		wg.Add(1)
+		go func() { defer wg.Done(); out[i].Online = s.Svc.Online(p) }() // checks take up to 2 s each
 	}
+	wg.Wait()
 	return out
 }
 

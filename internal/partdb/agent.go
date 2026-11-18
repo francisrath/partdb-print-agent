@@ -30,6 +30,9 @@ type AgentPrinter struct {
 	Name  string `json:"name,omitempty"`
 	Model string `json:"model,omitempty"`
 	Media string `json:"media,omitempty"`
+	// Online: the agent can reach the printer right now (USB device present, network printer
+	// accepting connections, or busy printing).
+	Online bool `json:"online"`
 }
 
 type Job struct {
