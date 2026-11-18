@@ -37,6 +37,8 @@ func TestOnlineBusyPrinter(t *testing.T) {
 	lock := s.printerLock("pt")
 	lock.Lock()
 	defer lock.Unlock()
+	s.setPrinting("pt", true)
+	defer s.setPrinting("pt", false)
 	if !s.Online(ptPrinter("", "")) {
 		t.Error("busy printer reported offline")
 	}
@@ -110,6 +112,8 @@ func TestOnlineJobBeatsStaleOffline(t *testing.T) {
 	lock := s.printerLock(p.ID)
 	lock.Lock() // a job
 	defer lock.Unlock()
+	s.setPrinting(p.ID, true)
+	defer s.setPrinting(p.ID, false)
 	if !s.Online(p) {
 		t.Error("printer printing a job reported offline")
 	}
@@ -134,5 +138,23 @@ func TestOnlineConcurrentShareOneCheck(t *testing.T) {
 	}
 	if a, b := <-res, <-res; a || b || calls != 1 {
 		t.Errorf("results %v %v, %d checks; want both offline from one check", a, b, calls)
+	}
+}
+
+// The printer lock held by something other than a job (a status check, a USB probe that
+// outran its timeout) doesn't make an offline printer online.
+func TestOnlineLockWithoutJobKeepsLastState(t *testing.T) {
+	s := service(t, nil)
+	s.OnlineCheck = func(*config.Printer) bool { return false }
+	p := tcpPrinter("ql", "127.0.0.1:9")
+	s.Online(p)
+	s.mu.Lock()
+	s.online[onlineKey(p)] = onlineState{} // expired "offline"
+	s.mu.Unlock()
+	lock := s.printerLock(p.ID)
+	lock.Lock() // e.g. a pending USB probe, no job
+	defer lock.Unlock()
+	if s.Online(p) {
+		t.Error("printer locked by a probe reported online")
 	}
 }

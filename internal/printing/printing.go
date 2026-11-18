@@ -63,6 +63,7 @@ type Service struct {
 	mu       sync.Mutex // guards r, printers and online
 	online   map[string]onlineState
 	probes   map[string]*sync.Mutex // one online check per printer at a time
+	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
 	r        *render.Renderer
 	printers map[string]*sync.Mutex
 }
@@ -301,6 +302,8 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	s.setPrinting(p.ID, true)
+	defer s.setPrinting(p.ID, false)
 
 	model, drv, err := printer(p)
 	if err != nil {

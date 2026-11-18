@@ -37,7 +37,13 @@ func (s *Service) Online(p *config.Printer) bool {
 	}
 	lock := s.printerLock(p.ID)
 	if !lock.TryLock() {
-		return true // only jobs hold it now: printing right now
+		if s.isPrinting(p.ID) {
+			return true // printing a job right now
+		}
+		// a status check or a USB probe that outran its timeout holds it: keep the last state
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.online[key].ok
 	}
 	up, done := s.check(p) // under the printer lock: a USB open can't collide with a starting job
 	s.mu.Lock()
@@ -53,6 +59,21 @@ func (s *Service) Online(p *config.Printer) bool {
 		go func() { <-done; lock.Unlock() }()
 	}
 	return up
+}
+
+func (s *Service) setPrinting(id string, on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.printing == nil {
+		s.printing = map[string]bool{}
+	}
+	s.printing[id] = on
+}
+
+func (s *Service) isPrinting(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.printing[id]
 }
 
 func (s *Service) cachedOnline(key string) (bool, bool) {
