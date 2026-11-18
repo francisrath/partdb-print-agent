@@ -88,6 +88,34 @@ func run(ctx context.Context, args []string) error {
 		fmt.Printf("pdb-print %s (%s %s/%s)\n", appVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
+	if cmd == "media" { // needs no config: it's what config errors point to
+		db := devicedb.Default()
+		var names []string // driver names in first-seen order, QLs first as before
+		media := map[string][]driver.Media{}
+		seen := map[string]bool{}
+		for _, f := range driver.Families() {
+			models := db.Models(f)
+			slices.SortStableFunc(models, func(a, b *devicedb.Model) int { return strings.Compare(b.Dialect, a.Dialect) })
+			for _, m := range models {
+				name := config.DriverName(m)
+				if _, ok := media[name]; !ok {
+					names = append(names, name)
+				}
+				for _, md := range db.MediaFor(m) {
+					if !seen[md.ID] {
+						seen[md.ID] = true
+						media[name] = append(media[name], md)
+					}
+				}
+			}
+		}
+		for _, name := range names {
+			for _, md := range media[name] {
+				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", name, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
+			}
+		}
+		return nil
+	}
 
 	if *cfgPath == "" {
 		*cfgPath = os.Getenv("PDB_PRINT_CONFIG")
@@ -127,33 +155,6 @@ func run(ctx context.Context, args []string) error {
 		return a.print(ctx, rest)
 	case "printers":
 		return a.printers(ctx, rest)
-	case "media":
-		db := devicedb.Default()
-		var names []string // driver names in first-seen order, QLs first as before
-		media := map[string][]driver.Media{}
-		seen := map[string]bool{}
-		for _, f := range driver.Families() {
-			models := db.Models(f)
-			slices.SortStableFunc(models, func(a, b *devicedb.Model) int { return strings.Compare(b.Dialect, a.Dialect) })
-			for _, m := range models {
-				name := config.DriverName(m)
-				if _, ok := media[name]; !ok {
-					names = append(names, name)
-				}
-				for _, md := range db.MediaFor(m) {
-					if !seen[md.ID] {
-						seen[md.ID] = true
-						media[name] = append(media[name], md)
-					}
-				}
-			}
-		}
-		for _, name := range names {
-			for _, md := range media[name] {
-				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", name, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
-			}
-		}
-		return nil
 	}
 	g.Usage()
 	return fmt.Errorf("unknown command %q", cmd)

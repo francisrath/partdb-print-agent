@@ -490,3 +490,21 @@ func TestSavePrinterAcceptsQLWithFamilyName(t *testing.T) {
 		t.Errorf("not saved: %q, printer %+v", h.flash(), p)
 	}
 }
+
+// Whether a silent printer is a problem depends on the model, not on the driver name used.
+func TestPTStatusWithoutReplyFamilyName(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Driver: "brother", Model: "PT-9500PC", Media: "tze-24",
+		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}})
+	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
+	if body := h.do("GET", "/printers/pt/status", nil).Body.String(); !strings.Contains(body, `"ok":false`) {
+		t.Errorf("silent PT: %s", body)
+	}
+}
+
+func TestFormMediaTaggedWithModels(t *testing.T) {
+	h := newHarness(t)
+	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-800 QL-810W QL-820NWB"`) {
+		t.Error("media options don't say which models take them")
+	}
+}

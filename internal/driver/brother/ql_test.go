@@ -267,12 +267,18 @@ func TestQLPrintWithoutSNMP(t *testing.T) {
 	if _, err := d.Status(context.Background(), tr); !errors.Is(err, driver.ErrNoReadback) {
 		t.Fatalf("status: %v, want ErrNoReadback", err)
 	}
-	res, err := d.Print(context.Background(), tr, qlJob(t, nil))
+	tr.sent.Reset() // only the job counts from here
+	job := qlJob(t, nil)
+	res, err := d.Print(context.Background(), tr, job)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Confirmed || res.Message != "sent (unconfirmed: printer gives no status)" || tr.sent.Len() == 0 {
-		t.Errorf("result %+v, %d bytes sent", res, tr.sent.Len())
+	var want bytes.Buffer
+	if err := d.Encode(&want, job); err != nil {
+		t.Fatal(err)
+	}
+	if res.Confirmed || res.Message != "sent (unconfirmed: printer gives no status)" || !bytes.Equal(tr.sent.Bytes(), want.Bytes()) {
+		t.Errorf("result %+v, sent %d bytes, want the %d-byte job", res, tr.sent.Len(), want.Len())
 	}
 }
 
@@ -299,5 +305,42 @@ func TestQLPrintConfirmsViaSNMP(t *testing.T) {
 	res, err = d.Print(context.Background(), &silentTCP{}, qlJob(t, st))
 	if err != nil || res.Confirmed {
 		t.Fatalf("busy before sending: %+v %v", res, err)
+	}
+}
+
+// Brother's raster reference (p.33): "The QL-800 does not support the compression mode."
+func TestQL800SendsUncompressed(t *testing.T) {
+	m, _ := devicedb.Default().Model("QL-800")
+	d, err := driver.New(m, driver.Options{NoSNMP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := d.Encode(&b, qlJob(t, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b.Bytes(), []byte{'M', 0, 'g', 0, 90}) || bytes.Contains(b.Bytes(), []byte{'M', 2}) {
+		t.Error("QL-800 job isn't uncompressed (M 0, 90-byte raster lines)")
+	}
+}
+
+// The 12.7 mm minimum length is for continuous tape; a die-cut label is as long as it is.
+func TestQLShortDieCutNotPadded(t *testing.T) {
+	m := dk(t, "dk-11204")
+	var b bytes.Buffer
+	if err := newQLForTest(t).Encode(&b, &driver.Job{Pages: []*image.Gray{testPage(165, 100)}, Media: &m}); err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(b.Bytes(), []byte{'g', 0}); n != 100 {
+		t.Errorf("%d raster lines, want 100", n)
+	}
+}
+
+func TestQLPrintCancelledSendsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tr := &silentTCP{}
+	if _, err := newQLForTest(t).Print(ctx, tr, qlJob(t, nil)); !errors.Is(err, context.Canceled) || tr.sent.Len() != 0 {
+		t.Errorf("err %v, %d bytes sent", err, tr.sent.Len())
 	}
 }

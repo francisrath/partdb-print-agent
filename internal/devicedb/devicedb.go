@@ -7,7 +7,9 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"sort"
@@ -138,13 +140,21 @@ func Load(fsys fs.FS) (*DB, error) {
 			return nil, fmt.Errorf("%s: %w", n, err)
 		}
 		base := path.Base(n)
+		var extra any
+		if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+			errs = append(errs, fmt.Errorf("%s: a data file must be one YAML document", base))
+		}
 		for _, m := range f.Media {
 			if _, dup := db.media[m.ID]; dup || m.ID == "" {
 				errs = append(errs, fmt.Errorf("%s: media %q missing or defined twice", base, m.ID))
 			}
 			db.media[m.ID] = m
 		}
-		for _, m := range f.Models {
+		for i, m := range f.Models {
+			if m == nil {
+				errs = append(errs, fmt.Errorf("%s: models[%d] is an empty model", base, i))
+				continue
+			}
 			if m.ID == "" || db.models[m.ID] != nil {
 				errs = append(errs, fmt.Errorf("%s: model %q missing or defined twice", base, m.ID))
 				continue
@@ -161,10 +171,25 @@ func Load(fsys fs.FS) (*DB, error) {
 			db.models[m.ID], origin[m.ID] = m, base
 		}
 	}
-	for _, m := range db.models {
-		for _, id := range m.Media {
-			if _, ok := db.media[id]; !ok {
-				errs = append(errs, fmt.Errorf("%s: model %s: unknown media %s", origin[m.ID], m.ID, id))
+	codes := map[string]string{} // family + status code → model id
+	for _, id := range slices.Sorted(maps.Keys(db.models)) {
+		m := db.models[id]
+		if c := m.Match.StatusCode; c != nil {
+			key := fmt.Sprintf("%s/0x%02x", m.Driver, *c)
+			if other, dup := codes[key]; dup {
+				errs = append(errs, fmt.Errorf("%s: models %s and %s both claim status code 0x%02x", origin[m.ID], other, m.ID, *c))
+			}
+			codes[key] = m.ID
+		}
+		for _, mid := range m.Media {
+			md, ok := db.media[mid]
+			if !ok {
+				errs = append(errs, fmt.Errorf("%s: model %s: unknown media %s", origin[m.ID], m.ID, mid))
+				continue
+			}
+			if m.HeadPins > 0 && md.OffsetPins+md.PrintableWidthDots > m.HeadPins {
+				errs = append(errs, fmt.Errorf("%s: model %s: media %s needs pins %d–%d, head has %d", origin[m.ID], m.ID, mid,
+					md.OffsetPins, md.OffsetPins+md.PrintableWidthDots-1, m.HeadPins))
 			}
 		}
 	}

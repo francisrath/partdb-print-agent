@@ -219,10 +219,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
 		"Printers": cfg.Printers, "Models": formModels(),
 	}
-	if ms := formModels(); len(ms) > 0 {
-		m, _ := devicedb.Default().Model(ms[0])
-		data["Media"] = devicedb.Default().MediaFor(m)
-	}
+	data["Media"] = formMedia()
 
 	var in *config.Instance
 	if len(cfg.Instances) > 0 {
@@ -469,7 +466,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	st, err := s.Svc.Status(ctx, p)
 	switch {
-	case errors.Is(err, driver.ErrNoReadback) && p.Driver == "brother-pt":
+	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
 		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
 	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
@@ -747,6 +744,36 @@ func formModels() []string {
 	for _, m := range devicedb.Default().Models("brother") {
 		if slices.Contains(m.Transports, "tcp") {
 			out = append(out, m.ID)
+		}
+	}
+	return out
+}
+
+// needsStatus: printers that can't print without a status reply (PT) are not OK when silent.
+func needsStatus(p *config.Printer) bool {
+	m, err := p.DeviceModel()
+	return err == nil && m.QuirkBool("needs_status")
+}
+
+type formMediaOption struct {
+	devicedb.Media
+	Models string // space-separated model ids that take it (the form shows those for the selected model)
+}
+
+// formMedia lists the media of all form models, each tagged with the models that take it.
+func formMedia() []formMediaOption {
+	db := devicedb.Default()
+	var out []formMediaOption
+	idx := map[string]int{}
+	for _, id := range formModels() {
+		m, _ := db.Model(id)
+		for _, md := range db.MediaFor(m) {
+			if i, ok := idx[md.ID]; ok {
+				out[i].Models += " " + id
+				continue
+			}
+			idx[md.ID] = len(out)
+			out = append(out, formMediaOption{md, id})
 		}
 	}
 	return out

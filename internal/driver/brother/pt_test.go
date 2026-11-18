@@ -443,6 +443,9 @@ func (f *fakeTape) Write(p []byte) (int, error) {
 	if f.written == f.failOn {
 		return 0, syscall.ENODEV
 	}
+	if end := p[len(p)-1]; (end == 0x0c || end == 0x1a) && len(f.queue) > 0 {
+		return 0, errors.New("fakeTape: page sent before the previous one's completion was read")
+	}
 	f.writes = append(f.writes, append([]byte(nil), p...))
 	if end := p[len(p)-1]; end == 0x0c || end == 0x1a {
 		f.queue = append(f.queue, reply(func(b []byte) { b[18], b[19] = 0x06, 0x01 })...)
@@ -532,5 +535,25 @@ func TestPTPrintDeviceGone(t *testing.T) {
 		if !errors.As(err, &de) || de.Code != driver.CommsError {
 			t.Errorf("%s: err = %v, want COMMS_ERROR", name, err)
 		}
+	}
+}
+
+func TestPTPrintCancelledSendsNoPages(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	f := &fakeTape{}
+	if _, err := newPTForTest(t).Print(ctx, f, ptJob(t, 2, "", "laminated")); !errors.Is(err, context.Canceled) || len(f.writes) > 1 {
+		t.Errorf("err %v, %d writes", err, len(f.writes))
+	}
+}
+
+// A reply that stops halfway and never completes must not shift the stream: a framing
+// error, not "no reply yet" (which would be retried on the misaligned stream).
+func TestPartialReplyIsAnError(t *testing.T) {
+	tr := &scripted{replies: [][]byte{realReply()[:10]}}
+	_, err := readReply(tr)
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError || errors.Is(err, driver.ErrNoReadback) {
+		t.Errorf("err = %v, want COMMS_ERROR (not ErrNoReadback)", err)
 	}
 }

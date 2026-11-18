@@ -10,7 +10,8 @@ models:
     transports: [tcp]
     match: {status_code: 0x38}
     media: &dk [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202]
-    quirks: &ql {min_lines: 150, max_lines: 11811, feed_margin: 35}
+    # "The QL-800 does not support the compression mode." (Raster Command Reference p.33)
+    quirks: {min_lines: 150, max_lines: 11811, feed_margin: 35, no_compression: true}
   - id: QL-810W
     vendor: Brother
     driver: brother
@@ -20,7 +21,7 @@ models:
     transports: [tcp]
     match: {status_code: 0x39, snmp_descr: "QL-810W"}
     media: *dk
-    quirks: *ql
+    quirks: &ql {min_lines: 150, max_lines: 11811, feed_margin: 35}
   - id: QL-820NWB
     vendor: Brother
     driver: brother

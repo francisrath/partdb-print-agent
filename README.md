@@ -113,8 +113,8 @@ Tests: `go test ./...` (never prints; a fake printer runs on localhost).
 Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen-icons.sh`
 (needs `brew install librsvg imagemagick`, plus `iconutil` from macOS); the output is committed.
 
-Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware ./internal/driver/brother`,
-`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brother`.
+Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware -count=1 ./internal/driver/brother`,
+`PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware -count=1 ./internal/driver/brother`.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design.
 
@@ -124,8 +124,12 @@ A printer that an existing driver family can already talk to (e.g. another Broth
 same protocol) is an entry in `internal/devicedb/data/*.yaml`: its id, driver and dialect, dpi and head
 pins, how it identifies itself (USB id, IEEE 1284 model, status model code), which media it takes and
 any quirks. Add a golden test vector for it if you can; `go test ./internal/devicedb` checks the data.
-A new protocol family is a package under `internal/driver/` that registers itself; a new connection
-type is a package under `internal/transport/`.
+A new protocol family is a package under `internal/driver/` that registers itself in `init`; a new
+connection type is a package under `internal/transport/`. Registration only runs when the binary imports
+the package, so add a blank import next to the existing ones in `internal/printing/printing.go`.
+
+Every printer in the config needs a `model` from the device database (`pdb-print media` lists what
+the models take); a config with an unknown or missing model doesn't load.
 
 ## License
 MIT

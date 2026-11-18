@@ -20,6 +20,11 @@ func (fakeDriver) Encode(io.Writer, *Job) error                            { ret
 
 func TestRegistry(t *testing.T) {
 	Register("zz-fake", func(m *devicedb.Model, o Options) (Driver, error) { return fakeDriver{m, o}, nil })
+	t.Cleanup(func() { // -count=N runs in one process
+		regMu.Lock()
+		delete(families, "zz-fake")
+		regMu.Unlock()
+	})
 	m := &devicedb.Model{ID: "Fake-1", Driver: "zz-fake"}
 	d, err := New(m, Options{Host: "h", SNMPCommunity: "c"})
 	if err != nil {

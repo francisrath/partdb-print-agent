@@ -235,3 +235,14 @@ func TestServeWithoutPartDBSaysSo(t *testing.T) {
 		t.Errorf("want a plain reason when no Part-DB is set up:\n%s", out)
 	}
 }
+
+// `pdb-print media` is what the config errors point to, so it must work with a broken config.
+func TestMediaRunsWithBrokenConfig(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(cfg, []byte("printers: [{id: a, driver: brother-ql, model: QL-810W, media: dk-22201, transport: {kind: tcp, host: x}}]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background(), []string{"--config", cfg, "media"}); err != nil {
+		t.Errorf("media with a broken config: %v", err)
+	}
+}

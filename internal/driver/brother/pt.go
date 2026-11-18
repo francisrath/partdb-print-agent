@@ -296,6 +296,9 @@ func (d *pt) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	for i, pg := range per {
+		if err := ctx.Err(); err != nil {
+			return nil, err // don't start a label after cancellation
+		}
 		if _, err := t.Write(pg); err != nil {
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}

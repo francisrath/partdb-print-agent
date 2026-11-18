@@ -70,6 +70,9 @@ func readReply(t driver.Transport) ([]byte, error) {
 		if n == len(buf) {
 			break
 		}
+		if n > 0 { // the rest of this reply never came: retrying would read a shifted stream
+			return nil, &driver.Error{Code: driver.CommsError, Detail: fmt.Sprintf("incomplete status reply (%d of %d bytes): %v", n, len(buf), err)}
+		}
 		if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, driver.ErrNoReadback) {
 			return nil, fmt.Errorf("%w: %w", driver.ErrNoReadback, err)
 		}

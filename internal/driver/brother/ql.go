@@ -141,6 +141,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 	}
 	m := job.Media
 	minLines := d.model.Quirk("min_lines", 150)
+	raw := d.noCompression || d.model.QuirkBool("no_compression")
 
 	var b bytes.Buffer
 	b.Write(make([]byte, qlInvalidateN))
@@ -163,7 +164,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 	for i, p := range job.Pages {
 		lines := p.Bounds().Dy()
 		padTop, padBottom := 0, 0
-		if lines < minLines { // short continuous label: centre it in the minimum length
+		if lines < minLines && m.Kind == driver.Continuous { // short continuous label: centre it in the minimum length
 			padTop = (minLines - lines) / 2
 			padBottom = minLines - lines - padTop
 		}
@@ -180,7 +181,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 		}
 		b.Write([]byte{0x1b, 'i', 'K', expanded})
 		b.Write(binary.LittleEndian.AppendUint16([]byte{0x1b, 'i', 'd'}, margin))
-		if d.noCompression {
+		if raw {
 			b.Write([]byte{'M', 0})
 		} else {
 			b.Write([]byte{'M', 2})
@@ -191,7 +192,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 			if y >= 0 && y < lines {
 				line = packLine(p, y, *m)
 			}
-			if !d.noCompression {
+			if !raw {
 				line = packbits(line)
 			}
 			b.Write([]byte{'g', 0, byte(len(line))})
@@ -232,6 +233,9 @@ func (d *ql) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len(),
 		Message: "sent (unconfirmed: printer gives no status)"}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, err := t.Write(b.Bytes()); err != nil {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}

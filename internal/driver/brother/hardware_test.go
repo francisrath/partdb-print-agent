@@ -15,9 +15,12 @@ import (
 
 // Status only — never prints.
 //
-//	PDB_PRINT_QL_ADDR=192.168.1.50:9100 go test -tags hardware ./internal/driver/brother
-//	PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware ./internal/driver/brother
+//	PDB_PRINT_QL_ADDR=192.168.1.50:9100 go test -tags hardware -count=1 ./internal/driver/brother
+//	PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware -count=1 ./internal/driver/brother
 func TestHardwareStatus(t *testing.T) {
+	if os.Getenv("PDB_PRINT_QL_ADDR") == "" && os.Getenv("PDB_PRINT_PT_DEVICE") == "" {
+		t.Skip("set PDB_PRINT_QL_ADDR and/or PDB_PRINT_PT_DEVICE")
+	}
 	for _, tc := range []struct {
 		env, model string
 		open       func(string) driver.Transport
