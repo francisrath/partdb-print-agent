@@ -1,5 +1,5 @@
 # Brother QL label printers (Raster Command Reference QL-800/810W/820NWB). status_code = byte 4 of
-# the 32-byte status reply.
+# the 32-byte status reply; USB ids from the reference's Appendix A (vendor 0x04F9).
 models:
   - id: QL-800
     vendor: Brother
@@ -7,8 +7,8 @@ models:
     dialect: ql
     dpi: 300
     head_pins: 720
-    transports: [tcp]
-    match: {status_code: 0x38}
+    transports: [usb] # no network port
+    match: {status_code: 0x38, usb: ["04f9:209b"], ieee1284_model: QL-800}
     media: &dk [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202]
     # "The QL-800 does not support the compression mode." (Raster Command Reference p.33)
     quirks: {min_lines: 150, max_lines: 11811, feed_margin: 35, no_compression: true}
@@ -18,8 +18,8 @@ models:
     dialect: ql
     dpi: 300
     head_pins: 720
-    transports: [tcp]
-    match: {status_code: 0x39, snmp_descr: "QL-810W"}
+    transports: [tcp, usb]
+    match: {status_code: 0x39, usb: ["04f9:209c"], ieee1284_model: QL-810W, snmp_descr: "QL-810W"}
     media: *dk
     quirks: &ql {min_lines: 150, max_lines: 11811, feed_margin: 35}
   - id: QL-820NWB
@@ -28,7 +28,7 @@ models:
     dialect: ql
     dpi: 300
     head_pins: 720
-    transports: [tcp]
-    match: {status_code: 0x41}
+    transports: [tcp, usb]
+    match: {status_code: 0x41, usb: ["04f9:209d"], ieee1284_model: QL-820NWB, snmp_descr: "QL-820NWB"}
     media: *dk
     quirks: *ql

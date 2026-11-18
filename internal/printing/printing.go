@@ -11,6 +11,7 @@ import (
 	"image"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -171,6 +172,22 @@ func LookupMedia(p *config.Printer, id string) (driver.Media, bool) {
 		return driver.Media{}, false
 	}
 	return db.Media(id)
+}
+
+// CheckDrivers reports printers whose model has no driver in this build (the config
+// package can't see the driver registry).
+func CheckDrivers(cfg *config.Config) error {
+	for i := range cfg.Printers {
+		p := &cfg.Printers[i]
+		m, err := p.DeviceModel()
+		if err != nil {
+			return fmt.Errorf("printer %q: %w", p.ID, err)
+		}
+		if !slices.Contains(driver.Families(), m.Driver) {
+			return fmt.Errorf("printer %q: no driver for %s in this build", p.ID, m.ID)
+		}
+	}
+	return nil
 }
 
 func options(p *config.Printer) driver.Options {

@@ -79,7 +79,7 @@ func fakeQL(t *testing.T, coverOpen bool) (addr string, got chan []byte) {
 func writeConfig(t *testing.T, addr string, extra ...string) string {
 	host, port, _ := net.SplitHostPort(addr)
 	p := filepath.Join(t.TempDir(), "config.yaml")
-	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    driver: brother-ql\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n    no_snmp: true\n", host, port)
+	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n    no_snmp: true\n", host, port)
 	if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestServeWithoutPartDBSaysSo(t *testing.T) {
 // `pdb-print media` is what the config errors point to, so it must work with a broken config.
 func TestMediaRunsWithBrokenConfig(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "c.yaml")
-	if err := os.WriteFile(cfg, []byte("printers: [{id: a, driver: brother-ql, model: QL-810W, media: dk-22201, transport: {kind: tcp, host: x}}]\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("printers: [{id: a, model: QL-810W, media: dk-22201, transport: {kind: tcp, host: x}}]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := run(context.Background(), []string{"--config", cfg, "media"}); err != nil {

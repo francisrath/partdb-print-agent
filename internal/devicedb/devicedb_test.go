@@ -1,6 +1,7 @@
 package devicedb_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -101,5 +102,18 @@ func TestLint(t *testing.T) {
 				t.Errorf("%s: error %q doesn't name %q", name, err, w)
 			}
 		}
+	}
+}
+
+func TestQLUSBMatches(t *testing.T) {
+	db := devicedb.Default()
+	for id, usb := range map[string]string{"QL-800": "04f9:209b", "QL-810W": "04f9:209c", "QL-820NWB": "04f9:209d"} {
+		m, _ := db.Model(id)
+		if len(m.Match.USB) != 1 || m.Match.USB[0] != usb || m.Match.IEEE1284Model != id || !slices.Contains(m.Transports, "usb") {
+			t.Errorf("%s: %+v transports %v", id, m.Match, m.Transports)
+		}
+	}
+	if m, _ := db.Model("QL-800"); slices.Contains(m.Transports, "tcp") || m.Match.SNMPDescr != "" {
+		t.Errorf("QL-800 has no network port: %v %q", m.Transports, m.Match.SNMPDescr)
 	}
 }

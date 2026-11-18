@@ -94,7 +94,7 @@ func newHarness(t *testing.T) *harness {
 	qlAddr, jobs := fakeQL(t)
 	qlHost, qlPort, _ := net.SplitHostPort(qlAddr)
 	port, _ := strconv.Atoi(qlPort)
-	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
+	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
 		Transport: config.Transport{Kind: "tcp", Host: qlHost, Port: port}}}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := &printing.Service{Log: log}
@@ -435,14 +435,14 @@ func TestAgentJobsHooks(t *testing.T) {
 
 func TestSavePrinterKeepsNonQL(t *testing.T) {
 	h := newHarness(t)
-	pt := config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Media: "tze-24", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}}
+	pt := config.Printer{ID: "pt", Model: "PT-9500PC", Media: "tze-24", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}}
 	h.srv.cfg.Printers = append(h.srv.cfg.Printers, pt)
 	// the form as the UI sends it for this printer: its own model and media, which the QL checks don't know
 	h.post("/printers", url.Values{"id": {"pt"}, "model": {"PT-9500PC"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"tze-24"}})
 	if !strings.Contains(h.flash(), "config file") {
 		t.Errorf("flash %q", h.flash())
 	}
-	if p, err := h.srv.config().Printer("pt"); err != nil || p.Driver != "brother-pt" || p.Transport.Device != "/dev/usb/lp0" {
+	if p, err := h.srv.config().Printer("pt"); err != nil || p.Model != "PT-9500PC" || p.Transport.Device != "/dev/usb/lp0" {
 		t.Errorf("non-QL printer overwritten from the UI: %+v %v", p, err)
 	}
 	if w := h.do("GET", "/", nil); !strings.Contains(w.Body.String(), "/dev/usb/lp0") {
@@ -462,7 +462,7 @@ func (silentPT) Kind() string                { return "usb" }
 // A PT that gives no status can't print (jobs need its replies), unlike a QL over TCP.
 func TestPTStatusWithoutReplyIsNotOK(t *testing.T) {
 	h := newHarness(t)
-	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Media: "tze-24",
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Model: "PT-9500PC", Media: "tze-24",
 		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}})
 	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
 	w := h.do("GET", "/printers/pt/status", nil)
@@ -479,22 +479,10 @@ func TestResultTextCarriesWarnings(t *testing.T) {
 	}
 }
 
-// A QL configured with the family name (driver: brother) can still be edited in the form.
-func TestSavePrinterAcceptsQLWithFamilyName(t *testing.T) {
-	h := newHarness(t)
-	for i := range h.srv.cfg.Printers {
-		h.srv.cfg.Printers[i].Driver = "brother"
-	}
-	h.post("/printers", url.Values{"id": {"ql"}, "model": {"QL-810W"}, "host": {"127.0.0.1"}, "port": {"9100"}, "media": {"dk-22205"}})
-	if p, _ := h.srv.config().Printer("ql"); p.Media != "dk-22205" {
-		t.Errorf("not saved: %q, printer %+v", h.flash(), p)
-	}
-}
-
 // Whether a silent printer is a problem depends on the model, not on the driver name used.
 func TestPTStatusWithoutReplyFamilyName(t *testing.T) {
 	h := newHarness(t)
-	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Driver: "brother", Model: "PT-9500PC", Media: "tze-24",
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "pt", Model: "PT-9500PC", Media: "tze-24",
 		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}})
 	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
 	if body := h.do("GET", "/printers/pt/status", nil).Body.String(); !strings.Contains(body, `"ok":false`) {
@@ -504,7 +492,7 @@ func TestPTStatusWithoutReplyFamilyName(t *testing.T) {
 
 func TestFormMediaTaggedWithModels(t *testing.T) {
 	h := newHarness(t)
-	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-800 QL-810W QL-820NWB"`) {
+	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-810W QL-820NWB"`) {
 		t.Error("media options don't say which models take them")
 	}
 }

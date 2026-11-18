@@ -99,7 +99,7 @@ func (f *fakePT) sent() []byte {
 }
 
 func ptPrinter(media, cut string) *config.Printer {
-	return &config.Printer{ID: "pt", Driver: "brother-pt", Model: "PT-9500PC", Media: media, Cut: cut,
+	return &config.Printer{ID: "pt", Model: "PT-9500PC", Media: media, Cut: cut,
 		Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}}
 }
 
@@ -390,7 +390,7 @@ func TestPrintSilentQLPrintsBlind(t *testing.T) {
 	s := service(t, nil)
 	tr := &silent{kind: "tcp"}
 	s.OpenTransport = func(*config.Printer) driver.Transport { return tr }
-	p := &config.Printer{ID: "ql", Driver: "brother-ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
+	p := &config.Printer{ID: "ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
 		Transport: config.Transport{Kind: "tcp", Host: "127.0.0.1", Port: 9100}}
 	res, err := s.Print(context.Background(), p, "", PDF(pdfgen.Page(29, 46, pdfgen.Text("QL"))))
 	if err != nil {

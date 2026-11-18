@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -89,30 +88,22 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	if cmd == "media" { // needs no config: it's what config errors point to
+		// every medium once, with the models that take it
 		db := devicedb.Default()
-		var names []string // driver names in first-seen order, QLs first as before
-		media := map[string][]driver.Media{}
-		seen := map[string]bool{}
+		var order []driver.Media
+		takers := map[string][]string{}
 		for _, f := range driver.Families() {
-			models := db.Models(f)
-			slices.SortStableFunc(models, func(a, b *devicedb.Model) int { return strings.Compare(b.Dialect, a.Dialect) })
-			for _, m := range models {
-				name := config.DriverName(m)
-				if _, ok := media[name]; !ok {
-					names = append(names, name)
-				}
+			for _, m := range db.Models(f) {
 				for _, md := range db.MediaFor(m) {
-					if !seen[md.ID] {
-						seen[md.ID] = true
-						media[name] = append(media[name], md)
+					if takers[md.ID] == nil {
+						order = append(order, md)
 					}
+					takers[md.ID] = append(takers[md.ID], m.ID)
 				}
 			}
 		}
-		for _, name := range names {
-			for _, md := range media[name] {
-				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", name, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
-			}
+		for _, md := range order {
+			fmt.Printf("%-10s %-20s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
 		}
 		return nil
 	}
@@ -129,6 +120,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	cfg, err := config.Load(path, explicit)
 	if err != nil {
+		return err
+	}
+	if err := printing.CheckDrivers(cfg); err != nil {
 		return err
 	}
 	lvl := *logLevel
@@ -399,10 +393,13 @@ func (a *app) printers(ctx context.Context, args []string) error {
 	case len(args) == 1 && args[0] == "list":
 		for _, p := range a.cfg.Printers {
 			where := fmt.Sprintf("%s:%d", p.Transport.Host, p.Transport.Port)
-			if p.Transport.Kind == "usb" {
+			switch {
+			case p.Transport.Kind == "usb" && p.Transport.USBID != "":
+				where = "usb " + strings.TrimSpace(p.Transport.USBID+" "+p.Transport.Serial)
+			case p.Transport.Kind == "usb":
 				where = p.Transport.Device
 			}
-			fmt.Printf("%-10s %-10s %-10s %s media=%s\n", p.ID, p.Driver, p.Model, where, p.Media)
+			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where, p.Media)
 		}
 		return nil
 	case len(args) == 2 && args[0] == "status":
