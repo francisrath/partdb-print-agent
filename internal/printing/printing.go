@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"log/slog"
 	"os"
 	"slices"
@@ -65,8 +66,10 @@ type Service struct {
 	probes   map[string]*sync.Mutex // one online check per printer at a time
 	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
 
-	beforePublish   func() // tests: between an online check returning and its result being stored
-	waitingForCheck func() // tests: an online call is about to wait for a running check
+	beforePublish   func()                               // tests: between an online check returning and its result being stored
+	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
+	openDevice      func(path string) (io.Closer, error) // USB online check; nil = open read/write
+	waitingForCheck func()                               // tests: an online call is about to wait for a running check
 	r               *render.Renderer
 	printers        map[string]*sync.Mutex
 }

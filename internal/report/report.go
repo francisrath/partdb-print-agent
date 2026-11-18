@@ -268,16 +268,43 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 		}
 		masked.Candidates[i] = c
 	}
+	// serials inside free text, as whole words from 3 characters on (shorter ones would hit
+	// unrelated text); done on the strings, not the JSON, so numbers elsewhere stay intact
+	var res []*regexp.Regexp
+	var toks []string
+	for _, v := range slices.Sorted(maps.Keys(tokens)) {
+		if len(v) >= 3 {
+			res = append(res, regexp.MustCompile(`\b`+regexp.QuoteMeta(v)+`\b`))
+			toks = append(toks, tokens[v])
+		}
+	}
+	text := func(s string) string {
+		for i, re := range res {
+			s = re.ReplaceAllString(s, toks[i])
+		}
+		return s
+	}
+	masked.Queries = make([]Query, len(r.Queries))
+	for i, q := range r.Queries {
+		q.Target, q.Sent, q.Reply, q.Err = text(q.Target), text(q.Sent), text(q.Reply), text(q.Err)
+		masked.Queries[i] = q
+	}
+	masked.Notes = make([]string, len(r.Notes))
+	for i, n := range r.Notes {
+		masked.Notes[i] = text(n)
+	}
+	for i := range masked.Candidates {
+		c := &masked.Candidates[i]
+		c.SNMPDescr = text(c.SNMPDescr)
+		for k, v := range c.IEEE1284 {
+			c.IEEE1284[k] = text(v)
+		}
+	}
 	b, err := json.MarshalIndent(&masked, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	s := string(b)
-	for v, tok := range tokens {
-		if len(v) >= 3 {
-			s = regexp.MustCompile(`\b`+regexp.QuoteMeta(v)+`\b`).ReplaceAllString(s, tok)
-		}
-	}
 	if h, _ := os.Hostname(); len(h) > 2 {
 		s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(h)).ReplaceAllString(s, "this-computer")
 	}

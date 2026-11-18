@@ -151,3 +151,21 @@ func TestRedactShortSerialFields(t *testing.T) {
 		t.Errorf("free text: %+v", q)
 	}
 }
+
+// A numeric serial must not replace numbers elsewhere (e.g. a port): masking works on the
+// report's text before it is serialised.
+func TestRedactNumericSerial(t *testing.T) {
+	r := &Report{Candidates: []discovery.Candidate{{Kind: "usb", Device: "/dev/usb/lp0", Serial: "9100"}, {Kind: "tcp", Host: "10.0.0.9", Port: 9100}},
+		Queries: []Query{{Target: "10.0.0.9:9100", Name: "q", Reply: "serial 9100"}}}
+	b, err := r.JSON(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Report
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, b)
+	}
+	if back.Candidates[1].Port != 9100 || back.Candidates[0].Serial == "9100" || back.Queries[0].Reply != "serial serial-1" {
+		t.Errorf("%+v %+v", back.Candidates, back.Queries)
+	}
+}

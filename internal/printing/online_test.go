@@ -2,6 +2,7 @@ package printing
 
 import (
 	"context"
+	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -184,4 +185,52 @@ func TestOnlineNoReversedPublication(t *testing.T) {
 	if up, fresh := s.cachedOnline(onlineKey(p)); up || !fresh {
 		t.Errorf("cache %v fresh %v", up, fresh)
 	}
+}
+
+// A job that starts while "offline" is cached still makes the printer online.
+func TestOnlineJobBeatsFreshOffline(t *testing.T) {
+	s := service(t, nil)
+	s.OnlineCheck = func(*config.Printer) bool { return false }
+	p := tcpPrinter("ql", "127.0.0.1:9")
+	s.Online(p) // fresh "offline" in the cache
+	s.setPrinting(p.ID, true)
+	defer s.setPrinting(p.ID, false)
+	if !s.Online(p) {
+		t.Error("printing printer reported offline from the cache")
+	}
+}
+
+// A USB open that outruns the probe timeout: Online answers offline on time, keeps the
+// printer locked until the open really ends (no EBUSY for a starting job), and a call in
+// the meantime keeps the last state instead of claiming "printing".
+func TestOnlineSlowUSBProbe(t *testing.T) {
+	s := service(t, nil)
+	s.probeTimeout = 100 * time.Millisecond
+	release := make(chan struct{})
+	s.openDevice = func(string) (io.Closer, error) { <-release; return io.NopCloser(nil), nil }
+	p := &config.Printer{ID: "pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp9"}}
+	start := time.Now()
+	if s.Online(p) || time.Since(start) > time.Second {
+		t.Fatalf("slow probe: online or late (%v)", time.Since(start))
+	}
+	lock := s.printerLock(p.ID)
+	if lock.TryLock() {
+		lock.Unlock()
+		t.Fatal("printer unlocked while the probe's open is still running")
+	}
+	s.mu.Lock()
+	s.online[onlineKey(p)] = onlineState{} // expired
+	s.mu.Unlock()
+	if s.Online(p) {
+		t.Error("probe-held lock reported as printing")
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for !lock.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("printer never unlocked after the probe ended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	lock.Unlock()
 }

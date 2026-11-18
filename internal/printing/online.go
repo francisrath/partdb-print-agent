@@ -2,6 +2,7 @@ package printing
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -25,6 +26,9 @@ type onlineState struct {
 // on its print port within 2 s is (nothing is sent). Results are cached for 30 s; checks of
 // one printer run one at a time and share their result.
 func (s *Service) Online(p *config.Printer) bool {
+	if s.isPrinting(p.ID) {
+		return true // a job started since the last check
+	}
 	key := onlineKey(p)
 	if up, ok := s.cachedOnline(key); ok {
 		return up
@@ -98,7 +102,7 @@ func (s *Service) check(p *config.Printer) (bool, <-chan struct{}) {
 		close(done)
 		return s.OnlineCheck(p), done
 	}
-	return reachable(p)
+	return s.reachable(p)
 }
 
 // onlineKey keys the cache by printer and address, so an edited address is checked afresh.
@@ -107,7 +111,7 @@ func onlineKey(p *config.Printer) string {
 	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial)
 }
 
-func reachable(p *config.Printer) (bool, <-chan struct{}) {
+func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 	done := make(chan struct{})
 	t := p.Transport
 	switch t.Kind {
@@ -120,16 +124,23 @@ func reachable(p *config.Printer) (bool, <-chan struct{}) {
 				return false, done
 			}
 		}
+		open, timeout := s.openDevice, s.probeTimeout
+		if open == nil {
+			open = func(path string) (io.Closer, error) { return os.OpenFile(path, os.O_RDWR, 0) }
+		}
+		if timeout == 0 {
+			timeout = 2 * time.Second
+		}
 		opened := make(chan bool, 1)
 		go func() { // usblp opens don't block, but a check must never hang a heartbeat
 			defer close(done)
-			f, err := os.OpenFile(dev, os.O_RDWR, 0)
+			f, err := open(dev)
 			opened <- err == nil && f.Close() == nil
 		}()
 		select {
 		case ok := <-opened:
 			return ok, done
-		case <-time.After(2 * time.Second):
+		case <-time.After(timeout):
 			return false, done
 		}
 	case "tcp":
