@@ -88,7 +88,7 @@ type Options struct {
 	DialTimeout time.Duration
 	Workers     int
 	Dial        func(ctx context.Context, addr string) (net.Conn, error)
-	SysDescr    func(ctx context.Context, host string) (string, error)
+	SysDescr    func(ctx context.Context, host string) (string, error) // nil = SNMP device description + sysDescr
 }
 
 // Network finds hosts with the print port open and names them from their SNMP sysDescr.
@@ -112,7 +112,7 @@ func Network(ctx context.Context, db *devicedb.DB, o Options) ([]Candidate, erro
 	}
 	if o.SysDescr == nil {
 		o.SysDescr = func(ctx context.Context, host string) (string, error) {
-			return snmp.SysDescr(ctx, host, "public", time.Second)
+			return snmp.Describe(ctx, host, "public", time.Second)
 		}
 	}
 	var (

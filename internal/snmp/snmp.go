@@ -136,20 +136,30 @@ func (s *State) LoadedMedia() (kind driver.MediaKind, widthMM, lengthMM int, ok 
 
 const oidSysDescr = "1.3.6.1.2.1.1.1.0"
 
-// SysDescr reads a device's sysDescr (e.g. "Brother NC-… QL-810W"), for discovery.
-func SysDescr(ctx context.Context, host, community string, timeout time.Duration) (string, error) {
+// Describe returns what a device says about itself, for discovery: the printer-MIB device
+// description (Brother: "Brother QL-810W") and sysDescr (Brother: the network card, e.g.
+// "Brother NC-36002w, Firmware …"), joined with "; ". Either may be missing.
+func Describe(ctx context.Context, host, community string, timeout time.Duration) (string, error) {
 	g := &gosnmp.GoSNMP{Target: host, Port: 161, Community: community, Version: gosnmp.Version2c,
 		Timeout: timeout, Retries: 0, Context: ctx}
 	if err := g.Connect(); err != nil {
 		return "", err
 	}
 	defer g.Conn.Close()
-	res, err := g.Get([]string{oidSysDescr})
+	res, err := g.Get([]string{oidDeviceDescr, oidSysDescr})
 	if err != nil {
 		return "", err
 	}
-	if len(res.Variables) == 0 || res.Variables[0].Type != gosnmp.OctetString {
-		return "", errors.New("snmp: no sysDescr")
+	var parts []string
+	for _, v := range res.Variables {
+		if v.Type == gosnmp.OctetString {
+			if t := strings.TrimSpace(str(v)); t != "" {
+				parts = append(parts, t)
+			}
+		}
 	}
-	return str(res.Variables[0]), nil
+	if len(parts) == 0 {
+		return "", errors.New("snmp: no description")
+	}
+	return strings.Join(parts, "; "), nil
 }
