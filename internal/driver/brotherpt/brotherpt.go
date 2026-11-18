@@ -42,6 +42,9 @@ func (d *Driver) Validate(pages []*image.Gray, job *driver.Job, media *driver.Me
 	if len(pages) == 0 {
 		return errors.New("no pages")
 	}
+	if job.Cut == "last" {
+		return errors.New(`cut "last" isn't possible on the PT-9500PC: labels are sent one at a time, so the printer can't tell which is last (use half or chain)`)
+	}
 	if _, ok := cutModes[job.Cut]; !ok {
 		return fmt.Errorf("unknown cut mode %q", job.Cut)
 	}
@@ -60,14 +63,17 @@ func (d *Driver) Validate(pages []*image.Gray, job *driver.Job, media *driver.Me
 }
 
 // cutModes maps job.Cut to the "set each mode" (ESC i M) and "set expanded mode" (ESC i K)
-// bytes (p.19–20). K bit 3 (no chain printing) stays set: the last label is fed and cut.
-// ponytail: last/none/half are from the reference's terse bit list; confirm on hardware.
+// bytes (p.19–20), as they behaved on a PT-9500PC (2026-11-18). The cutter sits ~25 mm past
+// the head. With chain printing (K bit 3 off) the last label stays in the printer and comes
+// out, cut, with the next print, so no blank leader is wasted. "No chain printing" feeds and
+// cuts after every label instead (labels are sent one at a time), plus a leader precut per job.
+// Half cut joins labels only with auto cut off; with auto cut on it is a peel line in the margin.
 var cutModes = map[string][2]byte{
-	"":          {0x40, 0x08}, // auto cut each label
-	"per_label": {0x40, 0x08},
-	"last":      {0x00, 0x28}, // no auto cut, label end cut
-	"none":      {0x00, 0x08},
-	"half":      {0x40, 0x0c}, // auto cut + half cut (laminated tape only)
+	"":          {0x40, 0x00}, // = chain
+	"chain":     {0x40, 0x00}, // full cut between labels; the last waits in the printer
+	"per_label": {0x40, 0x08}, // full cut, fed out at once; costs a blank leader per job
+	"none":      {0x00, 0x00}, // no cuts
+	"half":      {0x00, 0x04}, // half cuts: one strip, waits in the printer (laminated tape only)
 }
 
 // EncodePages returns the job header and one block per page. The PT-9500PC wants each page

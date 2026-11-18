@@ -22,8 +22,10 @@ printers:
   #   model: PT-9500PC
   #   transport: {kind: usb, device: /dev/usb/lp0}
   #   media: tze-24             # tze-6 … tze-36; omit to use the tape the printer reports
-  #   cut: half                 # default: half cut between labels of a batch on laminated tape,
-  #                             # one full cut at the end; per_label | last | none
+  #   cut: chain                # default: chain (single labels) / half (batches on laminated tape):
+  #                             # the last label waits in the printer until the next print or the
+  #                             # cut button, so no blank leader is wasted. per_label: feed and cut
+  #                             # at once (wastes ~25 mm per job); none: no cuts
 
 # Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
 # Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.

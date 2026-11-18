@@ -81,7 +81,7 @@ type Printer struct {
 	Transport Transport `yaml:"transport"`
 	Media     string    `yaml:"media"`  // dk-22210, tze-24; empty = use what the printer reports
 	Rotate    string    `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
-	Cut       string    `yaml:"cut"`    // per_label | last | none | half (brother-pt); see config.example.yaml
+	Cut       string    `yaml:"cut"`    // per_label | last (QL) | none | chain, half (PT); see config.example.yaml
 	Threshold uint8     `yaml:"threshold"`
 	// SNMP (UDP 161) reports the loaded roll and errors; network QLs give no status on 9100.
 	SNMPCommunity string `yaml:"snmp_community,omitempty"` // default "public"

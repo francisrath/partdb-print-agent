@@ -8,6 +8,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,7 +161,7 @@ func TestEncodePagesSplit(t *testing.T) {
 		0x1b, '@',
 		0x1b, 'i', 'c', 0xf4, 0, 24, 0, 0,
 		0x1b, 'i', 'M', 0x40,
-		0x1b, 'i', 'K', 0x08,
+		0x1b, 'i', 'K', 0x00,
 		0x1b, 'i', 'd', margin, 0,
 		'M', 0,
 		0x1b, 'i', 'R', 1)
@@ -171,7 +172,7 @@ func TestEncodePagesSplit(t *testing.T) {
 
 func TestCutModes(t *testing.T) {
 	for cut, mk := range map[string][2]byte{
-		"": {0x40, 0x08}, "per_label": {0x40, 0x08}, "last": {0x00, 0x28}, "none": {0x00, 0x08}, "half": {0x40, 0x0c},
+		"": {0x40, 0x00}, "chain": {0x40, 0x00}, "per_label": {0x40, 0x08}, "none": {0x00, 0x00}, "half": {0x00, 0x04},
 	} {
 		header, _, err := New().EncodePages([]*image.Gray{white(320, 60)}, &driver.Job{Cut: cut}, media(t, "tze-24"))
 		if err != nil {
@@ -209,6 +210,10 @@ func TestValidate(t *testing.T) {
 	}
 	if err := d.Validate([]*image.Gray{white(320, 60)}, &driver.Job{Cut: "zigzag"}, media(t, "tze-24")); err == nil {
 		t.Error("bad cut mode accepted")
+	}
+	// labels go out one at a time, so the printer can't tell which is last (tested 2026-11-18)
+	if err := d.Validate([]*image.Gray{white(320, 60)}, &driver.Job{Cut: "last"}, media(t, "tze-24")); err == nil || !strings.Contains(err.Error(), "last") {
+		t.Errorf("cut: last accepted: %v", err)
 	}
 	if err := d.Validate([]*image.Gray{white(306, 60)}, &driver.Job{}, &driver.Media{ID: "dk-22210"}); err == nil {
 		t.Error("QL media accepted")

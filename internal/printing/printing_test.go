@@ -143,8 +143,8 @@ func TestPrintPTSinglePage(t *testing.T) {
 	if sent[len(sent)-1] != 0x1a {
 		t.Errorf("job ends %02x", sent[len(sent)-1])
 	}
-	if m := header(t, sent, 'M'); m != 0x40 {
-		t.Errorf("ESC i M %02x, want 40 (cut each label)", m)
+	if m, k := header(t, sent, 'M'), header(t, sent, 'K'); m != 0x40 || k != 0x00 {
+		t.Errorf("ESC i M %02x K %02x, want 40 00 (auto cut, chain printing: no leader scrap)", m, k)
 	}
 }
 
@@ -157,8 +157,8 @@ func TestPrintPTBatchHalfCut(t *testing.T) {
 	if !res.Confirmed || res.Pages != 3 {
 		t.Errorf("result %+v", res)
 	}
-	if k := header(t, f.sent(), 'K'); k&0x04 == 0 {
-		t.Errorf("ESC i K %02x: no half cut in a batch on laminated tape", k)
+	if m, k := header(t, f.sent(), 'M'), header(t, f.sent(), 'K'); m != 0x00 || k != 0x04 {
+		t.Errorf("ESC i M %02x K %02x, want 00 04 (half cut strip, chain printing)", m, k)
 	}
 	if len(f.queue) != 0 {
 		t.Errorf("%d status bytes left unread: not every page was confirmed", len(f.queue))
@@ -172,8 +172,8 @@ func TestPrintPTBatchFullCutOnNonLaminated(t *testing.T) {
 	if _, err := s.Print(context.Background(), ptPrinter("", "half"), "", labels(2)); err != nil {
 		t.Fatal(err)
 	}
-	if k := header(t, f.sent(), 'K'); k&0x04 != 0 {
-		t.Errorf("ESC i K %02x: half cut on non-laminated tape", k)
+	if m, k := header(t, f.sent(), 'M'), header(t, f.sent(), 'K'); m != 0x40 || k != 0x00 {
+		t.Errorf("ESC i M %02x K %02x: want chain (40 00) instead of half cut on non-laminated tape", m, k)
 	}
 }
 

@@ -72,7 +72,7 @@ func (s *Service) printPT(ctx context.Context, p *config.Printer, dryRun string,
 	}
 	cut := ptCut(p.Cut, len(pages), mediaType, dryRun != "")
 	if cut != p.Cut && p.Cut != "" {
-		s.Log.Warn("half cut needs laminated tape; cutting each label instead", "printer", p.ID, "tape", mediaType)
+		s.Log.Warn("half cut needs laminated tape; cutting between labels instead", "printer", p.ID, "tape", mediaType)
 	}
 	header, per, err := drv.EncodePages(pages, &driver.Job{Cut: cut}, &media)
 	if err != nil {
@@ -113,8 +113,9 @@ func (s *Service) printPT(ctx context.Context, p *config.Printer, dryRun string,
 	return res, nil
 }
 
-// ptCut resolves the cut mode. Default: half cut between labels of a batch on laminated
-// tape (the strip stays whole, one full cut at the end), otherwise a full cut per label.
+// ptCut resolves the cut mode. Default: a batch on laminated tape is one half-cut strip,
+// anything else is cut label by label ("chain"); either way the last label waits in the
+// printer until the next print (or the cut button) instead of wasting a blank leader.
 // Half cut only works on laminated tape (reference p.20); on a dry run the tape is unknown,
 // so an explicit "half" is kept.
 func ptCut(cut string, pages int, mediaType string, dryRun bool) string {
@@ -123,9 +124,9 @@ func ptCut(cut string, pages int, mediaType string, dryRun bool) string {
 	case cut == "" && pages > 1 && laminated:
 		return "half"
 	case cut == "":
-		return "per_label"
+		return "chain"
 	case cut == "half" && !laminated && !dryRun:
-		return "per_label"
+		return "chain"
 	}
 	return cut
 }

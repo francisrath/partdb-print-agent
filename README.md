@@ -83,8 +83,12 @@ label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead)
 
 `driver: brother-pt` drives a PT-9500PC tape printer over USB through Linux's `usblp` driver
 (`/dev/usb/lp0`; add the user to group `lp`). It reads the loaded tape and errors before each job,
-sends a batch label by label and waits for each to be printed. By default a batch on laminated tape gets
-half cuts between labels and one full cut at the end. See `config.example.yaml`.
+sends a batch label by label and waits for each to be printed. Labels print at true size: design the
+Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm on 36 mm tape,
+about 1 mm on narrower tapes). The cutter sits ~25 mm past the print head, so by default the last label
+waits in the printer and comes out, cut, with the next print (or press the cut button); a batch on
+laminated tape comes out as one half-cut strip. `cut: per_label` feeds and cuts at once instead, at the
+cost of a blank leader per job. See `config.example.yaml`.
 
 On a Raspberry Pi: use the `linux_armv6` release on 32-bit Raspberry Pi OS (Pi 1, Zero, Pi 2 v1.1) or
 `linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve` from a systemd
