@@ -97,6 +97,9 @@ type Printer struct {
 	// AllowScaling prints labels whose size doesn't match the media by scaling them,
 	// instead of refusing with MEDIA_MISMATCH.
 	AllowScaling bool `yaml:"allow_scaling,omitempty"`
+	// Fixes picked from the setup wizard's test print, applied after rendering.
+	Mirror     bool `yaml:"mirror,omitempty"`      // flip left and right
+	UpsideDown bool `yaml:"upside_down,omitempty"` // turn 180° (on top of rotate)
 }
 
 type Transport struct {

@@ -63,7 +63,7 @@ func Text(s string) string {
 }
 
 // TestCard is a printer test label of wMM×hMM: border, 1 mm rulers on the
-// top and left edges, a 0.5 mm checkerboard and the given text lines.
+// top and left edges, an arrow with "TOP", a 0.5 mm checkerboard and the given text lines.
 func TestCard(wMM, hMM float64, lines []string) []byte {
 	return Page(wMM, hMM, testCard(wMM, hMM, lines))
 }
@@ -93,6 +93,10 @@ func testCard(wMM, hMM float64, lines []string) string {
 	}
 	size := min(max(wMM/10, 1.2), 3.2)
 	y := hMM - 3 - size
+	// "▲ TOP" (drawn arrow: the font is ASCII only) so an upside-down print is obvious
+	fmt.Fprintf(&c, "3 %.2f m %.2f %.2f l %.2f %.2f l h f\n", y, 3+size*0.8, y, 3+size*0.4, y+size*0.75)
+	fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (TOP) Tj ET\n", size, 3+size, y)
+	y -= size * 1.3
 	for _, s := range lines {
 		// shrink long lines to fit the width; rounded down because Tf is written with 2 decimals
 		fs := math.Floor(min(size, (wMM-4.5)/max(textWidthEm(s), 0.001))*100) / 100

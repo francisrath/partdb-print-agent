@@ -510,3 +510,16 @@ func TestAgentPrintersReportOnline(t *testing.T) {
 		t.Errorf("heartbeat JSON %s", b)
 	}
 }
+
+// Editing a printer in Settings keeps the fixes the wizard's test print set.
+func TestSavePrinterKeepsFixes(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers[0].Mirror, h.srv.cfg.Printers[0].UpsideDown = true, true
+	p := h.srv.cfg.Printers[0]
+	h.post("/printers", url.Values{"id": {p.ID}, "name": {"Desk"}, "model": {p.Model}, "host": {p.Transport.Host},
+		"port": {"9100"}, "media": {p.Media}})
+	got, err := h.srv.config().Printer(p.ID)
+	if err != nil || !got.Mirror || !got.UpsideDown || got.Name != "Desk" {
+		t.Errorf("after edit: %+v %v", got, err)
+	}
+}
