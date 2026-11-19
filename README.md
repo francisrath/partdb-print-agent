@@ -18,6 +18,13 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 ## Install
 
 **Raspberry Pi OS, Debian, Ubuntu** (a print server, e.g. a Raspberry Pi next to the printer):
+
+> **Before installing:** the setup page is briefly open to your network (see below). Behind a home
+> router that is fine. If untrusted machines can reach the print server (it is connected straight to
+> your internet provider, or sits on a shared network), first limit TCP port 8631 to trusted sources
+> with a firewall: pdb-print refuses clients outside the local network, but can't tell a provider's
+> IPv6 network from your own.
+
 ```sh
 curl -fsSL https://github.com/francisrath/partdb-print-agent/releases/latest/download/install.sh | sh
 ```
@@ -38,9 +45,6 @@ Then, on any computer on the same network, open the address the script shows
 your printer, prints a test label and names it. The setup page is reachable from the network only
 for 15 minutes after the code was shown (longer while you use it, up to 30); after that the agent
 answers only on the machine itself again. Run `pdb-print pair` on the print server to open it again.
-Only browsers on the local network get an answer. If the print server is connected straight to your
-internet provider (not behind a home router), firewall port 8631 to your LAN: pdb-print can't tell a
-provider's IPv6 network from your own.
 
 **macOS / Linux (Homebrew):**
 ```sh
