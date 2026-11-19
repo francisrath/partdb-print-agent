@@ -317,7 +317,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/")
 	token := strings.TrimSpace(r.FormValue("token"))
-	var warn string
+	var warn, id string
 	err := s.update(func(c *config.Config) error {
 		if len(c.Instances) == 0 {
 			c.Instances = append(c.Instances, config.Instance{ID: "default"})
@@ -342,23 +342,25 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		if tok.Level > 1 {
 			warn = " (this token can do more than needed: a Read-Only token is enough)"
 		}
-		warn += s.putInstance(c, baseURL, token)
+		var note string
+		id, note = s.putInstance(c, baseURL, token, in.AllowHTTP)
+		warn += note
 		return nil
 	})
 	if err == nil {
-		s.instanceSaved("default")
+		s.instanceSaved(id)
 	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
 }
 
 // putInstance stores the first Part-DB instance's URL and token (in the OS keychain when there
-// is one, else in the 0600 config file); it returns a note for the user, or "".
-func (s *Server) putInstance(c *config.Config, baseURL, token string) string {
+// is one, else in the 0600 config file); it returns the instance id and a note for the user, or "".
+func (s *Server) putInstance(c *config.Config, baseURL, token string, allowHTTP bool) (id, note string) {
 	if len(c.Instances) == 0 {
 		c.Instances = append(c.Instances, config.Instance{ID: "default"})
 	}
 	in := &c.Instances[0]
-	in.BaseURL = baseURL
+	in.BaseURL, in.AllowHTTP = baseURL, allowHTTP
 	if in.PairingKey == "" {
 		in.PairingKey = randomHex(32)
 	}
@@ -366,10 +368,10 @@ func (s *Server) putInstance(c *config.Config, baseURL, token string) string {
 		// normal on a headless server (no desktop keychain), so info, not a warning
 		s.Log.Info("no OS keychain; the token is kept in the config file, readable only by this user", "err", err)
 		in.Token = token
-		return " (token kept in the config file, readable only by pdb-print)"
+		return in.ID, " (token kept in the config file, readable only by pdb-print)"
 	}
 	in.Token = ""
-	return ""
+	return in.ID, ""
 }
 
 // instanceSaved hands a newly saved instance (with its token) to OnInstance.

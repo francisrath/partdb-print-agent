@@ -74,7 +74,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: shellcheck
-        run: shellcheck scripts/*.sh packaging/deb/postinst packaging/deb/prerm
+        run: shellcheck scripts/*.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm
       - name: install script
         run: sh scripts/install_test.sh
       - name: build packages

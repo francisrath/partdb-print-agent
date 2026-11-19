@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -101,6 +102,7 @@ func newHarness(t *testing.T) *harness {
 	svc := &printing.Service{Log: log}
 	t.Cleanup(svc.Close)
 	s := New(cfg, filepath.Join(t.TempDir(), "config.yaml"), svc, log, "127.0.0.1:8631", "test")
+	s.LANAddrs = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("192.168.1.23")} } // lanReq's address
 	return &harness{t: t, srv: s, h: s.Handler(), host: "127.0.0.1:8631", jobs: jobs, partdb: fakePartDB(t)}
 }
 

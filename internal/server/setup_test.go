@@ -51,11 +51,21 @@ func wantRedirect(t *testing.T, w *httptest.ResponseRecorder, to string) {
 // (choosing the tape, as the fake reports none).
 func wizardToTest(t *testing.T, h *harness, partDB string) {
 	t.Helper()
+	wizardToTestWith(t, h, url.Values{"base_url": {partDB}, "token": {"tcp_test"}})
+}
+
+// wizardToTestWith is wizardToTest with the Part-DB form as given; start is the first page.
+func wizardToTestWith(t *testing.T, h *harness, form url.Values, start ...string) {
+	t.Helper()
 	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
 		return []discovery.Candidate{fakeQLCandidate(t, h)}, nil
 	}
-	wantRedirect(t, h.do("GET", "/setup/", nil), "/setup/partdb")
-	wantRedirect(t, h.post("/setup/partdb", url.Values{"base_url": {partDB}, "token": {"tcp_test"}}), "/setup/printer")
+	if len(start) == 0 {
+		wantRedirect(t, h.do("GET", "/setup/", nil), "/setup/partdb")
+	} else if w := h.do("GET", start[0], nil); w.Code != http.StatusOK {
+		t.Fatalf("GET %s: %d", start[0], w.Code)
+	}
+	wantRedirect(t, h.post("/setup/partdb", form), "/setup/printer")
 	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "QL-810W") {
 		t.Fatalf("printer page: %d %s", w.Code, w.Body)
 	}
@@ -220,5 +230,49 @@ func TestSettingsLinksToWizard(t *testing.T) {
 	h := newHarness(t)
 	if !strings.Contains(h.do("GET", "/", nil).Body.String(), `href="/setup/"`) {
 		t.Error("settings page has no Add a printer link")
+	}
+}
+
+// Back to the printer page and Next with the same printer keeps the test print and its fixes.
+func TestBackNextKeepsFixes(t *testing.T) {
+	h := newHarness(t)
+	wizardToTest(t, h, partDBWith(t, h, nil))
+	h.post("/setup/test", url.Values{"action": {"mirrored"}})
+	<-h.jobs
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
+		t.Errorf("current printer not pre-selected: %s", w.Body)
+	}
+	wantRedirect(t, h.post("/setup/printer", url.Values{"choice": {"0"}}), "/setup/test")
+	if d := h.srv.local.Draft; !d.Printer.Mirror || !d.Printed || d.Printer.Media != "dk-22210" {
+		t.Errorf("fixes lost: %+v printed=%v", d.Printer, d.Printed)
+	}
+}
+
+// A Part-DB on plain http gets a plain explanation, and the wizard can allow it.
+func TestPlainHTTPPartDB(t *testing.T) {
+	h := newHarness(t)
+	w := h.post("/setup/partdb", url.Values{"base_url": {"http://192.0.2.1"}, "token": {"tcp_test"}})
+	if body := w.Body.String(); !strings.Contains(body, "https://") || !strings.Contains(body, `name="allow_http"`) {
+		t.Errorf("plain http: %s", body)
+	}
+	wizardToTestWith(t, h, url.Values{"base_url": {partDBWith(t, h, nil)}, "token": {"tcp_test"}, "allow_http": {"on"}})
+	h.post("/setup/test", url.Values{"action": {"right"}})
+	h.post("/setup/name", url.Values{"name": {"Desk"}})
+	if in := h.srv.config().Instances; len(in) != 1 || !in[0].AllowHTTP {
+		t.Errorf("allow_http not saved: %+v", in)
+	}
+}
+
+// The wizard updates the configured instance whatever its id, and starts its jobs.
+func TestWizardKeepsInstanceID(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Instances = []config.Instance{{ID: "home", BaseURL: "https://old.example"}}
+	var started []string
+	h.srv.OnInstance = func(in config.Instance) { started = append(started, in.ID) }
+	wizardToTestWith(t, h, url.Values{"base_url": {partDBWith(t, h, nil)}, "token": {"tcp_test"}}, "/setup/partdb?edit=1")
+	h.post("/setup/test", url.Values{"action": {"right"}})
+	h.post("/setup/name", url.Values{"name": {"Desk"}})
+	if len(started) != 1 || started[0] != "home" {
+		t.Errorf("jobs started for %v", started)
 	}
 }

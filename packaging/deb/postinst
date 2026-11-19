@@ -10,7 +10,10 @@ if [ ! -e /var/lib/pdb-print/config.yaml ]; then
   install -d -o pdb-print -g pdb-print -m 0700 /var/lib/pdb-print
   install -o pdb-print -g pdb-print -m 0600 /dev/null /var/lib/pdb-print/config.yaml
 fi
-# start the service now and at every boot (restart: an upgrade runs the new version)
-systemctl daemon-reload
-systemctl enable pdb-print.service
-systemctl restart pdb-print.service
+# start the service now and at every boot (restart: an upgrade runs the new version);
+# skipped where systemd isn't running (a container or chroot)
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+  systemctl enable pdb-print.service
+  systemctl restart pdb-print.service
+fi

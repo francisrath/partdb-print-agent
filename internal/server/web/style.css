@@ -56,3 +56,4 @@ form.pictures button:hover, form.pictures button:focus-visible { border-color: v
 .card.cut-off { clip-path: inset(0 0 45% 0); }
 .card.faint { opacity: .3; }
 .card.nothing { border-style: dashed; color: var(--muted); }
+label.check { flex-direction: row; color: var(--fg); }

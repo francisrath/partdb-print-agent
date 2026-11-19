@@ -38,6 +38,8 @@ in Part-DB, click your user name (top right) → User settings → API tokens, a
   {{template "csrf" .}}
   <label>Part-DB address <input name="base_url" value="{{.BaseURL}}" placeholder="https://partdb.example.org" required autofocus></label>
   <label>API token <input name="token" type="password" autocomplete="off" required></label>
+  <label class="check"><span><input type="checkbox" name="allow_http"{{if .AllowHTTP}} checked{{end}}> Allow plain http
+  <span class="muted">(only for a Part-DB without https on your own network)</span></span></label>
   <div class="nav"><span></span><button>Next</button></div>
 </form>
 {{template "setup-bottom" .}}{{end}}
@@ -53,7 +55,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
   {{template "csrf" .}}
   {{range .Rows}}
   <label class="option{{if not .Supported}} off{{end}}">
-    <span><input type="radio" name="choice" value="{{.Index}}" {{if not .Supported}}disabled{{end}} required>
+    <span><input type="radio" name="choice" value="{{.Index}}"{{if .Current}} checked{{end}} {{if not .Supported}}disabled{{end}} required>
     <strong>{{or .C.ModelID .C.SNMPDescr (index .C.IEEE1284 "MDL") "Unknown printer"}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>

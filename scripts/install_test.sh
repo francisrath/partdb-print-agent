@@ -37,7 +37,7 @@ chmod +x "$work/bin/"*
 # run ARCH [RELEASE]: runs install.sh, leaves its output in $out and the tool log in $log
 run() {
   log="$work/log"; : > "$log"
-  out=$(PATH="$work/bin:$PATH" LOG="$log" FAKE_ARCH=$1 FAKE_RELEASE=${2:-$work/release} \
+  out=$(FAKE_UID=${FAKE_UID:-1000} PATH="$work/bin:$PATH" LOG="$log" FAKE_ARCH=$1 FAKE_RELEASE=${2:-$work/release} \
     PDB_PRINT_BASE_URL=https://example.invalid/download sh "$here/install.sh" 2>&1) && status=0 || status=$?
 }
 check() { # description, condition…
@@ -66,5 +66,29 @@ check "checksum mismatch: fails before sudo" sh -c "[ $status -ne 0 ] && ! grep 
 
 run arm64
 check "explains sudo right before using it" sh -c 'echo "$1" | grep -q "administrator rights (sudo)"' _ "$out"
+
+# as root (no sudo on a minimal Debian): installs without sudo
+cat > "$work/bin/id" <<'T'
+#!/bin/sh
+echo "${FAKE_UID:-1000}"
+T
+cat > "$work/bin/apt-get" <<'T'
+#!/bin/sh
+echo "apt-get $*" >> "$LOG"
+T
+chmod +x "$work/bin/id" "$work/bin/apt-get"
+FAKE_UID=0 run amd64
+check "root: installs without sudo" sh -c "[ $status -eq 0 ] && grep -q '^apt-get install -y .*_amd64.deb$' '$log' && ! grep -q '^sudo' '$log'"
+
+# not a Debian system: a plain message instead of "dpkg: not found"
+mkdir -p "$work/nodpkg" && cp "$work/bin/"* "$work/nodpkg/" && rm "$work/nodpkg/dpkg"
+log="$work/log"; : > "$log"
+out=$(PATH="$work/nodpkg:/usr/bin:/bin" LOG="$log" FAKE_ARCH=amd64 FAKE_RELEASE="$work/release" \
+  PDB_PRINT_BASE_URL=https://example.invalid/download sh "$here/install.sh" 2>&1) && status=0 || status=$?
+if command -v dpkg > /dev/null 2>&1; then
+  echo "skip no dpkg: this machine has dpkg in /usr/bin"
+else
+  check "no dpkg: says it needs Debian" sh -c '[ "$2" -ne 0 ] && echo "$1" | grep -q "Debian"' _ "$out" "$status"
+fi
 
 exit $fail

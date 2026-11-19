@@ -31,6 +31,7 @@ type Draft struct {
 	Instance   *config.Instance // a new Part-DB connection (token included); nil = keep the configured one
 	Notes      []string         // shown on the printer page (connected as …, warnings)
 	NoAgentAPI bool             // Part-DB can't send jobs to this agent
+	APIChecked bool             // NoAgentAPI is known for the configured instance
 
 	Candidates []discovery.Candidate
 	Scanned    bool
@@ -109,11 +110,11 @@ func (s *Server) setupPartDB(w http.ResponseWriter, r *http.Request) {
 	cur, err := s.config().Instance("")
 	if d.Instance == nil && err == nil && r.URL.Query().Get("edit") == "" {
 		// already connected: check once whether it can send jobs, then on to the printer
-		if !d.Scanned {
+		if !d.APIChecked {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			ok, err := partdb.FromInstance(cur).HasAgentAPI(ctx)
 			cancel()
-			d.NoAgentAPI = err == nil && !ok
+			d.NoAgentAPI, d.APIChecked = err == nil && !ok, true
 		}
 		http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 		return
@@ -131,9 +132,9 @@ func (s *Server) setupPartDBPost(w http.ResponseWriter, r *http.Request) {
 	_, d, unlock := lockDraft(r)
 	defer unlock()
 	in := config.Instance{ID: "default", BaseURL: strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/"),
-		Token: strings.TrimSpace(r.FormValue("token"))}
+		Token: strings.TrimSpace(r.FormValue("token")), AllowHTTP: r.FormValue("allow_http") != ""}
 	fail := func(msg string) {
-		s.setupPage(w, r, "setup-partdb", 1, map[string]any{"BaseURL": in.BaseURL, "Err": msg})
+		s.setupPage(w, r, "setup-partdb", 1, map[string]any{"BaseURL": in.BaseURL, "AllowHTTP": in.AllowHTTP, "Err": msg})
 	}
 	if in.BaseURL == "" || in.Token == "" {
 		fail("Enter the address of your Part-DB and an API token.")
@@ -163,6 +164,8 @@ func (s *Server) setupPartDBPost(w http.ResponseWriter, r *http.Request) {
 func partDBError(err error) string {
 	msg := err.Error()
 	switch {
+	case strings.Contains(msg, "refusing to send the API token"):
+		return "This address starts with http://, so the token would travel unencrypted. Use your Part-DB's https:// address; if it really only has http://, tick “Allow plain http”."
 	case strings.Contains(msg, "401") || strings.Contains(msg, "403"):
 		return "Part-DB didn't accept the token. Copy it again from Part-DB: your user name (top right) → User settings → API tokens."
 	case strings.Contains(msg, "no such host") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline"):
@@ -192,10 +195,13 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 		Supported bool
 		Where     string
 		Existing  string // name of a configured printer at this address
+		Current   bool   // the printer this session picked
 	}
 	var rows []row
 	for i, c := range d.Candidates {
-		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c)})
+		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
+			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
+		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr})
 }
@@ -265,7 +271,9 @@ func (s *Server) setupPrinterPost(w http.ResponseWriter, r *http.Request) {
 	default:
 		p.Transport = config.Transport{Kind: "usb", Device: c.Device}
 	}
-	d.resetPrinter(p)
+	if d.Printer.Model != p.Model || d.Printer.Transport != p.Transport { // Back and Next keep the test print and fixes
+		d.resetPrinter(p)
+	}
 	http.Redirect(w, r, "/setup/test", http.StatusSeeOther)
 }
 
@@ -386,6 +394,9 @@ func (s *Server) setupPrint(ctx context.Context, d *Draft) {
 			return
 		}
 	}
+	// a label already being sent finishes even if the window closes or the browser goes away
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
 	res, err := s.Svc.Print(ctx, p, "", printing.TestCard(p.Model, s.Version))
 	s.record(jobFor("setup wizard", "test label", p.ID, res, err))
 	if err != nil {
@@ -440,10 +451,10 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	}
 	p := d.Printer
 	p.Name = name
-	var warn string
+	var warn, instID string
 	err := s.update(func(c *config.Config) error {
 		if d.Instance != nil {
-			warn = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token)
+			instID, warn = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
 		}
 		p.ID = uniqueID(c, slug(name))
 		c.Printers = append(c.Printers, p)
@@ -458,7 +469,7 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.Instance != nil {
 		d.Instance = nil
-		s.instanceSaved("default")
+		s.instanceSaved(instID)
 	}
 	d.Saved = append(d.Saved, name)
 	http.Redirect(w, r, "/setup/done", http.StatusSeeOther)

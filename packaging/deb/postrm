@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs after the package is removed: forget the removed service unit.
+set -e
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi

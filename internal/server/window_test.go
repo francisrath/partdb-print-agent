@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -305,4 +306,36 @@ func TestRescanAddsAddress(t *testing.T) {
 	mu.Unlock()
 	tick <- time.Now()
 	eventually(t, "no listener for the new address after a rescan", func() bool { return reachable(v6) })
+}
+
+// POSTs from a browser without a session are refused, not crashing the handler.
+func TestLANPostWithoutSession(t *testing.T) {
+	h := newHarness(t)
+	h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	for _, p := range []string{"/setup/", "/favicon.svg", "/static/style.css"} {
+		if w := serveLAN(lan, lanReq("POST", p, url.Values{}, nil)); w.Code != http.StatusForbidden {
+			t.Errorf("POST %s without a session: %d", p, w.Code)
+		}
+	}
+}
+
+// A page on another site that rebinds its name to the print server can't use the wizard:
+// the LAN server only answers to its own addresses and mDNS name.
+func TestLANRejectsForeignHost(t *testing.T) {
+	h := newHarness(t)
+	h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	r := lanReq("GET", "/setup/", nil, nil)
+	r.Host = "evil.example:8631"
+	if w := serveLAN(lan, r); w.Code != http.StatusForbidden {
+		t.Errorf("foreign Host: %d", w.Code)
+	}
+	host, _ := os.Hostname()
+	host, _, _ = strings.Cut(host, ".")
+	r = lanReq("GET", "/setup/", nil, nil)
+	r.Host = host + ".local:8631"
+	if w := serveLAN(lan, r); w.Code != http.StatusOK {
+		t.Errorf("mDNS name %s.local: %d", host, w.Code)
+	}
 }

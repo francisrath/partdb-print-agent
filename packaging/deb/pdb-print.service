@@ -17,6 +17,8 @@ Environment=XDG_CACHE_HOME=/var/cache
 # --setup-window: until Part-DB is connected, the setup wizard is open to the LAN for a while
 ExecStart=/usr/bin/pdb-print --config /var/lib/pdb-print/config.yaml serve --setup-window
 Restart=on-failure
+# on stop, a label being printed finishes (serve waits up to 2 minutes)
+TimeoutStopSec=130
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

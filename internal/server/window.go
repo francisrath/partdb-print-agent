@@ -83,6 +83,10 @@ func (w *Window) Check(code string, now time.Time) (*Session, bool) {
 		return nil, false
 	}
 	w.mu.Lock()
+	if !w.open || w.code == "" { // closed meanwhile
+		w.mu.Unlock()
+		return nil, false
+	}
 	if subtle.ConstantTimeCompare([]byte(code), []byte(w.code)) != 1 {
 		w.tries++
 		tooMany := w.tries >= windowTries
@@ -204,7 +208,12 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 	port, _ := strconv.Atoi(portS)
 	stop := func() {
 		if hs != nil {
-			_ = hs.Close()
+			// let answers in flight (e.g. the "All set" page) go out, then drop the rest
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if hs.Shutdown(ctx) != nil {
+				_ = hs.Close()
+			}
+			cancel()
 			hs, bound = nil, map[netip.Addr]bool{}
 			s.Log.Info("setup window closed")
 		}
@@ -259,6 +268,10 @@ func (s *Server) LANHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w)
 		now := time.Now()
+		if !s.lanHost(r.Host) { // against DNS rebinding: only our own addresses and mDNS name
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
 			http.Error(w, "forbidden origin", http.StatusForbidden)
 			return
@@ -275,7 +288,11 @@ func (s *Server) LANHandler() http.Handler {
 		}
 		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-			if r.URL.Path != "/setup/pair" && subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(sess.CSRF)) != 1 {
+			if !ok && r.URL.Path != "/setup/pair" {
+				http.Error(w, "this browser isn't paired: reload the page", http.StatusForbidden)
+				return
+			}
+			if ok && subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)
 				return
 			}
@@ -286,6 +303,21 @@ func (s *Server) LANHandler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// lanHost reports whether host (host:port from the request) names this machine on the LAN.
+func (s *Server) lanHost(host string) bool {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+	}
+	if a, err := netip.ParseAddr(h); err == nil {
+		return slices.Contains(s.lanAddrs(), a.Unmap())
+	}
+	name, _ := os.Hostname()
+	name, _, _ = strings.Cut(name, ".")
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
+	return name != "" && (h == strings.ToLower(name) || h == strings.ToLower(name)+".local")
 }
 
 func isSetupPath(p string) bool { return len(p) >= len("/setup/") && p[:len("/setup/")] == "/setup/" }

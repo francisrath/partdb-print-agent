@@ -68,6 +68,7 @@ nfpms:
     scripts:
       postinstall: packaging/deb/postinst
       preremove: packaging/deb/prerm
+      postremove: packaging/deb/postrm
   - <<: *deb
     id: deb-armhf
     ids: [pdb-print-arm]

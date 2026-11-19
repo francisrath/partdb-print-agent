@@ -470,6 +470,9 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 func (j *agentJobs) start(in config.Instance) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.ctx.Err() != nil { // shutting down: serve is waiting for the loops already running
+		return
+	}
 	if stop := j.stop[in.ID]; stop != nil {
 		stop()
 	}

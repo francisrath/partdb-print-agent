@@ -28,7 +28,8 @@ installs it with `apt-get` (the one step that needs `sudo`) and shows a setup co
 - a `pdb-print` system user, allowed to use USB printers (group `lp`);
 - a `pdb-print` systemd service; its config is `/var/lib/pdb-print/config.yaml`.
 
-Its scripts only create that user and an empty config, and start the service (`packaging/deb/`).
+Its scripts only create that user and an empty config, enable and (re)start the service, and stop
+and disable it on removal (`packaging/deb/`).
 On 32-bit Raspberry Pi OS it also installs `poppler-utils`, whose `pdftoppm` renders labels much faster there.
 
 Then, on any computer on the same network, open the address the script shows
