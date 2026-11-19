@@ -343,13 +343,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		}()
 	}
 	jobsDone := a.startAgentJobs(ctx, srv)
-	setupDone := make(chan struct{})
-	go func() {
-		defer close(setupDone)
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		srv.SetupLoop(ctx, tick.C)
-	}()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	setupDone := srv.StartSetupLoop(ctx, tick.C)
 	if *setupWindow && needsSetup(a.cfg) {
 		code, urls, expires := srv.OpenWindow(time.Now())
 		a.log.Info("setup: open one of these addresses in a browser and type the code",

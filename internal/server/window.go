@@ -128,6 +128,23 @@ func (w *Window) Touch(now time.Time) {
 	}
 }
 
+// Opened is when the current window was opened (zero when it never was).
+func (w *Window) Opened() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.opened
+}
+
+// CloseIfOpenedAt closes the window only if it is still the one opened at t.
+func (w *Window) CloseIfOpenedAt(t time.Time) {
+	w.mu.Lock()
+	closed := w.opened.Equal(t) && w.closeLocked()
+	w.mu.Unlock()
+	if closed {
+		w.notifyClose()
+	}
+}
+
 // Expires is when the window closes unless it is used.
 func (w *Window) Expires() time.Time {
 	w.mu.Lock()
@@ -237,6 +254,18 @@ func LocalAddrs() []netip.Addr {
 	return out
 }
 
+// StartSetupLoop runs SetupLoop in the background, marked as running before it returns (so a
+// window opened right after waits for its first scan); done is closed when it has stopped.
+func (s *Server) StartSetupLoop(ctx context.Context, tick <-chan time.Time) (done <-chan struct{}) {
+	ch := make(chan struct{})
+	s.loopRunning.Store(true)
+	go func() {
+		defer close(ch)
+		s.SetupLoop(ctx, tick)
+	}()
+	return ch
+}
+
 // SetupLoop owns the LAN listeners: while the window is open it listens on every LAN address
 // (rescanning on each tick, so Wi-Fi that comes up late is picked up); when it closes, the
 // listeners and their connections are closed. Run it for the lifetime of serve.
@@ -307,6 +336,9 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 // LANHandler serves only the setup wizard, to browsers that typed the code.
 func (s *Server) LANHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+	})
 	mux.HandleFunc("GET /setup/{$}", s.setupStart)
 	mux.HandleFunc("POST /setup/pair", s.pair)
 	s.setupRoutes(mux)

@@ -150,7 +150,7 @@ func TestLANGuard(t *testing.T) {
 	h := newHarness(t)
 	code, _, _ := h.srv.OpenWindow(time.Now())
 	lan := h.srv.LANHandler()
-	for _, p := range []string{"/", "/printers/ql/status", "/v1/info", "/v1/handoff"} {
+	for _, p := range []string{"/printers/ql/status", "/v1/info", "/v1/handoff"} {
 		if w := serveLAN(lan, lanReq("GET", p, nil, nil)); w.Code != http.StatusNotFound {
 			t.Errorf("GET %s on the LAN: %d", p, w.Code)
 		}
@@ -402,5 +402,56 @@ func TestLANClientsUseRealSubnets(t *testing.T) {
 		if w := serveLAN(lan, r); w.Code != want {
 			t.Errorf("client %s: %d, want %d", remote, w.Code, want)
 		}
+	}
+}
+
+// A window opened right as serve starts (--setup-window) still lists its addresses in the log.
+func TestOpenWindowRightAfterStart(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Addr = "127.0.0.1:" + strconv.Itoa(freePort(t))
+	h.srv.LANAddrs = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("127.0.0.1")} }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := h.srv.StartSetupLoop(ctx, make(chan time.Time))
+	t.Cleanup(func() { cancel(); <-done })
+	if _, urls, _ := h.srv.OpenWindow(time.Now()); !strings.Contains(strings.Join(urls, " "), "127.0.0.1") {
+		t.Errorf("urls %v", urls)
+	}
+}
+
+// On the LAN, / leads to the setup page.
+func TestLANRootRedirectsToSetup(t *testing.T) {
+	h := newHarness(t)
+	h.srv.OpenWindow(time.Now())
+	w := serveLAN(h.srv.LANHandler(), lanReq("GET", "/", nil, nil))
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/setup/" {
+		t.Errorf("GET / on the LAN: %d %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+// Finish closes the window a moment later, so the "All set" page can still load its stylesheet;
+// a window reopened meanwhile (pdb-print pair) stays open.
+func TestFinishClosesAfterGrace(t *testing.T) {
+	h := newHarness(t)
+	h.srv.finishGrace = 50 * time.Millisecond
+	code, _, _ := h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	c := pairLAN(lan, code)
+	sess, _ := h.srv.Window.Session(lanReq("GET", "/setup/", nil, c), time.Now())
+	sess.Draft.Saved = []string{"Desk"}
+	serveLAN(lan, lanReq("POST", "/setup/done", url.Values{"action": {"finish"}, "csrf": {sess.CSRF}}, c))
+	if !h.srv.Window.IsOpen(time.Now()) {
+		t.Fatal("closed before the page could load its stylesheet")
+	}
+	eventually(t, "window still open after the grace period", func() bool { return !h.srv.Window.IsOpen(time.Now()) })
+
+	code, _, _ = h.srv.OpenWindow(time.Now())
+	c = pairLAN(lan, code)
+	sess, _ = h.srv.Window.Session(lanReq("GET", "/setup/", nil, c), time.Now())
+	sess.Draft.Saved = []string{"Desk"}
+	serveLAN(lan, lanReq("POST", "/setup/done", url.Values{"action": {"finish"}, "csrf": {sess.CSRF}}, c))
+	h.srv.OpenWindow(time.Now()) // pdb-print pair right after Finish
+	time.Sleep(150 * time.Millisecond)
+	if !h.srv.Window.IsOpen(time.Now()) {
+		t.Error("Finish's delayed close shut a window opened after it")
 	}
 }

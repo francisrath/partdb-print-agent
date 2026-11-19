@@ -206,14 +206,23 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 		Where     string
 		Existing  string // name of a configured printer at this address
 		Current   bool   // the printer this session picked
+		Name      string
 	}
 	var rows []row
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
 			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
-		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur})
+		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: candidateName(c)})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr})
+}
+
+// candidateName is what the printer list shows: the model, else the device's own description
+// (up to its first ";": Brother appends the network card and firmware).
+func candidateName(c discovery.Candidate) string {
+	name := cmp.Or(c.ModelID, c.SNMPDescr, c.IEEE1284["MDL"], "Unknown printer")
+	name, _, _ = strings.Cut(name, ";")
+	return strings.TrimSpace(name)
 }
 
 func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
@@ -466,10 +475,10 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	}
 	p := d.Printer
 	p.Name = name
-	var warn, instID string
+	var instID string
 	err := s.updateUndo(func(c *config.Config) (undo func(), err error) {
 		if d.Instance != nil {
-			instID, warn, undo = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
+			instID, _, undo = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
 		}
 		p.ID = uniqueID(c, slug(name))
 		c.Printers = append(c.Printers, p)
@@ -478,9 +487,6 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.setupPage(w, r, "setup-name", 4, map[string]any{"Err": "Couldn't save: " + err.Error(), "Ideas": nameIdeas(d)})
 		return
-	}
-	if warn != "" {
-		s.Log.Warn(strings.TrimSpace(warn))
 	}
 	if d.Instance != nil {
 		d.Instance = nil
@@ -545,7 +551,9 @@ func (s *Server) setupDonePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setupPage(w, r, "setup-finished", 5, nil)
-	s.Window.Close() // after rendering: the page needs the session
+	// a moment later, so the page can still load its stylesheet; a window reopened meanwhile stays
+	opened := s.Window.Opened()
+	time.AfterFunc(s.finishGrace, func() { s.Window.CloseIfOpenedAt(opened) })
 }
 
 // --- report

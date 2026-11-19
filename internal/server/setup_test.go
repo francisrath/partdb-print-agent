@@ -379,3 +379,21 @@ func TestUpdateUndoRunsUnderLock(t *testing.T) {
 		t.Errorf("err %v, undo under the lock %v", err, lockedDuringUndo)
 	}
 }
+
+// Step 1 offers to open Part-DB's "new API token" page for the address typed.
+func TestPartDBStepLinksToTokenPage(t *testing.T) {
+	h := newHarness(t)
+	h.do("GET", "/setup/", nil)
+	body := h.do("GET", "/setup/partdb", nil).Body.String()
+	if !strings.Contains(body, `data-token-page="/en/user/api_token/create"`) || !strings.Contains(body, `src="/static/app.js"`) {
+		t.Errorf("no token page button: %s", body)
+	}
+}
+
+// A long SNMP description is cut to the model part.
+func TestCandidateNameShort(t *testing.T) {
+	c := discovery.Candidate{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z ,MID 84E-755"}
+	if got := candidateName(c); got != "Brother HL-L3270CDW series" {
+		t.Errorf("name %q", got)
+	}
+}
