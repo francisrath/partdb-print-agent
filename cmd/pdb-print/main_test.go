@@ -294,3 +294,41 @@ func TestConfirmStopsOnCancel(t *testing.T) {
 		t.Error("y not accepted")
 	}
 }
+
+// `pdb-print pair` asks the running service to open the setup window and shows where to go.
+func TestPairCmd(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/pair" || r.Header.Get("Origin") != "" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		fmt.Fprint(w, `{"code":"482913","urls":["http://pi.local:8631/setup/","http://192.168.1.23:8631/setup/"],"expires":"2026-11-19T12:15:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	var out bytes.Buffer
+	if err := pairCmd(context.Background(), []string{"--addr", strings.TrimPrefix(srv.URL, "http://")}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"482913", "http://pi.local:8631/setup/", "http://192.168.1.23:8631/setup/"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if err := pairCmd(context.Background(), []string{"--addr", "127.0.0.1:1"}, &out); err == nil || !strings.Contains(err.Error(), "running") {
+		t.Errorf("no service: %v", err)
+	}
+}
+
+func TestNeedsSetup(t *testing.T) {
+	t.Setenv("PDB_PRINT_URL", "")
+	if !needsSetup(&config.Config{}) {
+		t.Error("fresh install should open the setup window")
+	}
+	if needsSetup(&config.Config{Instances: []config.Instance{{ID: "default"}}}) {
+		t.Error("configured instance")
+	}
+	t.Setenv("PDB_PRINT_URL", "https://partdb.example.org")
+	if needsSetup(&config.Config{}) {
+		t.Error("instance from the environment")
+	}
+}

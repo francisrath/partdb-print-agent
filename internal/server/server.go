@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -53,7 +54,7 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return "unknown level"
 	},
-}).ParseFS(webFS, "web/*.html"))
+}).ParseFS(webFS, "web/*.html", "web/setup/*.html"))
 
 const handoffWindow = 120 * time.Second
 
@@ -66,6 +67,10 @@ type Server struct {
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
+	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
+	Window   *Window
+	LANAddrs func() []netip.Addr
+	kick     chan struct{} // wakes SetupLoop
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
 	cfg   *config.Config
@@ -90,8 +95,10 @@ type Job struct {
 }
 
 func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Logger, addr, version string) *Server {
-	return &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
-		csrf: randomHex(32), seen: map[string]time.Time{}}
+	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
+		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1)}
+	s.Window.OnClose = s.kickSetup
+	return s
 }
 
 func randomHex(n int) string {
@@ -116,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /printers/{id}/status", s.printerStatus)
 	mux.HandleFunc("POST /routes", s.saveRoute)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
+	mux.HandleFunc("POST /v1/pair", s.pairAPI)
 	mux.HandleFunc("GET /v1/handoff", s.handoff)
 	mux.HandleFunc("POST /v1/handoff", s.handoff)
 
@@ -138,12 +146,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "same-origin") // "no-referrer" makes browsers send Origin: null on POST
-		h.Set("Cache-Control", "no-store")
-		if r.Method == http.MethodPost {
+		securityHeaders(w)
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
+			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
+			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
@@ -156,6 +166,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func securityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "same-origin") // "no-referrer" makes browsers send Origin: null on POST
+	h.Set("Cache-Control", "no-store")
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up pdb-print</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="setup">
+<header>
+  <img src="/favicon.svg" alt="" width="40" height="40">
+  <h1>Set up pdb-print</h1>
+</header>
+<main>
+<section>
+{{if .Open}}
+  <h2>Type the 6-digit code</h2>
+  <p>It is shown where you installed pdb-print: in the install output, in <code>docker logs</code>,
+  or run <code>pdb-print pair</code> on the print server.</p>
+  {{with .Err}}<p class="flash err" role="alert">{{.}}</p>{{end}}
+  <form method="post" action="/setup/pair" class="pair">
+    <label>Code
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+    </label>
+    <button>Continue</button>
+  </form>
+  <p class="muted">Setup is open for about {{.Minutes}} more minute{{if ne .Minutes 1}}s{{end}}. After that, run
+  <code>pdb-print pair</code> on the print server to open it again. Use this on a network you trust.</p>
+{{else}}
+  <h2>Setup is closed</h2>
+  <p>Run <code>pdb-print pair</code> on the print server (in Docker: <code>docker exec &lt;name&gt; pdb-print pair</code>)
+  to open it again, then reload this page.</p>
+{{end}}
+</section>
+</main>
+</body>
+</html>

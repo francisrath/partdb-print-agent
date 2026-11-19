@@ -5,12 +5,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/report"
 	"image/png"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -45,7 +47,10 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
-  serve [--addr 127.0.0.1:8631]    run the local web UI and bookmarklet endpoint
+  serve [--addr 127.0.0.1:8631] [--setup-window]
+                                   run the local web UI and bookmarklet endpoint; --setup-window
+                                   opens the setup wizard to the LAN when no Part-DB is set up yet
+  pair [--addr 127.0.0.1:8631]     open the setup wizard to the LAN for a while (prints a code)
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
                                    rasterise to PNGs at printhead dots (no printing)
   print FILE.pdf --printer ID [--dry-run OUT.bin]
@@ -103,6 +108,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
+	}
+	if cmd == "pair" { // talks to the running service, not the config
+		return pairCmd(ctx, rest, os.Stdout)
 	}
 	if cmd == "media" { // needs no config: it's what config errors point to
 		// every medium once, with the models that take it
@@ -300,6 +308,7 @@ func (a *app) print(ctx context.Context, args []string) error {
 func (a *app) serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8631", "listen address (loopback only)")
+	setupWindow := fs.Bool("setup-window", false, "open the setup wizard to the LAN at start when no Part-DB is set up")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -334,6 +343,18 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		}()
 	}
 	jobsDone := a.startAgentJobs(ctx, srv)
+	setupDone := make(chan struct{})
+	go func() {
+		defer close(setupDone)
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		srv.SetupLoop(ctx, tick.C)
+	}()
+	if *setupWindow && needsSetup(a.cfg) {
+		code, urls, expires := srv.OpenWindow(time.Now())
+		a.log.Info("setup: open one of these addresses in a browser and type the code",
+			"code", code, "urls", strings.Join(urls, " "), "until", expires.Format("15:04"))
+	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
 	stopped := make(chan struct{})
 	go func() {
@@ -353,6 +374,48 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
 	}
 	jobsDone.Wait() // same for a print job from Part-DB
+	<-setupDone
+	return nil
+}
+
+// needsSetup: no Part-DB configured yet (in the config or the environment).
+func needsSetup(cfg *config.Config) bool {
+	return len(cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == ""
+}
+
+// pairCmd asks the running service (on this machine) to open the setup window.
+func pairCmd(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
+	addr := fs.String("addr", "127.0.0.1:8631", "address of the running pdb-print serve")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+*addr+"/v1/pair", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("is pdb-print serve running on %s? %w", *addr, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))
+	}
+	var res struct {
+		Code    string    `json:"code"`
+		URLs    []string  `json:"urls"`
+		Expires time.Time `json:"expires"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Setup is open until %s. On another computer, open one of:\n\n", res.Expires.Local().Format("15:04"))
+	for _, u := range res.URLs {
+		fmt.Fprintf(out, "    %s\n", u)
+	}
+	fmt.Fprintf(out, "\nand type the code:  %s\n", res.Code)
 	return nil
 }
 

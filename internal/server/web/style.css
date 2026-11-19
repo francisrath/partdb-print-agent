@@ -33,3 +33,6 @@ summary { cursor: pointer; margin-bottom: 10px; }
 a.bookmarklet { display: inline-block; padding: 4px 10px; border: 1px dashed var(--accent); border-radius: 6px; color: var(--accent); text-decoration: none; }
 body.handoff { max-width: 420px; text-align: center; padding-top: 32px; }
 body.handoff h1 { font-size: 1.4rem; }
+body.setup { max-width: 640px; }
+form.pair { display: flex; gap: 10px; align-items: end; }
+form.pair input { font-size: 1.4rem; letter-spacing: .3em; width: 9ch; }

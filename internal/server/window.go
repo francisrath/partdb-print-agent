@@ -1,0 +1,342 @@
+package server
+
+import (
+	"cmp"
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"errors"
+	"fmt"
+	"io/fs"
+	"math/big"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/francisrath/partdb-print-agent/assets"
+)
+
+// The setup window: for a while after install (or `pdb-print pair`) the wizard is reachable from
+// other computers on the LAN, after typing a 6-digit code shown where pdb-print runs.
+const (
+	windowOpen  = 15 * time.Minute // without use
+	windowIdle  = 5 * time.Minute  // left at least this long after each wizard request
+	windowMax   = 30 * time.Minute // never longer than this after opening
+	windowTries = 5                // wrong codes before it closes
+	cookieName  = "pdb_setup"
+)
+
+// Window is the setup window's state. The zero value is closed.
+type Window struct {
+	mu       sync.Mutex
+	open     bool
+	code     string
+	tries    int
+	opened   time.Time
+	expires  time.Time
+	sessions map[string]*Session
+	// OnClose is called (without the lock) whenever the window closes.
+	OnClose func()
+}
+
+// Session is one browser that typed the code.
+type Session struct {
+	ID, CSRF string
+	Draft    *Draft
+}
+
+// Open starts a new window with a new code; earlier sessions end.
+func (w *Window) Open(now time.Time) (code string, expires time.Time) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		panic(err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.open, w.code, w.tries = true, fmt.Sprintf("%06d", n.Int64()), 0
+	w.opened, w.expires = now, now.Add(windowOpen)
+	w.sessions = map[string]*Session{}
+	return w.code, w.expires
+}
+
+// IsOpen reports whether the window is open at now, closing it when it has expired.
+func (w *Window) IsOpen(now time.Time) bool {
+	w.mu.Lock()
+	open := w.open && now.Before(w.expires.Add(time.Nanosecond))
+	expired := w.open && !open
+	w.mu.Unlock()
+	if expired {
+		w.Close()
+	}
+	return open
+}
+
+// Check tries code; a right one starts a session, a wrong one counts towards closing the window.
+func (w *Window) Check(code string, now time.Time) (*Session, bool) {
+	if !w.IsOpen(now) {
+		return nil, false
+	}
+	w.mu.Lock()
+	if subtle.ConstantTimeCompare([]byte(code), []byte(w.code)) != 1 {
+		w.tries++
+		tooMany := w.tries >= windowTries
+		w.mu.Unlock()
+		if tooMany {
+			w.Close()
+		}
+		return nil, false
+	}
+	defer w.mu.Unlock()
+	s := &Session{ID: randomHex(32), CSRF: randomHex(32), Draft: &Draft{}}
+	w.sessions[s.ID] = s
+	return s, true
+}
+
+// Session returns the request's session while the window is open.
+func (w *Window) Session(r *http.Request, now time.Time) (*Session, bool) {
+	c, err := r.Cookie(cookieName)
+	if err != nil || !w.IsOpen(now) {
+		return nil, false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s, ok := w.sessions[c.Value]
+	return s, ok
+}
+
+// Touch keeps the window open at least windowIdle longer, up to windowMax after it opened.
+func (w *Window) Touch(now time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.open {
+		if e := now.Add(windowIdle); e.After(w.expires) {
+			w.expires = e
+		}
+		if limit := w.opened.Add(windowMax); w.expires.After(limit) {
+			w.expires = limit
+		}
+	}
+}
+
+// Expires is when the window closes unless it is used.
+func (w *Window) Expires() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.expires
+}
+
+// Close ends the window and every session.
+func (w *Window) Close() {
+	w.mu.Lock()
+	was := w.open
+	w.open, w.code, w.sessions = false, "", nil
+	w.mu.Unlock()
+	if was && w.OnClose != nil {
+		w.OnClose()
+	}
+}
+
+// OpenWindow opens the setup window and returns the code and the URLs to type it at.
+func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires time.Time) {
+	code, expires = s.Window.Open(now)
+	s.kickSetup()
+	_, port, _ := net.SplitHostPort(s.Addr)
+	if h, err := os.Hostname(); err == nil && h != "" && h != "localhost" {
+		h, _, _ = strings.Cut(h, ".") // mDNS name: pdb-print-pi.local
+		urls = append(urls, "http://"+net.JoinHostPort(h+".local", port)+"/setup/")
+	}
+	addrs := s.lanAddrs()
+	slices.SortStableFunc(addrs, func(a, b netip.Addr) int { return cmp.Compare(a.BitLen(), b.BitLen()) }) // IPv4 first
+	for _, a := range addrs {
+		urls = append(urls, "http://"+net.JoinHostPort(a.String(), port)+"/setup/")
+	}
+	return code, urls, expires
+}
+
+func (s *Server) kickSetup() {
+	select {
+	case s.kick <- struct{}{}:
+	default: // a kick is already pending
+	}
+}
+
+func (s *Server) lanAddrs() []netip.Addr {
+	if s.LANAddrs != nil {
+		return s.LANAddrs()
+	}
+	return LocalAddrs()
+}
+
+// LocalAddrs are the host's addresses other computers can reach: up interfaces, no loopback,
+// no link-local, IPv4 and global IPv6.
+func LocalAddrs() []netip.Addr {
+	var out []netip.Addr
+	ifs, _ := net.Interfaces()
+	for _, ifc := range ifs {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok {
+				if ip, ok := netip.AddrFromSlice(n.IP); ok && ip.Unmap().IsGlobalUnicast() { // private IPv4 included
+					out = append(out, ip.Unmap())
+				}
+			}
+		}
+	}
+	return out
+}
+
+// SetupLoop owns the LAN listeners: while the window is open it listens on every LAN address
+// (rescanning on each tick, so Wi-Fi that comes up late is picked up); when it closes, the
+// listeners and their connections are closed. Run it for the lifetime of serve.
+func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
+	var hs *http.Server
+	bound := map[netip.Addr]bool{}
+	_, portS, _ := net.SplitHostPort(s.Addr)
+	port, _ := strconv.Atoi(portS)
+	stop := func() {
+		if hs != nil {
+			_ = hs.Close()
+			hs, bound = nil, map[netip.Addr]bool{}
+			s.Log.Info("setup window closed")
+		}
+	}
+	defer stop()
+	for {
+		if s.Window.IsOpen(time.Now()) {
+			if hs == nil {
+				hs = &http.Server{Handler: s.LANHandler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
+			}
+			for _, a := range s.lanAddrs() {
+				if bound[a] {
+					continue
+				}
+				ln, err := net.Listen("tcp", netip.AddrPortFrom(a, uint16(port)).String())
+				if err != nil {
+					s.Log.Debug("setup window: can't listen", "addr", a, "err", err)
+					continue
+				}
+				bound[a] = true
+				s.Log.Info("setup window listening", "addr", ln.Addr().String())
+				go func(hs *http.Server) {
+					if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+						s.Log.Warn("setup window listener stopped", "addr", a, "err", err)
+					}
+				}(hs)
+			}
+		} else {
+			stop()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+		case <-s.kick:
+		}
+	}
+}
+
+// LANHandler serves only the setup wizard, to browsers that typed the code.
+func (s *Server) LANHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /setup/{$}", s.setupStart)
+	mux.HandleFunc("POST /setup/pair", s.pair)
+	s.setupRoutes(mux)
+	static, _ := fs.Sub(webFS, "web")
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
+	icons, _ := fs.Sub(assets.Web, "icon/web")
+	for _, f := range []string{"favicon.svg", "favicon.ico", "apple-touch-icon.png"} {
+		mux.Handle("GET /"+f, http.FileServerFS(icons))
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		securityHeaders(w)
+		now := time.Now()
+		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		sess, ok := s.Window.Session(r, now)
+		open := r.URL.Path == "/setup/" || r.URL.Path == "/setup/pair" || !isSetupPath(r.URL.Path)
+		switch {
+		case !ok && !open && r.Method == http.MethodPost:
+			http.Error(w, "the setup window is closed or this browser isn't paired: reload the page", http.StatusForbidden)
+			return
+		case !ok && !open:
+			http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+			return
+		}
+		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+			if r.URL.Path != "/setup/pair" && subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(sess.CSRF)) != 1 {
+				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)
+				return
+			}
+		}
+		if ok {
+			s.Window.Touch(now)
+			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess))
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func isSetupPath(p string) bool { return len(p) >= len("/setup/") && p[:len("/setup/")] == "/setup/" }
+
+type sessionKey struct{}
+
+// session returns the wizard session of a request (LAN: from the cookie; loopback: see setupRoutes).
+func session(r *http.Request) *Session {
+	s, _ := r.Context().Value(sessionKey{}).(*Session)
+	return s
+}
+
+// setupStart shows the pairing page, or sends a paired browser into the wizard.
+func (s *Server) setupStart(w http.ResponseWriter, r *http.Request) {
+	if session(r) != nil {
+		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+		return
+	}
+	s.pairPage(w, "", http.StatusOK)
+}
+
+func (s *Server) pairPage(w http.ResponseWriter, msg string, status int) {
+	open := s.Window.IsOpen(time.Now())
+	mins := int(time.Until(s.Window.Expires()).Round(time.Minute) / time.Minute)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = pages.ExecuteTemplate(w, "pair.html", map[string]any{"Open": open, "Minutes": max(mins, 1), "Err": msg, "Version": s.Version})
+}
+
+func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.Window.Check(r.FormValue("code"), time.Now())
+	if !ok {
+		s.Log.Warn("setup window: wrong pairing code", "from", r.RemoteAddr)
+		s.pairPage(w, "That code didn't match. Check the code and try again.", http.StatusForbidden)
+		return
+	}
+	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+}
+
+// pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it.
+func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
+	code, urls, expires := s.OpenWindow(time.Now())
+	s.Log.Info("setup window opened", "code", code, "urls", urls, "until", expires.Format("15:04"))
+	writeJSON(w, map[string]any{"code": code, "urls": urls, "expires": expires})
+}
+
+// loopbackRemote reports whether a request came from this machine.
+func loopbackRemote(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	ip, perr := netip.ParseAddr(host)
+	return err == nil && perr == nil && ip.Unmap().IsLoopback()
+}
