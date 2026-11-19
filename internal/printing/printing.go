@@ -20,6 +20,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
@@ -264,7 +265,10 @@ func (l *lazyTransport) Read(p []byte) (int, error) {
 	return l.t.Read(p)
 }
 
+// Close ends the connection; the next Open, Write or Read connects again (the zpl driver uses a
+// connection per query).
 func (l *lazyTransport) Close() error {
+	defer func() { l.opened, l.err = false, nil }()
 	if l.opened && l.err == nil {
 		return l.t.Close()
 	}
