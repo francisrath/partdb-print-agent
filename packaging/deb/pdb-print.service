@@ -1,0 +1,26 @@
+[Unit]
+Description=pdb-print label print agent for Part-DB
+Documentation=https://github.com/francisrath/partdb-print-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pdb-print
+Group=pdb-print
+# lp: access to USB printers (/dev/usb/lp*)
+SupplementaryGroups=lp
+# /var/lib/pdb-print (config) and /var/cache/pdb-print (PDFium compile cache)
+StateDirectory=pdb-print
+StateDirectoryMode=0700
+CacheDirectory=pdb-print
+Environment=XDG_CACHE_HOME=/var/cache
+# --setup-window: until Part-DB is connected, the setup wizard is open to the LAN for a while
+ExecStart=/usr/bin/pdb-print --config /var/lib/pdb-print/config.yaml serve --setup-window
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

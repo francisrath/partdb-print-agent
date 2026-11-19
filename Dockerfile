@@ -6,5 +6,7 @@ COPY $TARGETPLATFORM/pdb-print /usr/bin/pdb-print
 # config dir owned by nonroot (65532): a volume mounted here starts out writable
 COPY --chown=65532:65532 packaging/docker/config-dir.keep /home/nonroot/.config/pdb-print/.keep
 ENTRYPOINT ["/usr/bin/pdb-print"]
-# The web UI only binds loopback: run with --network host to reach it on the host.
-CMD ["serve"]
+# Run with --network host: the web UI binds loopback, and network printer discovery needs the
+# host's network. Until Part-DB is connected, the setup wizard is open to the LAN for a while;
+# the code is in `docker logs`, and `docker exec <name> pdb-print pair` opens it again.
+CMD ["serve", "--setup-window"]

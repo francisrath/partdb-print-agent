@@ -13,15 +13,21 @@ builds:
     binary: pdb-print
     env: [CGO_ENABLED=0]
     goos: [linux, darwin, windows]
-    goarch: [amd64, arm64, arm]
-    goarm: ["6"] # 32-bit ARMv6 runs on every Raspberry Pi (Pi 1, Zero, Pi 2 v1.1 have no 64-bit OS)
+    goarch: [amd64, arm64]
     ignore:
       - goos: windows
         goarch: arm64
-      - goos: windows
-        goarch: arm
-      - goos: darwin
-        goarch: arm
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  # its own build id so its .deb can depend on poppler-utils (pdftoppm renders there, see render.FindPdftoppm)
+  - id: pdb-print-arm
+    main: ./cmd/pdb-print
+    binary: pdb-print
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [arm]
+    goarm: ["6"] # 32-bit ARMv6 runs on every Raspberry Pi (Pi 1, Zero, Pi 2 v1.1 have no 64-bit OS)
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -40,6 +46,36 @@ archives:
 
 checksum:
   name_template: checksums.txt
+
+# Debian packages for scripts/install.sh, which picks pdb-print_<version>_<arch>.deb from
+# checksums.txt; nFPM names GOARM=6 "armhf" (Raspberry Pi OS 32-bit). "~" would break the
+# checksums on GitHub (pre-release versions), so it becomes "-".
+nfpms:
+  - &deb
+    id: deb
+    ids: [pdb-print]
+    package_name: pdb-print
+    file_name_template: '{{ replace .ConventionalFileName "~" "-" }}'
+    formats: [deb]
+    homepage: https://github.com/francisrath/partdb-print-agent
+    maintainer: Francis Rath <francisrath@users.noreply.github.com>
+    description: Direct label printing for Part-DB
+    license: MIT
+    section: utils
+    contents:
+      - src: packaging/deb/pdb-print.service
+        dst: /usr/lib/systemd/system/pdb-print.service
+    scripts:
+      postinstall: packaging/deb/postinst
+      preremove: packaging/deb/prerm
+  - <<: *deb
+    id: deb-armhf
+    ids: [pdb-print-arm]
+    dependencies: [poppler-utils]
+
+release:
+  extra_files:
+    - glob: scripts/install.sh
 
 changelog:
   use: github

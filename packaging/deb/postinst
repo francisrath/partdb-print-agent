@@ -1,0 +1,16 @@
+#!/bin/sh
+# Runs after the package is installed or upgraded.
+set -e
+# a system user for the service (no login, no home)
+if ! getent passwd pdb-print > /dev/null; then
+  useradd --system --user-group --home-dir /var/lib/pdb-print --no-create-home --shell /usr/sbin/nologin pdb-print
+fi
+# an empty config the first time, readable only by the service; the setup wizard fills it in
+if [ ! -e /var/lib/pdb-print/config.yaml ]; then
+  install -d -o pdb-print -g pdb-print -m 0700 /var/lib/pdb-print
+  install -o pdb-print -g pdb-print -m 0600 /dev/null /var/lib/pdb-print/config.yaml
+fi
+# start the service now and at every boot (restart: an upgrade runs the new version)
+systemctl daemon-reload
+systemctl enable pdb-print.service
+systemctl restart pdb-print.service

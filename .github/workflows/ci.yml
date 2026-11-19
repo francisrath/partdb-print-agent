@@ -63,3 +63,35 @@ jobs:
           for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
             CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/pdb-print
           done
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: shellcheck
+        run: shellcheck scripts/*.sh packaging/deb/postinst packaging/deb/prerm
+      - name: install script
+        run: sh scripts/install_test.sh
+      - name: build packages
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: release --snapshot --clean --skip=docker,homebrew,sign
+      - name: check packages
+        run: |
+          for a in amd64 arm64 armhf; do
+            deb=$(ls dist/pdb-print_*_"$a".deb)
+            grep -q " ${deb#dist/}$" dist/checksums.txt
+            dpkg-deb -c "$deb" | grep -q ' ./usr/bin/pdb-print$'
+            dpkg-deb -c "$deb" | grep -q ' ./usr/lib/systemd/system/pdb-print.service$'
+            dpkg-deb -I "$deb" | grep -q "Architecture: $a"
+            dpkg-deb -I "$deb" | grep -q ' postinst'
+          done
+          dpkg-deb -I dist/pdb-print_*_armhf.deb | grep -q 'Depends: poppler-utils'
+          ! dpkg-deb -I dist/pdb-print_*_arm64.deb | grep -q 'Depends:'

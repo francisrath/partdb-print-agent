@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs before the package is removed: stop the service. The config in /var/lib/pdb-print and
+# the pdb-print user stay, so reinstalling keeps the setup.
+set -e
+if [ "$1" = remove ]; then
+  systemctl disable --now pdb-print.service || true
+fi
