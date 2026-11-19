@@ -467,19 +467,15 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	p := d.Printer
 	p.Name = name
 	var warn, instID string
-	var undo func()
-	err := s.update(func(c *config.Config) error {
+	err := s.updateUndo(func(c *config.Config) (undo func(), err error) {
 		if d.Instance != nil {
 			instID, warn, undo = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
 		}
 		p.ID = uniqueID(c, slug(name))
 		c.Printers = append(c.Printers, p)
-		return nil
+		return undo, nil
 	})
 	if err != nil {
-		if undo != nil {
-			undo()
-		}
 		s.setupPage(w, r, "setup-name", 4, map[string]any{"Err": "Couldn't save: " + err.Error(), "Ideas": nameIdeas(d)})
 		return
 	}

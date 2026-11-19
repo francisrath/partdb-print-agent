@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -275,16 +278,20 @@ func TestWindowCloseStopsLAN(t *testing.T) {
 	if _, err := conn.Write([]byte("GET /setup/ HTTP/1.1\r\nHost: " + addr + "\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	buf := make([]byte, 1<<16)
-	if n, err := conn.Read(buf); err != nil || !strings.Contains(string(buf[:n]), "200 OK") {
-		t.Fatalf("pairing page over TCP: %q %v", buf[:n], err)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("pairing page over TCP: %v %v", resp, err)
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil { // the whole answer: nothing left unread
+		t.Fatal(err)
 	}
 
 	h.srv.Window.Close()
 	eventually(t, "LAN listener still up after Close", func() bool { return !reachable(addr) })
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, err = conn.Read(buf)
-	if ne, ok := err.(net.Error); err == nil || ok && ne.Timeout() {
+	_, err = br.ReadByte()
+	if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
 		t.Errorf("open connection survived the window: %v", err)
 	}
 	if w := h.do("GET", "/", nil); w.Code != http.StatusOK {
@@ -376,17 +383,17 @@ func TestLANRejectsInternetClients(t *testing.T) {
 	}
 }
 
-// "Same network" is the interface's real subnet, not a guessed /24: a host on a public /32
-// trusts no neighbours, one on a public /64 trusts its link.
+// Public IPv4 subnets are never trusted (a WAN interface's /24 holds other customers); a public
+// IPv6 /64 is the host's own link (a home LAN's prefix, which browsers on it use).
 func TestLANClientsUseRealSubnets(t *testing.T) {
 	h := newHarness(t)
 	h.srv.LANNets = func() []netip.Prefix {
-		return []netip.Prefix{netip.MustParsePrefix("198.51.100.10/32"), netip.MustParsePrefix("2001:db8:1::10/64")}
+		return []netip.Prefix{netip.MustParsePrefix("198.51.100.10/24"), netip.MustParsePrefix("2001:db8:1::10/64")}
 	}
 	h.srv.OpenWindow(time.Now())
 	lan := h.srv.LANHandler()
 	for remote, want := range map[string]int{
-		"198.51.100.20:4000":    http.StatusForbidden, // shares a /24, but the host is on a /32
+		"198.51.100.20:4000":    http.StatusForbidden, // a WAN /24: other customers of the provider
 		"[2001:db8:1::20]:4000": http.StatusOK,        // same /64 link
 		"[2001:db8:2::20]:4000": http.StatusForbidden,
 	} {

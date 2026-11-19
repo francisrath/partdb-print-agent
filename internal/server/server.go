@@ -217,19 +217,29 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, text string, e
 
 // update applies fn to a copy of the config, validates and saves it, then swaps it in.
 func (s *Server) update(fn func(c *config.Config) error) error {
+	return s.updateUndo(func(c *config.Config) (func(), error) { return nil, fn(c) })
+}
+
+// updateUndo is update for changes outside the config (the keychain): when the config isn't
+// saved, the undo fn returns runs before the lock is released, so no later save is overwritten.
+func (s *Server) updateUndo(fn func(c *config.Config) (undo func(), err error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, err := s.cfg.Clone()
 	if err != nil {
 		return err
 	}
-	if err := fn(c); err != nil {
-		return err
+	undo, err := fn(c)
+	if err == nil {
+		err = c.Validate()
 	}
-	if err := c.Validate(); err != nil {
-		return err
+	if err == nil {
+		err = c.Save(s.CfgPath)
 	}
-	if err := c.Save(s.CfgPath); err != nil {
+	if err != nil {
+		if undo != nil {
+			undo()
+		}
 		return err
 	}
 	s.cfg = c
@@ -324,8 +334,7 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/")
 	token := strings.TrimSpace(r.FormValue("token"))
 	var warn, id string
-	var undo func()
-	err := s.update(func(c *config.Config) error {
+	err := s.updateUndo(func(c *config.Config) (undo func(), err error) {
 		if len(c.Instances) == 0 {
 			c.Instances = append(c.Instances, config.Instance{ID: "default"})
 		}
@@ -333,7 +342,7 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			cur, err := c.Instance(in.ID)
 			if err != nil {
-				return errors.New("enter an API token")
+				return nil, errors.New("enter an API token")
 			}
 			token = cur.Token
 		}
@@ -344,7 +353,7 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		probe.Token = token
 		tok, err := partdb.FromInstance(&probe).TokenInfo(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if tok.Level > 1 {
 			warn = " (this token can do more than needed: a Read-Only token is enough)"
@@ -352,12 +361,10 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		var note string
 		id, note, undo = s.putInstance(c, baseURL, token, in.AllowHTTP)
 		warn += note
-		return nil
+		return undo, nil
 	})
 	if err == nil {
 		s.instanceSaved(id)
-	} else if undo != nil {
-		undo()
 	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
 }

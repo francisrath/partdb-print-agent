@@ -360,3 +360,22 @@ func TestFailedSaveKeepsKeychainToken(t *testing.T) {
 		t.Errorf("keychain token %q after a failed save", got)
 	}
 }
+
+// The keychain undo of a failed save runs before the config lock is released, so a save that
+// succeeds meanwhile can't be overwritten by it.
+func TestUpdateUndoRunsUnderLock(t *testing.T) {
+	h := newHarness(t)
+	h.srv.CfgPath = t.TempDir() // saving fails
+	var lockedDuringUndo bool
+	err := h.srv.updateUndo(func(c *config.Config) (func(), error) {
+		return func() {
+			lockedDuringUndo = !h.srv.mu.TryLock()
+			if !lockedDuringUndo {
+				h.srv.mu.Unlock()
+			}
+		}, nil
+	})
+	if err == nil || !lockedDuringUndo {
+		t.Errorf("err %v, undo under the lock %v", err, lockedDuringUndo)
+	}
+}

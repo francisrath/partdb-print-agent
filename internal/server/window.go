@@ -361,8 +361,9 @@ func (s *Server) LANHandler() http.Handler {
 }
 
 // lanClient reports whether a request comes from the local network: a private, unique-local,
-// link-local or loopback address, or a subnet of one of our network interfaces (a LAN on public
-// addresses; a host on a public /32 has none).
+// link-local or loopback address, or the IPv6 /64 of one of our interfaces (a home LAN's public
+// prefix, which a browser opening <name>.local often uses). Public IPv4 subnets are never trusted:
+// on a WAN interface they hold the provider's other customers.
 func (s *Server) lanClient(remote string) bool {
 	h, _, err := net.SplitHostPort(remote)
 	if err != nil {
@@ -377,7 +378,7 @@ func (s *Server) lanClient(remote string) bool {
 		return true
 	}
 	for _, n := range s.lanNets() {
-		if n.Masked().Contains(ip) {
+		if n.Addr().Is6() && n.Bits() >= 64 && n.Masked().Contains(ip) {
 			return true
 		}
 	}
