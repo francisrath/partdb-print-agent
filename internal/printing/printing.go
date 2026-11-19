@@ -34,7 +34,10 @@ type Source func(m *driver.Media) ([]byte, error)
 func PDF(pdf []byte) Source { return func(*driver.Media) ([]byte, error) { return pdf, nil } }
 
 // TestCard is a test label sized for whatever media is loaded.
-func TestCard(model, version string) Source {
+func TestCard(model, version string) Source { return TestCardTagged(model, version, "") }
+
+// TestCardTagged is TestCard with a tag ("1/5") printed large, for numbered test runs.
+func TestCardTagged(model, version, tag string) Source {
 	return func(m *driver.Media) ([]byte, error) {
 		length := m.LengthMM
 		if length == 0 {
@@ -44,7 +47,19 @@ func TestCard(model, version string) Source {
 		if m.WidthDots > m.PrintableWidthDots { // tape: card on the print area, edges left clear
 			return pdfgen.TestCardOn(m.WidthMM, float64(m.PrintableWidthDots)/float64(m.DPI)*25.4, length, lines), nil
 		}
-		return pdfgen.TestCard(m.WidthMM, length, lines), nil
+		return pdfgen.TestCardTagged(m.WidthMM, length, lines, tag), nil
+	}
+}
+
+// PartLabel is a generated part label (title, part number, QR code, Code 128) at the media's size.
+func PartLabel(tag string) Source {
+	return func(m *driver.Media) ([]byte, error) {
+		length := m.LengthMM
+		if length == 0 {
+			length = max(m.WidthMM*0.6, 20)
+		}
+		return pdfgen.PartLabel(m.WidthMM, length, "AMS1117-3.3 LDO regulator", "P-000032",
+			"https://partdb.example.org/en/part/32", "P-000032", tag), nil
 	}
 }
 

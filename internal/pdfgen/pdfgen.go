@@ -65,16 +65,22 @@ func Text(s string) string {
 // TestCard is a printer test label of wMM×hMM: border, 1 mm rulers on the
 // top and left edges, an arrow with "TOP", a 0.5 mm checkerboard and the given text lines.
 func TestCard(wMM, hMM float64, lines []string) []byte {
-	return Page(wMM, hMM, testCard(wMM, hMM, lines))
+	return Page(wMM, hMM, testCard(wMM, hMM, lines, ""))
+}
+
+// TestCardTagged is TestCard with a tag ("1/5") printed large next to TOP, so a tester can say
+// which label is which.
+func TestCardTagged(wMM, hMM float64, lines []string, tag string) []byte {
+	return Page(wMM, hMM, testCard(wMM, hMM, lines, tag))
 }
 
 // TestCardOn is a cardMM-wide test card centred on a wider pageMM×hMM page
 // (tape: the card covers the print area, the unprintable edges stay blank).
 func TestCardOn(pageMM, cardMM, hMM float64, lines []string) []byte {
-	return Page(pageMM, hMM, fmt.Sprintf("q 1 0 0 1 %.3f 0 cm\n%sQ\n", (pageMM-cardMM)/2, testCard(cardMM, hMM, lines)))
+	return Page(pageMM, hMM, fmt.Sprintf("q 1 0 0 1 %.3f 0 cm\n%sQ\n", (pageMM-cardMM)/2, testCard(cardMM, hMM, lines, "")))
 }
 
-func testCard(wMM, hMM float64, lines []string) string {
+func testCard(wMM, hMM float64, lines []string, tag string) string {
 	var c strings.Builder
 	fmt.Fprintf(&c, "0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n0.15 w\n", wMM-1, hMM-1)
 	for x := 1.0; x < wMM-0.5; x++ { // top ruler, longer tick every 5 mm
@@ -96,6 +102,9 @@ func testCard(wMM, hMM float64, lines []string) string {
 	// "▲ TOP" (drawn arrow: the font is ASCII only) so an upside-down print is obvious
 	fmt.Fprintf(&c, "3 %.2f m %.2f %.2f l %.2f %.2f l h f\n", y, 3+size*0.8, y, 3+size*0.4, y+size*0.75)
 	fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (TOP) Tj ET\n", size, 3+size, y)
+	if tag != "" {
+		fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (%s) Tj ET\n", size*1.6, 3+size*5, y-size*0.3, Text(tag))
+	}
 	y -= size * 1.3
 	for _, s := range lines {
 		// shrink long lines to fit the width; rounded down because Tf is written with 2 decimals
