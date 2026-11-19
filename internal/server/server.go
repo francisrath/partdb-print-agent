@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -26,11 +27,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/assets"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
@@ -53,7 +56,10 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return "unknown level"
 	},
-}).ParseFS(webFS, "web/*.html"))
+	"steps": func() []string { return []string{"Part-DB", "Printer", "Test", "Name", "Done"} },
+	"add":   func(a, b int) int { return a + b },
+	"sub":   func(a, b int) int { return a - b },
+}).ParseFS(webFS, "web/*.html", "web/setup/*.html"))
 
 const handoffWindow = 120 * time.Second
 
@@ -63,6 +69,23 @@ type Server struct {
 	Log     *slog.Logger
 	Addr    string // host:port the listener is bound to (loopback)
 	Version string
+	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
+	// so its print jobs are fetched without a restart. nil = nothing.
+	OnInstance func(in config.Instance)
+	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
+	Window      *Window
+	LANAddrs    func() []netip.Addr
+	LANNets     func() []netip.Prefix // overrides LocalNets in tests
+	kick        chan struct{}         // wakes SetupLoop
+	scanned     chan struct{}         // SetupLoop finished a scan
+	boundMu     sync.Mutex
+	bound       []netip.Addr   // LAN addresses the setup server listens on
+	loopRunning atomic.Bool    // SetupLoop is running (OpenWindow waits for its scan)
+	local       *Session       // the wizard's session on loopback (no code needed there)
+	finishGrace time.Duration  // after Finish the window stays open this long (the page\'s stylesheet)
+	setupPrints sync.WaitGroup // wizard test prints in progress
+	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
+	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
 	cfg   *config.Config
@@ -87,8 +110,12 @@ type Job struct {
 }
 
 func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Logger, addr, version string) *Server {
-	return &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
-		csrf: randomHex(32), seen: map[string]time.Time{}}
+	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
+		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
+	s.Window.OnClose = s.kickSetup
+	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
+	s.finishGrace = 10 * time.Second
+	return s
 }
 
 func randomHex(n int) string {
@@ -113,6 +140,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /printers/{id}/status", s.printerStatus)
 	mux.HandleFunc("POST /routes", s.saveRoute)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
+	mux.HandleFunc("POST /v1/pair", s.pairAPI)
+	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
+		d := s.local.Draft // a fresh start
+		d.mu.Lock()
+		d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
+		d.resetPrinter(config.Printer{})
+		d.mu.Unlock()
+		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+	})
+	s.setupRoutes(mux)
 	mux.HandleFunc("GET /v1/handoff", s.handoff)
 	mux.HandleFunc("POST /v1/handoff", s.handoff)
 
@@ -122,7 +159,7 @@ func (s *Server) Handler() http.Handler {
 	for _, f := range []string{"favicon.svg", "favicon.ico", "apple-touch-icon.png"} {
 		mux.Handle("GET /"+f, http.FileServerFS(icons))
 	}
-	return s.guard(mux)
+	return s.guard(s.withLocalSession(mux))
 }
 
 // guard enforces the loopback Host allowlist, CSRF on POST and safe headers.
@@ -135,12 +172,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "same-origin") // "no-referrer" makes browsers send Origin: null on POST
-		h.Set("Cache-Control", "no-store")
-		if r.Method == http.MethodPost {
+		securityHeaders(w)
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
+			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
+			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
@@ -153,6 +192,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func securityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "same-origin") // "no-referrer" makes browsers send Origin: null on POST
+	h.Set("Cache-Control", "no-store")
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -173,19 +220,29 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, text string, e
 
 // update applies fn to a copy of the config, validates and saves it, then swaps it in.
 func (s *Server) update(fn func(c *config.Config) error) error {
+	return s.updateUndo(func(c *config.Config) (func(), error) { return nil, fn(c) })
+}
+
+// updateUndo is update for changes outside the config (the keychain): when the config isn't
+// saved, the undo fn returns runs before the lock is released, so no later save is overwritten.
+func (s *Server) updateUndo(fn func(c *config.Config) (undo func(), err error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, err := s.cfg.Clone()
 	if err != nil {
 		return err
 	}
-	if err := fn(c); err != nil {
-		return err
+	undo, err := fn(c)
+	if err == nil {
+		err = c.Validate()
 	}
-	if err := c.Validate(); err != nil {
-		return err
+	if err == nil {
+		err = c.Save(s.CfgPath)
 	}
-	if err := c.Save(s.CfgPath); err != nil {
+	if err != nil {
+		if undo != nil {
+			undo()
+		}
 		return err
 	}
 	s.cfg = c
@@ -279,8 +336,8 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/")
 	token := strings.TrimSpace(r.FormValue("token"))
-	var warn string
-	err := s.update(func(c *config.Config) error {
+	var warn, id string
+	err := s.updateUndo(func(c *config.Config) (undo func(), err error) {
 		if len(c.Instances) == 0 {
 			c.Instances = append(c.Instances, config.Instance{ID: "default"})
 		}
@@ -288,7 +345,7 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			cur, err := c.Instance(in.ID)
 			if err != nil {
-				return errors.New("enter an API token")
+				return nil, errors.New("enter an API token")
 			}
 			token = cur.Token
 		}
@@ -299,24 +356,67 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		probe.Token = token
 		tok, err := partdb.FromInstance(&probe).TokenInfo(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if tok.Level > 1 {
 			warn = " (this token can do more than needed: a Read-Only token is enough)"
 		}
-		if in.PairingKey == "" {
-			in.PairingKey = randomHex(32)
-		}
-		if err := keyring.Set(config.KeyringService, in.ID, token); err != nil {
-			s.Log.Warn("OS keychain unavailable; storing the token in the config file (0600)", "err", err)
-			in.Token = token
-			warn += " (no OS keychain: token stored in the config file)"
-		} else {
-			in.Token = ""
-		}
-		return nil
+		var note string
+		id, note, undo = s.putInstance(c, baseURL, token, in.AllowHTTP)
+		warn += note
+		return undo, nil
 	})
+	if err == nil {
+		s.instanceSaved(id)
+	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
+}
+
+// putInstance stores the first Part-DB instance's URL and token (in the OS keychain when there
+// is one, else in the 0600 config file); it returns the instance id, a note for the user (or "")
+// and, when it changed the keychain, a func that undoes that if the config isn't saved.
+func (s *Server) putInstance(c *config.Config, baseURL, token string, allowHTTP bool) (id, note string, undo func()) {
+	if len(c.Instances) == 0 {
+		c.Instances = append(c.Instances, config.Instance{ID: "default"})
+	}
+	in := &c.Instances[0]
+	in.BaseURL, in.AllowHTTP = baseURL, allowHTTP
+	if in.PairingKey == "" {
+		in.PairingKey = randomHex(32)
+	}
+	prev, prevErr := keyring.Get(config.KeyringService, in.ID)
+	if err := keyring.Set(config.KeyringService, in.ID, token); err != nil {
+		// normal on a headless server (no desktop keychain), so info, not a warning
+		s.Log.Info("no OS keychain; the token is kept in the config file, readable only by this user", "err", err)
+		in.Token = token
+		return in.ID, " (token kept in the config file, readable only by pdb-print)", nil
+	}
+	in.Token = ""
+	id = in.ID
+	// if the config can't be saved, the keychain must keep the token that goes with the old URL
+	return id, "", func() {
+		if prevErr == nil {
+			_ = keyring.Set(config.KeyringService, id, prev)
+		} else {
+			_ = keyring.Delete(config.KeyringService, id)
+		}
+	}
+}
+
+// Instance is a Part-DB instance as currently saved (token filled in).
+func (s *Server) Instance(id string) (*config.Instance, error) { return s.config().Instance(id) }
+
+// instanceSaved hands a newly saved instance (with its token) to OnInstance.
+func (s *Server) instanceSaved(id string) {
+	if s.OnInstance == nil {
+		return
+	}
+	in, err := s.config().Instance(id)
+	if err != nil {
+		s.Log.Warn("not fetching print jobs", "instance", id, "reason", err)
+		return
+	}
+	s.OnInstance(*in)
 }
 
 func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +459,7 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 				// keep settings the form doesn't show
 				old := c.Printers[i]
 				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
+				p.Mirror, p.UpsideDown = old.Mirror, old.UpsideDown
 				c.Printers[i] = p
 				return nil
 			}

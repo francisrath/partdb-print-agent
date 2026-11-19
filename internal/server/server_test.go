@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -101,6 +102,7 @@ func newHarness(t *testing.T) *harness {
 	svc := &printing.Service{Log: log}
 	t.Cleanup(svc.Close)
 	s := New(cfg, filepath.Join(t.TempDir(), "config.yaml"), svc, log, "127.0.0.1:8631", "test")
+	s.LANAddrs = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("192.168.1.23")} } // lanReq's address
 	return &harness{t: t, srv: s, h: s.Handler(), host: "127.0.0.1:8631", jobs: jobs, partdb: fakePartDB(t)}
 }
 
@@ -508,5 +510,33 @@ func TestAgentPrintersReportOnline(t *testing.T) {
 	b, _ := json.Marshal(ps[0])
 	if !strings.Contains(string(b), `"online":true`) {
 		t.Errorf("heartbeat JSON %s", b)
+	}
+}
+
+// Editing a printer in Settings keeps the fixes the wizard's test print set.
+func TestSavePrinterKeepsFixes(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers[0].Mirror, h.srv.cfg.Printers[0].UpsideDown = true, true
+	p := h.srv.cfg.Printers[0]
+	h.post("/printers", url.Values{"id": {p.ID}, "name": {"Desk"}, "model": {p.Model}, "host": {p.Transport.Host},
+		"port": {"9100"}, "media": {p.Media}})
+	got, err := h.srv.config().Printer(p.ID)
+	if err != nil || !got.Mirror || !got.UpsideDown || got.Name != "Desk" {
+		t.Errorf("after edit: %+v %v", got, err)
+	}
+}
+
+// Connecting a Part-DB starts fetching its jobs without a restart.
+func TestSaveInstanceStartsJobs(t *testing.T) {
+	h := newHarness(t)
+	var got []config.Instance
+	h.srv.OnInstance = func(in config.Instance) { got = append(got, in) }
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {""}})
+	if len(got) != 0 {
+		t.Fatalf("called without a token: %+v", got)
+	}
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	if len(got) != 1 || got[0].BaseURL != h.partdb.URL || got[0].Token != "tcp_test" {
+		t.Errorf("OnInstance calls: %+v", got)
 	}
 }

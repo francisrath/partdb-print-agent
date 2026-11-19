@@ -5,12 +5,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/report"
 	"image/png"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -45,7 +47,10 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
-  serve [--addr 127.0.0.1:8631]    run the local web UI and bookmarklet endpoint
+  serve [--addr 127.0.0.1:8631] [--setup-window]
+                                   run the local web UI and bookmarklet endpoint; --setup-window
+                                   opens the setup wizard to the LAN when no Part-DB is set up yet
+  pair [--addr 127.0.0.1:8631]     open the setup wizard to the LAN for a while (prints a code)
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
                                    rasterise to PNGs at printhead dots (no printing)
   print FILE.pdf --printer ID [--dry-run OUT.bin]
@@ -103,6 +108,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
+	}
+	if cmd == "pair" { // talks to the running service, not the config
+		return pairCmd(ctx, rest, os.Stdout)
 	}
 	if cmd == "media" { // needs no config: it's what config errors point to
 		// every medium once, with the models that take it
@@ -300,6 +308,7 @@ func (a *app) print(ctx context.Context, args []string) error {
 func (a *app) serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8631", "listen address (loopback only)")
+	setupWindow := fs.Bool("setup-window", false, "open the setup wizard to the LAN at start when no Part-DB is set up")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -334,6 +343,14 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		}()
 	}
 	jobsDone := a.startAgentJobs(ctx, srv)
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	setupDone := srv.StartSetupLoop(ctx, tick.C)
+	if *setupWindow && needsSetup(a.cfg) {
+		code, urls, expires := srv.OpenWindow(time.Now())
+		a.log.Info("setup: open one of these addresses in a browser and type the code",
+			"code", code, "urls", strings.Join(urls, " "), "until", expires.Format("15:04"))
+	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute}
 	stopped := make(chan struct{})
 	go func() {
@@ -352,24 +369,94 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if folderDone != nil {
 		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
 	}
-	jobsDone.Wait() // same for a print job from Part-DB
+	jobsDone.wait() // same for a print job from Part-DB
+	<-setupDone
+	srv.WaitSetupPrints() // a test label being printed from the wizard finishes too
 	return nil
 }
 
-// startAgentJobs fetches print jobs from every Part-DB instance that has a token (and the print agent API).
-// ponytail: instances and tokens are read once at startup; changing them in the UI needs a restart.
-func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.WaitGroup {
-	var wg sync.WaitGroup
-	agentID, err := srv.EnsureAgentID()
-	if err != nil {
-		a.log.Warn("print jobs disabled: can't save the agent id", "err", err)
-		return &wg
+// needsSetup: no Part-DB configured yet (in the config or the environment).
+func needsSetup(cfg *config.Config) bool {
+	return len(cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == ""
+}
+
+// pairCmd asks the running service (on this machine) to open the setup window.
+func pairCmd(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
+	addr := fs.String("addr", "127.0.0.1:8631", "address of the running pdb-print serve")
+	if _, err := parse(fs, args); err != nil {
+		return err
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+*addr+"/v1/pair", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("is pdb-print serve running on %s? %w", *addr, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))
+	}
+	var res struct {
+		Code    string    `json:"code"`
+		URLs    []string  `json:"urls"`
+		Expires time.Time `json:"expires"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return err
+	}
+	if len(res.URLs) == 0 {
+		return errors.New("setup couldn't listen on the local network (no network address yet, or port 8631 in use): see the service log")
+	}
+	fmt.Fprintf(out, "Setup is open until %s. On another computer, open one of:\n\n", res.Expires.Local().Format("15:04"))
+	for _, u := range res.URLs {
+		fmt.Fprintf(out, "    %s\n", u)
+	}
+	fmt.Fprintf(out, "\nand type the code:  %s\n", res.Code)
+	return nil
+}
+
+// agentJobs fetches print jobs from Part-DB instances that have a token (and the print agent API),
+// one loop per instance.
+type agentJobs struct {
+	ctx  context.Context
+	srv  *server.Server
+	log  *slog.Logger
+	name string
+	wg   sync.WaitGroup
+
+	mu      sync.Mutex
+	closed  bool   // shutting down: no new loops
+	agentID string // persisted; "" until EnsureAgentID worked
+	loops   map[string]*jobLoop
+}
+
+type jobLoop struct {
+	loop *agentjobs.Loop
+	url  string // the Part-DB it talks to
+	stop context.CancelFunc
+	done chan struct{} // closed when Run has returned
+}
+
+// startAgentJobs starts a loop for every configured instance and, through srv.OnInstance, for
+// instances connected later in the web UI.
+func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *agentJobs {
+	j := &agentJobs{ctx: ctx, srv: srv, log: a.log, loops: map[string]*jobLoop{}}
+	j.name, _ = os.Hostname()
+	srv.OnInstance = j.start // also when the agent id can't be saved yet: start retries it
+	id, err := srv.EnsureAgentID()
+	if err != nil {
+		a.log.Warn("print jobs disabled for now: can't save the agent id", "err", err)
+		return j
+	}
+	j.agentID = id
 	if len(a.cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == "" {
 		a.log.Info("not fetching print jobs", "reason", "no Part-DB connected")
-		return &wg
+		return j
 	}
-	name, _ := os.Hostname()
 	ids := []string{""} // only PDB_PRINT_URL/PDB_PRINT_TOKEN
 	if len(a.cfg.Instances) > 0 {
 		ids = nil
@@ -383,17 +470,65 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 			a.log.Info("not fetching print jobs", "instance", id, "reason", err)
 			continue
 		}
-		a.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
-		loop := &agentjobs.Loop{Client: partdb.FromInstance(in), AgentID: agentID, Name: name, Version: appVersion(),
-			Printers: srv.AgentPrinters, Log: a.log.With("instance", in.ID),
-			Print: func(ctx context.Context, job partdb.Job) (string, error) { return srv.PrintJob(ctx, in.ID, job) }}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = loop.Run(ctx)
-		}()
+		j.start(*in)
 	}
-	return &wg
+	return j
+}
+
+// start runs the jobs loop for in, replacing a running one for the same instance (a changed URL
+// or token takes effect at once). The new loop takes over the old one's unreported results once
+// the old one has finished its job.
+func (j *agentJobs) start(in config.Instance) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed || j.ctx.Err() != nil { // shutting down: wait() covers only loops already running
+		return
+	}
+	if j.agentID == "" {
+		id, err := j.srv.EnsureAgentID()
+		if err != nil {
+			j.log.Warn("not fetching print jobs: can't save the agent id", "err", err)
+			return
+		}
+		j.agentID = id
+	}
+	// whichever save notified last, run with the settings saved last
+	if cur, err := j.srv.Instance(in.ID); err == nil {
+		in = *cur
+	}
+	old := j.loops[in.ID]
+	if old != nil {
+		old.stop()
+	}
+	ctx, stop := context.WithCancel(j.ctx)
+	l := &jobLoop{stop: stop, done: make(chan struct{}), url: in.BaseURL, loop: &agentjobs.Loop{
+		Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
+		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
+		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}}
+	j.loops[in.ID] = l
+	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
+	j.wg.Add(1)
+	go func() {
+		defer j.wg.Done()
+		defer close(l.done)
+		if old != nil {
+			<-old.done
+			if old.url == l.url {
+				old.loop.HandOver(l.loop) // a new token for the same Part-DB
+			} else {
+				old.loop.FlushReports(j.ctx) // results belong to the Part-DB they came from
+			}
+		}
+		_ = l.loop.Run(ctx)
+	}()
+}
+
+// wait stops new loops from starting and waits for the running ones (after ctx is done).
+func (j *agentJobs) wait() {
+	j.mu.Lock()
+	j.closed = true
+	j.mu.Unlock()
+	j.wg.Wait()
 }
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {

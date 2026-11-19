@@ -362,3 +362,30 @@ func TestPollWait(t *testing.T) {
 		}
 	}
 }
+
+// A loop replaced after a settings change passes on the results Part-DB didn't accept yet,
+// so a printed job doesn't stay "claimed".
+func TestHandOverUnreported(t *testing.T) {
+	old, next := &Loop{}, &Loop{}
+	old.unreported = []report{{id: 7, ok: true, message: "printed"}}
+	next.unreported = []report{{id: 9}}
+	old.HandOver(next)
+	if len(old.unreported) != 0 || len(next.unreported) != 2 || next.unreported[0].id != 7 {
+		t.Errorf("old %+v next %+v", old.unreported, next.unreported)
+	}
+}
+
+// Results left by a loop whose Part-DB address changed are sent to the Part-DB they came from.
+func TestFlushReportsToOwnPartDB(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+	l := &Loop{Client: partdb.New(srv.URL, "tcp_x"), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	l.unreported = []report{{id: 7, ok: true, message: "printed"}}
+	l.FlushReports(context.Background())
+	if len(got) != 1 || got[0] != "POST /en/agent-api/v1/jobs/7/result" || len(l.unreported) != 0 {
+		t.Errorf("sent %v, left %+v", got, l.unreported)
+	}
+}

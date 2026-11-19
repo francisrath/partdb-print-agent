@@ -22,6 +22,8 @@ printers:
     # snmp_community: public    # if you changed it in the printer's web settings
     # no_snmp: true             # fall back to the TCP status (network QLs don't answer it)
     # allow_scaling: true       # print labels that don't match the roll by scaling instead of refusing
+    # mirror: true              # print flipped left-right (set by the setup wizard's test print)
+    # upside_down: true         # turn the print 180°, on top of rotate (likewise)
   # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
   # - id: pt9500
   #   name: Brother PT-9500PC

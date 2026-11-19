@@ -31,3 +31,13 @@ if (modelSel && mediaSel) {
   modelSel.addEventListener('change', filter);
   filter();
 }
+
+// Setup wizard: open Part-DB's "new API token" page for the address typed above.
+document.querySelectorAll('[data-token-page]').forEach((b) => {
+  b.addEventListener('click', () => {
+    let base = (b.form.elements.base_url.value || '').trim().replace(/\/+$/, '');
+    if (!base) { b.form.elements.base_url.focus(); return; }
+    if (!base.includes('://')) base = 'https://' + base;
+    window.open(base + b.dataset.tokenPage, '_blank', 'noopener');
+  });
+});

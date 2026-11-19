@@ -454,3 +454,46 @@ func TestPTRendersWithPdftoppm(t *testing.T) {
 		t.Errorf("fell back to PDFium:\n%s", log)
 	}
 }
+
+// quadrantInk reports which quadrants of img have dark pixels: [top-left, top-right, bottom-left, bottom-right].
+func quadrantInk(img *image.Gray) [4]bool {
+	var q [4]bool
+	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	for y := range h {
+		for x := range w {
+			if img.Pix[y*img.Stride+x] < 128 {
+				q[2*(2*y/h)+2*x/w] = true
+			}
+		}
+	}
+	return q
+}
+
+// A small square near the label's top-left corner shows where each fix moves the picture.
+func TestRenderFixes(t *testing.T) {
+	m, _ := devicedb.Default().Media("tze-36")
+	pdf := pdfgen.Page(36, 20, "0 g 9 14 4 4 re f")
+	for _, tc := range []struct {
+		name               string
+		mirror, upsideDown bool
+		want               [4]bool
+	}{
+		{"none", false, false, [4]bool{true, false, false, false}},
+		{"mirror", true, false, [4]bool{false, true, false, false}},
+		{"upside down", false, true, [4]bool{false, false, false, true}},
+		{"both", true, true, [4]bool{false, false, true, false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := logged(t)
+			p := ptPrinter("tze-36", "")
+			p.Mirror, p.UpsideDown = tc.mirror, tc.upsideDown
+			pages, err := s.Render(pdf, p, &m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := quadrantInk(pages[0]); got != tc.want {
+				t.Errorf("ink in quadrants %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

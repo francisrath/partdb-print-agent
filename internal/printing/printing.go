@@ -129,20 +129,44 @@ func (s *Service) render(pdf []byte, p *config.Printer, m *driver.Media) ([]*ima
 		}
 		pages, err = s.r.Render(pdf, opt)
 	}
-	if err != nil || width == m.PrintableWidthDots {
-		return pages, nil, err
+	if err != nil {
+		return nil, nil, err
 	}
-	inked := false
-	for i, pg := range pages {
-		var lost bool
-		pages[i], lost = trimEdges(pg, m.PrintableWidthDots)
-		inked = inked || lost
+	var warnings []string
+	if width != m.PrintableWidthDots {
+		inked := false
+		for i, pg := range pages {
+			var lost bool
+			pages[i], lost = trimEdges(pg, m.PrintableWidthDots)
+			inked = inked || lost
+		}
+		if inked {
+			edge := float64(width-m.PrintableWidthDots) / 2 / float64(m.DPI) * 25.4
+			warnings = []string{fmt.Sprintf("label has ink on the tape's unprintable edges (%.1f mm); it was trimmed", edge)}
+		}
 	}
-	if inked {
-		edge := float64(width-m.PrintableWidthDots) / 2 / float64(m.DPI) * 25.4
-		return pages, []string{fmt.Sprintf("label has ink on the tape's unprintable edges (%.1f mm); it was trimmed", edge)}, nil
+	for _, pg := range pages {
+		flip(pg, p.Mirror != p.UpsideDown, p.UpsideDown)
 	}
-	return pages, nil, nil
+	return pages, warnings, nil
+}
+
+// flip mirrors img in place left-right (h) and/or top-bottom (v); both = turned 180°.
+func flip(img *image.Gray, h, v bool) {
+	w, ht := img.Bounds().Dx(), img.Bounds().Dy()
+	if h {
+		for y := range ht {
+			slices.Reverse(img.Pix[y*img.Stride : y*img.Stride+w])
+		}
+	}
+	if v {
+		for y := range ht / 2 {
+			a, b := img.Pix[y*img.Stride:y*img.Stride+w], img.Pix[(ht-1-y)*img.Stride:(ht-1-y)*img.Stride+w]
+			for x := range a {
+				a[x], b[x] = b[x], a[x]
+			}
+		}
+	}
 }
 
 // trimEdges keeps the centre printable columns of img; lost reports dark pixels cut off.
