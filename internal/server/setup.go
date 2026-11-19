@@ -417,6 +417,8 @@ func (s *Server) setupPrint(ctx context.Context, d *Draft) {
 	// a label already being sent finishes even if the window closes or the browser goes away
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
+	s.setupPrints.Add(1) // serve waits for it before exiting
+	defer s.setupPrints.Done()
 	res, err := s.Svc.Print(ctx, p, "", printing.TestCard(p.Model, s.Version))
 	s.record(jobFor("setup wizard", "test label", p.ID, res, err))
 	if err != nil {
@@ -552,8 +554,7 @@ func (s *Server) setupDonePost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setupPage(w, r, "setup-finished", 5, nil)
 	// a moment later, so the page can still load its stylesheet; a window reopened meanwhile stays
-	gen := s.Window.Generation()
-	time.AfterFunc(s.finishGrace, func() { s.Window.CloseGeneration(gen) })
+	time.AfterFunc(s.finishGrace, func() { s.Window.CloseGeneration(sess.Gen) })
 }
 
 // --- report
@@ -595,3 +596,6 @@ func (s *Server) setupReportPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pdb-print-report-%s.json"`, time.Now().Format("20060102-150405")))
 	_, _ = w.Write(b)
 }
+
+// WaitSetupPrints waits for wizard test prints still running (they outlive their request).
+func (s *Server) WaitSetupPrints() { s.setupPrints.Wait() }

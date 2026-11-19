@@ -50,6 +50,7 @@ type Window struct {
 type Session struct {
 	ID, CSRF string
 	Draft    *Draft
+	Gen      uint64 // the window it was paired in
 }
 
 // Open starts a new window with a new code; earlier sessions end.
@@ -98,7 +99,7 @@ func (w *Window) Check(code string, now time.Time) (*Session, bool) {
 		return nil, false
 	}
 	defer w.mu.Unlock()
-	s := &Session{ID: randomHex(32), CSRF: randomHex(32), Draft: &Draft{}}
+	s := &Session{ID: randomHex(32), CSRF: randomHex(32), Draft: &Draft{}, Gen: w.gen}
 	w.sessions[s.ID] = s
 	return s, true
 }

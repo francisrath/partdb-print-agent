@@ -455,3 +455,23 @@ func TestFinishClosesAfterGrace(t *testing.T) {
 		t.Error("Finish's delayed close shut a window opened after it")
 	}
 }
+
+// Finish closes the window its session was paired in, even if another opened just before.
+func TestFinishClosesItsOwnWindow(t *testing.T) {
+	h := newHarness(t)
+	h.srv.finishGrace = 20 * time.Millisecond
+	code, _, _ := h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	c := pairLAN(lan, code)
+	sess, _ := h.srv.Window.Session(lanReq("GET", "/setup/", nil, c), time.Now())
+	if sess.Gen != h.srv.Window.Generation() {
+		t.Fatalf("session generation %d, window %d", sess.Gen, h.srv.Window.Generation())
+	}
+	sess.Draft.Saved = []string{"Desk"}
+	sess.Gen-- // as if `pdb-print pair` had opened a new window between pairing and Finish
+	serveLAN(lan, lanReq("POST", "/setup/done", url.Values{"action": {"finish"}, "csrf": {sess.CSRF}}, c))
+	time.Sleep(100 * time.Millisecond)
+	if !h.srv.Window.IsOpen(time.Now()) {
+		t.Error("Finish closed a window it wasn't paired in")
+	}
+}

@@ -79,10 +79,11 @@ type Server struct {
 	kick        chan struct{}         // wakes SetupLoop
 	scanned     chan struct{}         // SetupLoop finished a scan
 	boundMu     sync.Mutex
-	bound       []netip.Addr  // LAN addresses the setup server listens on
-	loopRunning atomic.Bool   // SetupLoop is running (OpenWindow waits for its scan)
-	local       *Session      // the wizard's session on loopback (no code needed there)
-	finishGrace time.Duration // after Finish the window stays open this long (the page\'s stylesheet)
+	bound       []netip.Addr   // LAN addresses the setup server listens on
+	loopRunning atomic.Bool    // SetupLoop is running (OpenWindow waits for its scan)
+	local       *Session       // the wizard's session on loopback (no code needed there)
+	finishGrace time.Duration  // after Finish the window stays open this long (the page\'s stylesheet)
+	setupPrints sync.WaitGroup // wizard test prints in progress
 	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 

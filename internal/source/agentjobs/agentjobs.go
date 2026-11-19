@@ -220,3 +220,14 @@ func (l *Loop) HandOver(next *Loop) {
 	next.unreported = append(l.unreported, next.unreported...)
 	l.unreported = nil
 }
+
+// FlushReports tries once more to send the results Part-DB hasn't accepted yet, then drops the
+// ones that still fail (logged). For a loop replaced by one for another Part-DB; call it only
+// after Run has returned.
+func (l *Loop) FlushReports(ctx context.Context) {
+	l.retryReports(ctx)
+	for _, r := range l.unreported {
+		l.Log.Warn("print jobs: giving up reporting a result to the previous Part-DB", "job", r.id)
+	}
+	l.unreported = nil
+}

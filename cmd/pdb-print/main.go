@@ -371,6 +371,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	jobsDone.wait() // same for a print job from Part-DB
 	<-setupDone
+	srv.WaitSetupPrints() // a test label being printed from the wizard finishes too
 	return nil
 }
 
@@ -435,6 +436,7 @@ type agentJobs struct {
 
 type jobLoop struct {
 	loop *agentjobs.Loop
+	url  string // the Part-DB it talks to
 	stop context.CancelFunc
 	done chan struct{} // closed when Run has returned
 }
@@ -499,7 +501,7 @@ func (j *agentJobs) start(in config.Instance) {
 		old.stop()
 	}
 	ctx, stop := context.WithCancel(j.ctx)
-	l := &jobLoop{stop: stop, done: make(chan struct{}), loop: &agentjobs.Loop{
+	l := &jobLoop{stop: stop, done: make(chan struct{}), url: in.BaseURL, loop: &agentjobs.Loop{
 		Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
 		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
 		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}}
@@ -511,7 +513,11 @@ func (j *agentJobs) start(in config.Instance) {
 		defer close(l.done)
 		if old != nil {
 			<-old.done
-			old.loop.HandOver(l.loop)
+			if old.url == l.url {
+				old.loop.HandOver(l.loop) // a new token for the same Part-DB
+			} else {
+				old.loop.FlushReports(j.ctx) // results belong to the Part-DB they came from
+			}
 		}
 		_ = l.loop.Run(ctx)
 	}()
