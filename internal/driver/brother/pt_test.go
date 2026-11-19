@@ -324,6 +324,7 @@ func TestPTValidate(t *testing.T) {
 // scripted replays status replies, one chunk per Read; then reads time out. With
 // gapAfterFirst, one read times out after the first chunk.
 type scripted struct {
+	kind          string // "" = test
 	replies       [][]byte
 	gapAfterFirst bool
 	reads         int
@@ -332,7 +333,12 @@ type scripted struct {
 func (s *scripted) Open(context.Context) error  { return nil }
 func (s *scripted) Write(p []byte) (int, error) { return len(p), nil }
 func (s *scripted) Close() error                { return nil }
-func (s *scripted) Kind() string                { return "test" }
+func (s *scripted) Kind() string {
+	if s.kind == "" {
+		return "test"
+	}
+	return s.kind
+}
 func (s *scripted) Read(p []byte) (int, error) {
 	s.reads++
 	if s.gapAfterFirst && s.reads == 2 {

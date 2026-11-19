@@ -2,13 +2,16 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -82,8 +85,7 @@ const KeyringService = "pdb-print"
 type Printer struct {
 	ID        string    `yaml:"id"`
 	Name      string    `yaml:"name"`
-	Driver    string    `yaml:"driver"` // driver family (brother); old names brother-ql / brother-pt stay valid
-	Model     string    `yaml:"model"`  // QL-810W | PT-9500PC
+	Model     string    `yaml:"model"` // device database id (QL-810W, PT-9500PC); names the driver
 	Transport Transport `yaml:"transport"`
 	Media     string    `yaml:"media"`  // dk-22210, tze-24; empty = use what the printer reports
 	Rotate    string    `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
@@ -98,10 +100,12 @@ type Printer struct {
 }
 
 type Transport struct {
-	Kind   string `yaml:"kind"` // tcp (brother-ql) | usb (brother-pt)
+	Kind   string `yaml:"kind"` // tcp | usb (allowed kinds come from the model)
 	Host   string `yaml:"host,omitempty"`
-	Port   int    `yaml:"port,omitempty"`   // default 9100
-	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux)
+	Port   int    `yaml:"port,omitempty"`   // tcp; default 9100
+	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux) …
+	USBID  string `yaml:"usb_id,omitempty"` // … or the printer's USB id ("04f9:209c"), found at each job
+	Serial string `yaml:"serial,omitempty"` // usb_id: tells two identical printers apart
 }
 
 // DefaultPath is <user config dir>/pdb-print/config.yaml.
@@ -123,7 +127,9 @@ func Load(path string, mustExist bool) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := yaml.Unmarshal(b, c); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true) // a stale or misspelt key fails loudly
+	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, c.Validate()
@@ -300,36 +306,16 @@ func (c *Config) Printer(id string) (*Printer, error) {
 	return nil, fmt.Errorf("no printer %q in config", id)
 }
 
-// oldDrivers are the driver names configs used before the device database; they stay valid
-// (and are kept when saving) so older binaries can read the file. Value: the dialect.
-var oldDrivers = map[string]string{"brother-ql": "ql", "brother-pt": "pt-cbp"}
-
-// DriverName is how configs name a model's driver: the old names for the Brother dialects
-// (so files stay readable by older binaries), otherwise the family.
-func DriverName(m *devicedb.Model) string {
-	for name, dialect := range oldDrivers {
-		if m.Driver == "brother" && m.Dialect == dialect {
-			return name
-		}
-	}
-	return m.Driver
-}
-
 // DeviceModel returns the printer's device-database model.
 func (p *Printer) DeviceModel() (*devicedb.Model, error) {
 	m, ok := devicedb.Default().Model(p.Model)
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q (known: %s)", p.Model, strings.Join(devicedb.Default().ModelIDs(), ", "))
 	}
-	family, dialect := p.Driver, ""
-	if d, old := oldDrivers[p.Driver]; old {
-		family, dialect = "brother", d
-	}
-	if m.Driver != family || (dialect != "" && m.Dialect != dialect) {
-		return nil, fmt.Errorf("model %s isn't a %s printer", p.Model, p.Driver)
-	}
 	return m, nil
 }
+
+var usbIDRe = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{4}$`)
 
 func (p *Printer) validate() error {
 	m, err := p.DeviceModel()
@@ -342,17 +328,23 @@ func (p *Printer) validate() error {
 	if p.Media != "" && !slices.Contains(m.Media, p.Media) {
 		return fmt.Errorf("media %s doesn't fit %s (see `pdb-print media`)", p.Media, m.ID)
 	}
-	switch p.Transport.Kind {
+	t := &p.Transport
+	switch t.Kind {
 	case "tcp":
-		if p.Transport.Host == "" {
+		if t.Host == "" {
 			return errors.New("transport kind tcp needs a host")
 		}
-		if p.Transport.Port == 0 {
-			p.Transport.Port = 9100
+		if t.Port == 0 {
+			t.Port = 9100
 		}
 	case "usb":
-		if p.Transport.Device == "" {
-			return errors.New("transport kind usb needs a device (e.g. /dev/usb/lp0)")
+		switch {
+		case (t.Device == "") == (t.USBID == ""):
+			return errors.New("transport kind usb needs either a device or a usb_id")
+		case t.USBID != "" && !usbIDRe.MatchString(t.USBID):
+			return fmt.Errorf("usb_id %q must look like 04f9:209c (lower-case hex)", t.USBID)
+		case t.Serial != "" && t.USBID == "":
+			return errors.New("serial only works with usb_id")
 		}
 	}
 	return nil

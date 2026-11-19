@@ -334,7 +334,7 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 	port, _ := strconv.Atoi(r.FormValue("port"))
 	p := config.Printer{
 		ID: strings.TrimSpace(r.FormValue("id")), Name: strings.TrimSpace(r.FormValue("name")),
-		Driver: "brother-ql", Model: r.FormValue("model"),
+		Model:     r.FormValue("model"),
 		Transport: config.Transport{Kind: "tcp", Host: strings.TrimSpace(r.FormValue("host")), Port: port},
 		Media:     r.FormValue("media"), Rotate: r.FormValue("rotate"), Cut: r.FormValue("cut"),
 	}
@@ -345,9 +345,8 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 			}
 			// the form only knows network QLs
 			if m, err := old.DeviceModel(); err != nil || !slices.Contains(formModels(), m.ID) || old.Transport.Kind != "tcp" {
-				return fmt.Errorf("printer %q is a %s %s: edit it in the config file", p.ID, old.Driver, old.Model)
+				return fmt.Errorf("printer %q (%s over %s): edit it in the config file", p.ID, old.Model, old.Transport.Kind)
 			}
-			p.Driver = old.Driver // keep the name the file uses
 		}
 		if !slices.Contains(formModels(), p.Model) {
 			return fmt.Errorf("unknown Brother QL model %s", p.Model)
@@ -535,10 +534,16 @@ func (s *Server) EnsureAgentID() (string, error) {
 
 // AgentPrinters are the configured printers, as reported to Part-DB.
 func (s *Server) AgentPrinters() []partdb.AgentPrinter {
-	var out []partdb.AgentPrinter
-	for _, p := range s.config().Printers {
-		out = append(out, partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media})
+	ps := s.config().Printers
+	out := make([]partdb.AgentPrinter, len(ps))
+	var wg sync.WaitGroup
+	for i := range ps {
+		p := &ps[i]
+		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media}
+		wg.Add(1)
+		go func() { defer wg.Done(); out[i].Online = s.Svc.Online(p) }() // checks take up to 2 s each
 	}
+	wg.Wait()
 	return out
 }
 

@@ -52,8 +52,10 @@ var qlStatusRequest = append(make([]byte, qlInvalidateN), 0x1b, '@', 0x1b, 'i', 
 // Status reads the printer over SNMP (network QLs give no status on 9100), else asks over
 // the transport with ESC i S.
 func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
-	if ss, err := d.query(ctx); err == nil {
-		return d.statusFromSNMP(ss), nil
+	if t.Kind() == "tcp" { // SNMP is about the network printer; over USB the printer answers itself
+		if ss, err := d.query(ctx); err == nil {
+			return d.statusFromSNMP(ss), nil
+		}
 	}
 	if _, err := t.Write(qlStatusRequest); err != nil {
 		return nil, err
@@ -64,7 +66,7 @@ func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, er
 	}
 	s, err := parseQLStatus(b)
 	if s != nil {
-		s.Via = "tcp"
+		s.Via = t.Kind() // answered over the printer connection itself (usb, tcp)
 	}
 	return s, err
 }
@@ -254,7 +256,7 @@ func (d *ql) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 		default:
 			res.Message = "sent (unconfirmed: printer didn't report printing)"
 		}
-	case job.Status != nil && job.Status.Via == "tcp":
+	case job.Status != nil && job.Status.Via != "":
 		err := waitDone(ctx, t, len(job.Pages), timeout)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback):

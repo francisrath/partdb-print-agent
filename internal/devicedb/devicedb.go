@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -64,7 +65,13 @@ type Model struct {
 	Match      Match             `yaml:"match"`
 	Media      []string          `yaml:"media"`
 	Quirks     map[string]any    `yaml:"quirks"`
+	snmpRe     *regexp.Regexp    // Match.SNMPDescr, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
+}
+
+// MatchesSNMP reports whether an SNMP device description names this model.
+func (m *Model) MatchesSNMP(descr string) bool {
+	return m.snmpRe != nil && descr != "" && m.snmpRe.MatchString(descr)
 }
 
 // Quirk returns an integer quirk, or def when the model doesn't set it.
@@ -158,6 +165,13 @@ func Load(fsys fs.FS) (*DB, error) {
 			if m.ID == "" || db.models[m.ID] != nil {
 				errs = append(errs, fmt.Errorf("%s: model %q missing or defined twice", base, m.ID))
 				continue
+			}
+			if m.Match.SNMPDescr != "" {
+				re, err := regexp.Compile(m.Match.SNMPDescr)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: model %s: bad snmp_descr pattern: %w", base, m.ID, err))
+				}
+				m.snmpRe = re
 			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))

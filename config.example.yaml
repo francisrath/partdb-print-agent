@@ -6,12 +6,15 @@ log_level: info
 # pdftoppm there when it is installed; elsewhere, or if pdftoppm fails, PDFium.
 # auto (default) | on (pdftoppm everywhere) | off | /path/to/pdftoppm
 # pdftoppm: auto
+# `pdb-print discover` finds printers on USB and the network and prints the model and transport
+# lines to use. The model (from `pdb-print media`) picks the driver.
 printers:
   - id: ql810
     name: Brother QL-810W
-    driver: brother-ql
-    model: QL-810W              # QL-800 | QL-810W | QL-820NWB
+    model: QL-810W              # QL-800 (USB only) | QL-810W | QL-820NWB
     transport: {kind: tcp, host: 192.168.1.50, port: 9100}
+    # over USB (Linux) instead: {kind: usb, usb_id: "04f9:209c"} – add serial: … to tell two
+    # identical printers apart; or a fixed path: {kind: usb, device: /dev/usb/lp0}
     media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
     rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
     cut: per_label              # per_label | last | none
@@ -22,9 +25,8 @@ printers:
   # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
   # - id: pt9500
   #   name: Brother PT-9500PC
-  #   driver: brother-pt
   #   model: PT-9500PC
-  #   transport: {kind: usb, device: /dev/usb/lp0}
+  #   transport: {kind: usb, usb_id: "04f9:200f"}
   #   media: tze-24             # tze-6 … tze-36; omit to use the tape the printer reports
   #   cut: chain                # default: chain (single labels) / half (batches on laminated tape):
   #                             # the last label waits in the printer until the next print or the

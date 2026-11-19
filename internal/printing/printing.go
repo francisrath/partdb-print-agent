@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -56,10 +58,20 @@ type Service struct {
 	// OpenTransport returns the connection to a printer; nil = by transport kind.
 	// Tests put a fake printer here.
 	OpenTransport func(p *config.Printer) driver.Transport
+	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
+	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r and printers
-	r        *render.Renderer
-	printers map[string]*sync.Mutex
+	mu       sync.Mutex // guards r, printers and online
+	online   map[string]onlineState
+	probes   map[string]*sync.Mutex // one online check per printer at a time
+	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
+
+	beforePublish   func()                               // tests: between an online check returning and its result being stored
+	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
+	openDevice      func(path string) (io.Closer, error) // USB online check; nil = open read/write
+	waitingForCheck func()                               // tests: an online call is about to wait for a running check
+	r               *render.Renderer
+	printers        map[string]*sync.Mutex
 }
 
 func (s *Service) Close() {
@@ -71,16 +83,18 @@ func (s *Service) Close() {
 	}
 }
 
-func (s *Service) printerLock(id string) *sync.Mutex {
+func (s *Service) printerLock(id string) *sync.Mutex { return s.lockFor(&s.printers, id) }
+
+func (s *Service) lockFor(locks *map[string]*sync.Mutex, id string) *sync.Mutex {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.printers == nil {
-		s.printers = map[string]*sync.Mutex{}
+	if *locks == nil {
+		*locks = map[string]*sync.Mutex{}
 	}
-	if s.printers[id] == nil {
-		s.printers[id] = &sync.Mutex{}
+	if (*locks)[id] == nil {
+		(*locks)[id] = &sync.Mutex{}
 	}
-	return s.printers[id]
+	return (*locks)[id]
 }
 
 // render rasterises pdf for m. Media wider than its print area (tape) is rendered at full
@@ -173,6 +187,22 @@ func LookupMedia(p *config.Printer, id string) (driver.Media, bool) {
 	return db.Media(id)
 }
 
+// CheckDrivers reports printers whose model has no driver in this build (the config
+// package can't see the driver registry).
+func CheckDrivers(cfg *config.Config) error {
+	for i := range cfg.Printers {
+		p := &cfg.Printers[i]
+		m, err := p.DeviceModel()
+		if err != nil {
+			return fmt.Errorf("printer %q: %w", p.ID, err)
+		}
+		if !slices.Contains(driver.Families(), m.Driver) {
+			return fmt.Errorf("printer %q: no driver for %s in this build", p.ID, m.ID)
+		}
+	}
+	return nil
+}
+
 func options(p *config.Printer) driver.Options {
 	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP}
 }
@@ -254,7 +284,8 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 	if err != nil {
 		return nil, err
 	}
-	if m.QuirkString("status_while_printing") == "busy" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp)
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil
@@ -277,6 +308,8 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	s.setPrinting(p.ID, true)
+	defer s.setPrinting(p.ID, false)
 
 	model, drv, err := printer(p)
 	if err != nil {

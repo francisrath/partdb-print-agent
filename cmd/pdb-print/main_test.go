@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/server"
@@ -79,7 +81,7 @@ func fakeQL(t *testing.T, coverOpen bool) (addr string, got chan []byte) {
 func writeConfig(t *testing.T, addr string, extra ...string) string {
 	host, port, _ := net.SplitHostPort(addr)
 	p := filepath.Join(t.TempDir(), "config.yaml")
-	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    driver: brother-ql\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n    no_snmp: true\n", host, port)
+	cfg := strings.Join(extra, "") + fmt.Sprintf("printers:\n  - id: fake\n    model: QL-810W\n    transport: {kind: tcp, host: %s, port: %s}\n    media: dk-22210\n    no_snmp: true\n", host, port)
 	if err := os.WriteFile(p, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -239,10 +241,56 @@ func TestServeWithoutPartDBSaysSo(t *testing.T) {
 // `pdb-print media` is what the config errors point to, so it must work with a broken config.
 func TestMediaRunsWithBrokenConfig(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "c.yaml")
-	if err := os.WriteFile(cfg, []byte("printers: [{id: a, driver: brother-ql, model: QL-810W, media: dk-22201, transport: {kind: tcp, host: x}}]\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfg, []byte("printers: [{id: a, model: QL-810W, media: dk-22201, transport: {kind: tcp, host: x}}]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := run(context.Background(), []string{"--config", cfg, "media"}); err != nil {
 		t.Errorf("media with a broken config: %v", err)
+	}
+}
+
+// discover needs no config and never writes to the printers it finds.
+func TestDiscoverWithoutConfig(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	wrote := make(chan bool, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		n, _ := c.Read(make([]byte, 1))
+		wrote <- n > 0
+		c.Close()
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	cfg := filepath.Join(t.TempDir(), "none.yaml")
+	if err := run(context.Background(), []string{"--config", cfg, "discover", "--no-usb", "--subnet", "127.0.0.1/32", "--port", port}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case w := <-wrote:
+		if w {
+			t.Error("discover wrote to the printer port")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("discover didn't connect")
+	}
+}
+
+func TestConfirmStopsOnCancel(t *testing.T) {
+	r, w := io.Pipe() // nothing is ever typed
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	if confirm(ctx, bufio.NewReader(r), "print?") || time.Since(start) > time.Second {
+		t.Errorf("confirm didn't give up on cancel (%v)", time.Since(start))
+	}
+	if !confirm(context.Background(), bufio.NewReader(strings.NewReader("y\n")), "print?") {
+		t.Error("y not accepted")
 	}
 }

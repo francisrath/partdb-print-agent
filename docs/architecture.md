@@ -437,6 +437,14 @@ The sketch in 7.1 was the starting point; the code now works like this:
 * **Printing service** (`internal/printing`): per-printer lock, model and media resolution, rendering
   (tape: full width, edges trimmed with a warning in the job result), dispatch to the driver.
 
+* **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,
+  IEEE 1284 id) and network printers by a connect to port 9100 plus SNMP `sysDescr`, named from the
+  device database. Passive: nothing is written to a printer. `pdb-print report` (`internal/report`)
+  adds confirmed identify queries and test prints and writes a redacted JSON file for an issue.
+* **Config**: a printer names its `model` (which picks the driver) and a `transport`; USB printers by
+  `usb_id` (+ `serial`) are looked up in sysfs at every job. The heartbeat reports each printer's
+  `online` state (checked at most every 30 s, never while it prints).
+
 ### 7.1 Driver plugin interface
 
 ```go

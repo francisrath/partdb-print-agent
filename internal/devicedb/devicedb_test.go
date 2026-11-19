@@ -1,6 +1,7 @@
 package devicedb_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -85,6 +86,7 @@ func TestLint(t *testing.T) {
 		"second document":  {map[string]string{"data/m.yaml": media, "data/a.yaml": model("A", "04f9:0001", "tape-a") + "---\n" + model("B", "04f9:0002", "tape-a")}, []string{"a.yaml", "one YAML document"}},
 		"null model":       {map[string]string{"data/a.yaml": "models: [null]\n"}, []string{"a.yaml", "empty model"}},
 		"same status code": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {status_code: 0x39}}\n  - {id: Q2, driver: brother, dialect: ql, match: {status_code: 0x39}}\n"}, []string{"Q1", "Q2", "0x39"}},
+		"bad snmp pattern": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {snmp_descr: \"QL-(\"}}\n"}, []string{"Q1", "snmp_descr"}},
 		"media too wide":   {map[string]string{"data/m.yaml": "media:\n  - {id: wide, name: w, kind: continuous, width_mm: 62, printable_width_dots: 696, offset_pins: 32, dpi: 300}\n", "data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, head_pins: 720, media: [wide]}\n"}, []string{"Q1", "wide", "720"}},
 	} {
 		fsys := fstest.MapFS{}
@@ -101,5 +103,18 @@ func TestLint(t *testing.T) {
 				t.Errorf("%s: error %q doesn't name %q", name, err, w)
 			}
 		}
+	}
+}
+
+func TestQLUSBMatches(t *testing.T) {
+	db := devicedb.Default()
+	for id, usb := range map[string]string{"QL-800": "04f9:209b", "QL-810W": "04f9:209c", "QL-820NWB": "04f9:209d"} {
+		m, _ := db.Model(id)
+		if len(m.Match.USB) != 1 || m.Match.USB[0] != usb || m.Match.IEEE1284Model != id || !slices.Contains(m.Transports, "usb") {
+			t.Errorf("%s: %+v transports %v", id, m.Match, m.Transports)
+		}
+	}
+	if m, _ := db.Model("QL-800"); slices.Contains(m.Transports, "tcp") || m.Match.SNMPDescr != "" {
+		t.Errorf("QL-800 has no network port: %v %q", m.Transports, m.Match.SNMPDescr)
 	}
 }

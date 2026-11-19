@@ -2,21 +2,26 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
+	"github.com/francisrath/partdb-print-agent/internal/report"
 	"image/png"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,7 +56,12 @@ commands:
   printers list                    list configured printers
   printers status ID               query printer status and loaded media
   printers test ID [--dry-run OUT] print a test label sized for the loaded media
-  media                            list known Brother QL media
+  media                            list known media and the models that take them
+  discover [--subnet CIDR]... [--no-usb] [--no-network]
+                                   find printers on USB and the local network (read-only)
+  report [--identify] [--print] [--raw] [--port N] [--out FILE] [HOST|usb]...
+                                   collect what's needed to support a printer into a file for a
+                                   GitHub issue (asks before sending anything to a printer)
 `
 
 func main() {
@@ -88,31 +98,29 @@ func run(ctx context.Context, args []string) error {
 		fmt.Printf("pdb-print %s (%s %s/%s)\n", appVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
+	if cmd == "discover" { // needs no config: it's how you find what to put in it
+		return discover(ctx, rest)
+	}
+	if cmd == "report" {
+		return reportCmd(ctx, rest)
+	}
 	if cmd == "media" { // needs no config: it's what config errors point to
+		// every medium once, with the models that take it
 		db := devicedb.Default()
-		var names []string // driver names in first-seen order, QLs first as before
-		media := map[string][]driver.Media{}
-		seen := map[string]bool{}
+		var order []driver.Media
+		takers := map[string][]string{}
 		for _, f := range driver.Families() {
-			models := db.Models(f)
-			slices.SortStableFunc(models, func(a, b *devicedb.Model) int { return strings.Compare(b.Dialect, a.Dialect) })
-			for _, m := range models {
-				name := config.DriverName(m)
-				if _, ok := media[name]; !ok {
-					names = append(names, name)
-				}
+			for _, m := range db.Models(f) {
 				for _, md := range db.MediaFor(m) {
-					if !seen[md.ID] {
-						seen[md.ID] = true
-						media[name] = append(media[name], md)
+					if takers[md.ID] == nil {
+						order = append(order, md)
 					}
+					takers[md.ID] = append(takers[md.ID], m.ID)
 				}
 			}
 		}
-		for _, name := range names {
-			for _, md := range media[name] {
-				fmt.Printf("%-10s %-10s %-20s %4d×%-4d dots\n", name, md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots)
-			}
+		for _, md := range order {
+			fmt.Printf("%-10s %-20s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
 		}
 		return nil
 	}
@@ -129,6 +137,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	cfg, err := config.Load(path, explicit)
 	if err != nil {
+		return err
+	}
+	if err := printing.CheckDrivers(cfg); err != nil {
 		return err
 	}
 	lvl := *logLevel
@@ -399,10 +410,13 @@ func (a *app) printers(ctx context.Context, args []string) error {
 	case len(args) == 1 && args[0] == "list":
 		for _, p := range a.cfg.Printers {
 			where := fmt.Sprintf("%s:%d", p.Transport.Host, p.Transport.Port)
-			if p.Transport.Kind == "usb" {
+			switch {
+			case p.Transport.Kind == "usb" && p.Transport.USBID != "":
+				where = "usb " + strings.TrimSpace(p.Transport.USBID+" "+p.Transport.Serial)
+			case p.Transport.Kind == "usb":
 				where = p.Transport.Device
 			}
-			fmt.Printf("%-10s %-10s %-10s %s media=%s\n", p.ID, p.Driver, p.Model, where, p.Media)
+			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where, p.Media)
 		}
 		return nil
 	case len(args) == 2 && args[0] == "status":
@@ -445,4 +459,132 @@ func (a *app) renderer() string {
 		return "pdftoppm (" + a.svc.Pdftoppm.Bin + ")"
 	}
 	return "pdfium"
+}
+
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+func discover(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
+	var subnets multiFlag
+	fs.Var(&subnets, "subnet", "network to scan, e.g. 192.168.1.0/24 (repeatable; default: this computer's networks, each at most a /24)")
+	noUSB := fs.Bool("no-usb", false, "skip USB")
+	noNet := fs.Bool("no-network", false, "skip the network")
+	port := fs.Int("port", 9100, "print port to look for")
+	timeout := fs.Duration("timeout", 300*time.Millisecond, "connect timeout per address")
+	if _, err := parse(fs, args); err != nil {
+		return err
+	}
+	db := devicedb.Default()
+	var found []discovery.Candidate
+	if !*noUSB {
+		cs, err := discovery.USB(db, "")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "usb:", err)
+		}
+		found = append(found, cs...)
+	}
+	if !*noNet {
+		o := discovery.Options{Port: *port, DialTimeout: *timeout}
+		for _, s := range subnets {
+			p, err := netip.ParsePrefix(s)
+			if err != nil {
+				return fmt.Errorf("--subnet %s: %w", s, err)
+			}
+			o.Subnets = append(o.Subnets, p)
+		}
+		cs, err := discovery.Network(ctx, db, o)
+		if err != nil {
+			return err
+		}
+		found = append(found, cs...)
+	}
+	if len(found) == 0 {
+		fmt.Println("no printers found")
+		return nil
+	}
+	for _, c := range found {
+		addr, what := c.Device, c.ModelID
+		if c.Kind == "tcp" {
+			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+		}
+		switch {
+		case what == "" && c.IEEE1284["MDL"] != "":
+			what = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
+		case what == "" && c.SNMPDescr != "":
+			what = c.SNMPDescr
+		case what == "":
+			what = "?"
+		}
+		fmt.Printf("%-4s %-22s %-28s %s\n", c.Kind, addr, what, c.Status)
+		if c.Status != discovery.Unknown {
+			fmt.Printf("     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
+		}
+	}
+	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
+		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
+	}
+	return nil
+}
+
+func reportCmd(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	identify := fs.Bool("identify", false, "send identify queries to printers we can't name (asks first)")
+	print := fs.Bool("print", false, "print a test label on supported printers (asks first)")
+	raw := fs.Bool("raw", false, "don't mask IP/MAC addresses, serial numbers and host names")
+	out := fs.String("out", "", "report file (default pdb-print-report-<time>.json)")
+	port := fs.String("port", "9100", "print port of network printers")
+	targets, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc := &printing.Service{Log: log}
+	defer svc.Close()
+	in := bufio.NewReader(os.Stdin)
+	r, err := report.Run(ctx, report.Options{
+		Version: appVersion(), DB: devicedb.Default(), Targets: targets, Port: *port, Identify: *identify, Print: *print,
+		Out: os.Stdout, Svc: svc,
+		Confirm: func(q string) bool { return confirm(ctx, in, q) },
+	})
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err // Ctrl-C at a prompt: no half report
+	}
+	b, err := r.JSON(*raw)
+	if err != nil {
+		return err
+	}
+	if *out == "" {
+		*out = "pdb-print-report-" + time.Now().Format("20060102-150405") + ".json"
+	}
+	if err := os.WriteFile(*out, b, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote %s. Attach it to a GitHub issue for the printer (check it first: addresses and serials are masked unless --raw).\n", *out)
+	return nil
+}
+
+// confirm asks a y/N question on the terminal; Ctrl-C (ctx done) answers no at once.
+func confirm(ctx context.Context, in *bufio.Reader, q string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	fmt.Printf("%s [y/N] ", q)
+	answer := make(chan string, 1)
+	go func() { // a terminal read can't be interrupted; it is left to finish on its own
+		line, _ := in.ReadString('\n')
+		answer <- line
+	}()
+	select {
+	case a := <-answer:
+		return strings.EqualFold(strings.TrimSpace(a), "y")
+	case <-ctx.Done():
+		fmt.Println()
+		return false
+	}
 }
