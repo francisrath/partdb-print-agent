@@ -542,7 +542,8 @@ Every discovered device is matched against `devices/*.yaml` → suggested driver
 ## 10. Security
 
 **Agent local surface** [MVP]
-* Binds **127.0.0.1:8631** by default. LAN bind (`0.0.0.0`) is opt-in, requires an admin password for the UI, and shows a warning. The agent is never reachable from the internet, and the docs say "never port-forward".
+* Binds **127.0.0.1:8631** by default. The agent is never reachable from the internet, and the docs say "never port-forward".
+* **Setup window** (phase 3): `serve --setup-window` (systemd unit, Docker) and `pdb-print pair` open the setup wizard to the LAN: a second HTTP server listens on each LAN address of port 8631 and serves only `/setup/*` and static files. A 6-digit code (logged, printed by `pair`) gives the browser an HttpOnly SameSite=Strict session cookie with its own CSRF token. The window closes after 15 minutes without use (each request extends it to at least 5 more, never beyond 30), after 5 wrong codes, or on Finish; closing stops the listeners and drops their connections. `/v1/pair` answers only loopback requests without an `Origin`. The token travels over plain HTTP on the LAN during the window; the pairing page says to use it on a trusted network.
 * **Host header allowlist** (`127.0.0.1`, `localhost`, configured names) against DNS rebinding.
 * **CORS**: `Access-Control-Allow-Origin` only for paired Part-DB origins. It answers legacy PNA preflights (`Access-Control-Allow-Private-Network: true`) for older Chromium builds. Chrome ≥ 142 **Local Network Access** shows a one-time permission prompt for fetches from public sites to loopback/LAN, so prefer navigation handoff or userscript, which aren't fetch-gated.
 * **Pairing key** (256-bit, per paired instance): the `X-Agent-Key` header for userscript POSTs, and HMAC for handoff URLs (`ts` ±120 s). The UI can rotate it, which also regenerates the bookmarklet/userscript.

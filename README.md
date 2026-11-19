@@ -17,6 +17,26 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 
 ## Install
 
+**Raspberry Pi OS, Debian, Ubuntu** (a print server, e.g. a Raspberry Pi next to the printer):
+```sh
+curl -fsSL https://github.com/francisrath/partdb-print-agent/releases/latest/download/install.sh | sh
+```
+Or read it first: download `install.sh` from the release, read it (about 40 lines), then `sh install.sh`.
+The script picks the `.deb` package for your system, checks it against the release's `checksums.txt`,
+installs it with `apt-get` (the one step that needs `sudo`) and shows a setup code. The package adds:
+- `/usr/bin/pdb-print`;
+- a `pdb-print` system user, allowed to use USB printers (group `lp`);
+- a `pdb-print` systemd service; its config is `/var/lib/pdb-print/config.yaml`.
+
+Its scripts only create that user and an empty config, and start the service (`packaging/deb/`).
+On 32-bit Raspberry Pi OS it also installs `poppler-utils`, whose `pdftoppm` renders labels much faster there.
+
+Then, on any computer on the same network, open the address the script shows
+(`http://<pi-name>.local:8631/setup/`) and type the 6-digit code. A wizard connects Part-DB, finds
+your printer, prints a test label and names it. The setup page is reachable from the network only
+for 15 minutes after the code was shown (longer while you use it, up to 30); after that the agent
+answers only on the machine itself again. Run `pdb-print pair` on the print server to open it again.
+
 **macOS / Linux (Homebrew):**
 ```sh
 brew tap francisrath/tap
@@ -33,7 +53,10 @@ docker run --rm --network host --stop-timeout 130 \
 ```
 On stop, the agent lets a print in progress finish (up to 2 minutes), hence `--stop-timeout 130`.
 The web UI binds loopback only, so `--network host` makes it reachable at `http://127.0.0.1:8631`
-on the host. In a container there is no OS keychain: the token is kept in the config file (0600).
+on the host (and lets it find network printers). Until Part-DB is connected, the setup wizard is
+open to the network for a while: the code is in `docker logs`, and
+`docker exec <container> pdb-print pair` opens it again. In a container there is no OS keychain: the
+token is kept in the config file (0600).
 
 **Anything else:** archives for macOS (universal), Linux and Windows are on the
 [releases page](https://github.com/francisrath/partdb-print-agent/releases).
@@ -67,15 +90,16 @@ masked unless `--raw` – check the file before you post it.
 
 Each printer in the config names its `model` (from the device database; it picks the driver). USB
 printers on Linux are found by `usb_id` (and `serial`, for two identical printers) at every job, so
-replugging doesn't matter; `device: /dev/usb/lpN` works too. The agent reports each printer's online
+replugging doesn't matter; `device: /dev/usb/lpN` works too. `mirror: true` and `upside_down: true`
+flip the printed image; the setup wizard sets them when the test label comes out mirrored or upside down. The agent reports each printer's online
 state to Part-DB with every heartbeat.
 ### Web UI and bookmarklet
 
 ```sh
 bin/pdb-print serve            # http://127.0.0.1:8631
 ```
-In the UI: connect Part-DB (the token goes to the OS keychain), add printers, map label profiles to
-printers, then drag the generated bookmarklet to your bookmarks bar. On a part or storage-location page
+In the UI: connect Part-DB (the token goes to the OS keychain), add printers ("Add a printer" runs
+the setup wizard: find, test print, name), map label profiles to printers, then drag the generated bookmarklet to your bookmarks bar. On a part or storage-location page
 in Part-DB, clicking it opens a small window that prints the label. The bookmarklet signs each request
 with a per-install key, so other websites can't print through the agent without a click.
 
