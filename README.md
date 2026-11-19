@@ -128,6 +128,28 @@ Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll
 refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
 label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead).
 
+### Zebra (ZPL)
+
+`model:` a Zebra from the device database (GK420d/t, GX420d/t, GX430t, GC420d/t, ZP450, ZP500, LP2844-Z,
+ZD220/230, ZD410, ZD420/421/620/621 at 203 or 300 dpi; `pdb-print media` lists them). Over the network
+(port 9100) or USB on Linux. Zebras don't report their label *width*, so set `media:` to the loaded size
+(`label-102x102` for 4×4", `label-102x152` for 4×6" …); the printer's reported label length is checked
+against it. Every label goes as one compressed graphic; the agent reads the printer's status and waits for
+the print buffer to empty to confirm a label. It never saves settings or calibrates the printer.
+Zebras that don't answer SNMP (older G-series) show up as "unknown" in `discover`; `pdb-print try` and the
+setup wizard can ask them what they are (a few bytes a non-Zebra might print).
+
+EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
+
+### Testing a printer: `pdb-print try`
+
+`pdb-print try [HOST]` is a guided test for someone standing at the printer (Zebra for now): it finds the
+printer, asks before sending anything, prints numbered test labels (test card, a part label with QR code and
+barcode, a batch of two, a rotated label), asks what came out, tries the fix for a "no" right away (moved,
+widened, turned, mirrored), checks the status with the lid open, puts the printer's settings back and writes
+`pdb-print-try-<model>-<time>.txt` (addresses and serial numbers masked). The Windows zip has
+`try-printer.cmd` and `TRY.md` for a double-click run.
+
 ### Brother P-touch PT-9500PC (USB, Linux)
 
 `model: PT-9500PC` drives the tape printer over USB through Linux's `usblp` driver (add the user to
