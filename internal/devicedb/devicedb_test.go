@@ -168,3 +168,22 @@ func TestMediaForFillsDots(t *testing.T) {
 		}
 	}
 }
+
+// A Zebra on USB names itself in the IEEE 1284 MODEL field ("ZTC GK420d", "ZTC ZD420-300dpi ZPL").
+func TestModelByZebraMDL(t *testing.T) {
+	db := devicedb.Default()
+	for mdl, want := range map[string]string{"ZTC GK420d": "GK420d", "ZTC GX430t": "", "ZTC GC420t": "GC420t",
+		"ZTC ZD420-300dpi ZPL": "ZD420-300", "ZTC ZD420-203dpi ZPL": "ZD420-203", "QL-810W": ""} {
+		m, ok := db.ModelByZebraMDL(mdl)
+		got := ""
+		if ok {
+			got = m.ID
+		}
+		if mdl == "ZTC GX430t" { // 300 dpi only
+			want = "GX430t"
+		}
+		if got != want {
+			t.Errorf("%q → %q, want %q", mdl, got, want)
+		}
+	}
+}

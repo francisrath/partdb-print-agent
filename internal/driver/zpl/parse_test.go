@@ -142,7 +142,7 @@ func TestEncodePage(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := formats(b.Bytes())
-	if len(f) != 1 || !strings.HasPrefix(f[0], "^XA^PON^LH0,0^LS0^LT0^PW10^LL2^FO0,0^GFA,") {
+	if len(f) != 1 || !strings.HasPrefix(f[0], "^XA^PON^PMN^LH0,0^LS0^LT0^PW10^LL2^FO0,0^GFA,") {
 		t.Fatalf("format %q", b.String())
 	}
 	_, _, rows := decode(t, f[0])

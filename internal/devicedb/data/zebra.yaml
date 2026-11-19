@@ -13,6 +13,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GK420d", usb: ["0a5f:0080", "0a5f:0062"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # GK420t user guide
   - id: GK420t
@@ -23,6 +24,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GK420t", usb: ["0a5f:0081"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # G-series spec sheet
   - id: GX420d
@@ -33,6 +35,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GX420d", usb: ["0a5f:0084"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZPL guide ~HQUI example (p.232)
   - id: GX420t
@@ -43,6 +46,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GX420t", usb: ["0a5f:0085"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # G-series spec sheet
   - id: GX430t
@@ -53,6 +57,7 @@ models:
     head_pins: 1280
     transports: [tcp, usb]
     match: {hi_model: "^GX430t"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # GC420 tech specs
   - id: GC420d
@@ -63,6 +68,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GC420d", usb: ["0a5f:00d1"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # GC420 tech specs
   - id: GC420t
@@ -73,6 +79,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^GC420t"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZP450 spec sheet (2008)
   - id: ZP450
@@ -83,6 +90,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZP ?450", usb: ["0a5f:008c"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZP500 user guide
   - id: ZP500
@@ -93,6 +101,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZP ?50[05]"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # TLP2844-Z user guide
   - id: LP2844-Z
@@ -103,6 +112,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^T?LP ?2844-?Z", usb: ["0a5f:0027"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD410 spec sheet (2.2\" head)
   - id: ZD410
@@ -113,6 +123,7 @@ models:
     head_pins: 448
     transports: [tcp, usb]
     match: {hi_model: "^ZD410", usb: ["0a5f:011c"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD220/ZD230 spec sheet
   - id: ZD220
@@ -123,6 +134,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD220"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD220/ZD230 spec sheet
   - id: ZD230
@@ -133,6 +145,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD230"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD420 tech specs
   - id: ZD420-203
@@ -143,6 +156,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD420"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD420 tech specs
   - id: ZD420-300
@@ -153,6 +167,7 @@ models:
     head_pins: 1280
     transports: [tcp, usb]
     match: {hi_model: "^ZD420"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD421 tech specs
   - id: ZD421-203
@@ -163,6 +178,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD421"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD421 tech specs
   - id: ZD421-300
@@ -173,6 +189,7 @@ models:
     head_pins: 1280
     transports: [tcp, usb]
     match: {hi_model: "^ZD421"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD620 tech specs
   - id: ZD620-203
@@ -183,6 +200,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD620", usb: ["0a5f:0141"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD620 tech specs
   - id: ZD620-300
@@ -193,6 +211,7 @@ models:
     head_pins: 1280
     transports: [tcp, usb]
     match: {hi_model: "^ZD620"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD621 tech specs
   - id: ZD621-203
@@ -203,6 +222,7 @@ models:
     head_pins: 832
     transports: [tcp, usb]
     match: {hi_model: "^ZD621"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZD621 tech specs
   - id: ZD621-300
@@ -213,4 +233,5 @@ models:
     head_pins: 1280
     transports: [tcp, usb]
     match: {hi_model: "^ZD621"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]

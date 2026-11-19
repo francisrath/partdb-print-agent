@@ -1,9 +1,11 @@
 package try
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/report"
 )
@@ -31,5 +33,31 @@ func TestReadSetupRealReplies(t *testing.T) {
 	}
 	if cmd := s.restoreCmd(); cmd != "^XA^PON^PW799^LL812^LH3,4^LS5^LT-12^XZ\r\n" {
 		t.Errorf("restore %q", cmd)
+	}
+}
+
+// Settings the printer didn't report aren't "restored" as zeros.
+func TestRestoreOnlyReported(t *testing.T) {
+	s := &session{setup: map[string]int{"pw": 799, "ll": 812}}
+	if cmd := s.restoreCmd(); cmd != "^XA^PON^PW799^LL812^XZ\r\n" {
+		t.Errorf("restore %q", cmd)
+	}
+}
+
+// Two sessions in the same minute keep both reports.
+func TestReportNamesUnique(t *testing.T) {
+	dir := t.TempDir()
+	now := func() time.Time { return time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC) }
+	var paths []string
+	for range 2 {
+		s := &session{o: Options{Dir: dir, Now: now, Out: io.Discard}, rep: &report.Report{}, setup: map[string]int{}}
+		p, err := s.write()
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	if paths[0] == paths[1] {
+		t.Errorf("same file twice: %s", paths[0])
 	}
 }

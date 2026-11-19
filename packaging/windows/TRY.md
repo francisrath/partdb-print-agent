@@ -3,8 +3,8 @@
 Thanks for helping! This takes about 10 minutes and uses about 5–6 labels.
 
 1. Unzip this folder anywhere (for example on the desktop).
-2. Make sure the printer is switched on, connected to the same network as this PC (or by USB),
-   and has labels loaded. Stand next to it: you'll be asked what comes out.
+2. Make sure the printer is switched on, connected to the same network as this PC (network
+   cable or Wi-Fi; USB isn't supported on Windows yet), and has labels loaded. Stand next to it: you'll be asked what comes out.
 3. Double-click **try-printer.cmd**. Windows may say it protected your PC: click
    **More info**, then **Run anyway** (the program isn't signed yet).
 4. Answer each question with **y** (yes) or **n** (no) and Enter. Enter alone takes the answer

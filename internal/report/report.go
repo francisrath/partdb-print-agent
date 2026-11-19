@@ -87,7 +87,7 @@ var (
 var zebraSecretRes = []*regexp.Regexp{
 	regexp.MustCompile(`([A-Z0-9]{6,})\s+SERIAL NUMBER`),                                     // ^HH
 	regexp.MustCompile(`SERIAL NUMBER(?:\\r|\\n|\s)+([A-Z0-9]{6,})`),                         // ~HQSN
-	regexp.MustCompile(`<(?:PRINTER-)?NAME>([^<]+)</(?:PRINTER-)?NAME>`),                     // ^HZA: the printer's network name (V61: <NAME>)                               // ^HZA
+	regexp.MustCompile(`<(?:PRINTER-)?NAME>([^<]+)</(?:PRINTER-)?NAME>`),                     // ^HZA: the printer's network name (V61 firmware: <NAME>)
 	regexp.MustCompile(`<(?:SERIAL-NUMBER|HOST-NAME)>([^<]+)</(?:SERIAL-NUMBER|HOST-NAME)>`), // ^HZA, newer firmware
 }
 

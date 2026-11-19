@@ -418,7 +418,11 @@ func TestWizardIdentify(t *testing.T) {
 	if fake.Received() != "" {
 		t.Fatal("sent something before the button was pressed")
 	}
-	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}}), "/setup/printer")
+	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}, "host": {"192.0.2.99"}}), "/setup/printer")
+	if fake.Received() != "" {
+		t.Fatal("identified a printer the form didn't name")
+	}
+	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}, "host": {host}}), "/setup/printer")
 	if c := h.srv.local.Draft.Candidates[0]; c.ModelID != "GK420d" || c.Status != discovery.Supported {
 		t.Errorf("after identify: %+v", c)
 	}

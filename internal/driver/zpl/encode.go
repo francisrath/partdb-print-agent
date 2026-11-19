@@ -11,7 +11,7 @@ import (
 	"io"
 )
 
-// encodePage writes one label: the page setup sent with every job (^PO, ^LH, ^LS, ^LT, ^PW, ^LL stay in
+// encodePage writes one label: the page setup sent with every job (^PO, ^PM, ^LH, ^LS, ^LT, ^PW, ^LL stay in
 // effect on the printer until power-off, so we never rely on what was set before) and the raster.
 // The image is placed at the top left; wider than widthDots is clipped, smaller is padded white.
 func encodePage(w io.Writer, img *image.Gray, widthDots, lengthDots int) error {
@@ -44,7 +44,7 @@ func encodePageAt(w io.Writer, img *image.Gray, widthDots, lengthDots, x, y int)
 	}
 	enc := base64.StdEncoding.EncodeToString(z.Bytes())
 	// ^LT takes -120…120 dot rows
-	_, err = fmt.Fprintf(w, "^XA^PON^LH%d,%d^LS%d^LT%d^PW%d^LL%d^FO0,0^GFA,%d,%d,%d,:Z64:%s:%04X^FS^XZ\n",
+	_, err = fmt.Fprintf(w, "^XA^PON^PMN^LH%d,%d^LS%d^LT%d^PW%d^LL%d^FO0,0^GFA,%d,%d,%d,:Z64:%s:%04X^FS^XZ\n",
 		max(x, 0), max(y, 0), max(-x, 0), max(min(y, 0), -120), widthDots, lengthDots, len(raw), len(raw), rowBytes, enc, crc16XMODEM([]byte(enc)))
 	return err
 }

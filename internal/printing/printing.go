@@ -373,7 +373,11 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		st, err = drv.Status(ctx, t)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
-			return nil, &driver.Error{Code: driver.CommsError, Detail: "printer sent no status reply"}
+			detail := "printer sent no status reply"
+			if err != driver.ErrNoReadback { // the driver says more (Zebra: what silence usually means)
+				detail = err.Error()
+			}
+			return nil, &driver.Error{Code: driver.CommsError, Detail: detail}
 		case errors.Is(err, driver.ErrNoReadback):
 			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
 			st = nil

@@ -6,6 +6,7 @@ package try
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -267,7 +268,9 @@ func where(c discovery.Candidate) string {
 
 // identify asks the printer what it is (after a yes) and reads its setup (read-only queries).
 func (s *session) identify(c discovery.Candidate) bool {
+	asked := false
 	if c.Kind == "tcp" && c.Status != discovery.Supported {
+		asked = true
 		if !s.ask("Ask this printer what it is? This sends 3 characters (~HI); a printer that isn't a Zebra may print them on a label.", false) {
 			s.note("Stopped before asking the printer anything.")
 			return false
@@ -290,7 +293,12 @@ func (s *session) identify(c discovery.Candidate) bool {
 		return false
 	}
 	s.model, s.candidate = c.Model, c
-	// the read-only queries, recorded with their replies (it answered ~HI: it's a Zebra)
+	// the read-only queries, recorded with their replies; a printer already known (USB id, SNMP)
+	// wasn't asked ~HI, so ask before this first contact
+	if !asked && !s.ask("Read this printer's settings? This sends status queries only; nothing prints.", false) {
+		s.note("Stopped before asking the printer anything.")
+		return false
+	}
 	s.rep.ZebraQueries(s.ctx, c, where(c))
 	s.readSetup()
 	s.printer = &config.Printer{ID: "try", Name: "test", Model: c.Model.ID,
@@ -372,6 +380,9 @@ func (s *session) square() bool {
 
 // print sends a job and records what happened; false when nothing could be printed.
 func (s *session) print(tag string, src printing.Source) bool {
+	if s.stopped || s.ctx.Err() != nil { // the window was closed: no more labels
+		return false
+	}
 	s.say("Printing label %s …\n", tag)
 	start := time.Now()
 	res, err := s.o.Svc.Print(s.ctx, s.printer, "", src)
@@ -584,9 +595,21 @@ func (s *session) restore() {
 }
 
 // restoreCmd is a format without fields that sets the printer's own page settings again.
+// Only settings the printer reported are sent (older firmware may not report shift, home or top).
 func (s *session) restoreCmd() string {
-	return fmt.Sprintf("^XA^PON^PW%d^LL%d^LH%d,%d^LS%d^LT%d^XZ\r\n",
-		s.setup["pw"], s.setup["ll"], s.setup["lhx"], s.setup["lhy"], s.setup["ls"], s.setup["lt"])
+	cmd := fmt.Sprintf("^XA^PON^PW%d^LL%d", s.setup["pw"], s.setup["ll"])
+	x, okx := s.setup["lhx"]
+	y, oky := s.setup["lhy"]
+	if okx && oky {
+		cmd += fmt.Sprintf("^LH%d,%d", x, y)
+	}
+	if v, ok := s.setup["ls"]; ok {
+		cmd += fmt.Sprintf("^LS%d", v)
+	}
+	if v, ok := s.setup["lt"]; ok {
+		cmd += fmt.Sprintf("^LT%d", v)
+	}
+	return cmd + "^XZ\r\n"
 }
 
 func errText(err error) string {
@@ -602,8 +625,6 @@ func (s *session) write() (string, error) {
 	if s.model != nil {
 		model = s.model.ID
 	}
-	name := fmt.Sprintf("pdb-print-try-%s-%s.txt", model, s.o.Now().Format("20060102-1504"))
-	path := filepath.Join(s.o.Dir, name)
 	data, err := s.rep.JSON(false)
 	if err != nil {
 		return "", err
@@ -614,8 +635,29 @@ func (s *session) write() (string, error) {
 		fmt.Fprintln(&b, s.rep.Mask(l)) // error texts can name addresses
 	}
 	fmt.Fprintf(&b, "\n--- data (addresses, serial numbers and names masked) ---\n%s\n", data)
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		return "", err
+	// a new file every time: two runs in the same minute keep both reports
+	base := fmt.Sprintf("pdb-print-try-%s-%s", model, s.o.Now().Format("20060102-150405"))
+	var path string
+	for n := 1; ; n++ {
+		path = filepath.Join(s.o.Dir, base+".txt")
+		if n > 1 {
+			path = filepath.Join(s.o.Dir, fmt.Sprintf("%s-%d.txt", base, n))
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, err = f.WriteString(b.String())
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return "", err
+		}
+		break
 	}
 	s.say("\nDone. The results are in %s\nSend this file and a photo of all the labels to Francis.\n", path)
 	return path, nil

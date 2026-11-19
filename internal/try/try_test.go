@@ -225,3 +225,19 @@ func TestTrySkipSideContinues(t *testing.T) {
 	d.answer("TOP at the top edge", "")
 	d.finish()
 }
+
+// When the input ends (window closed) no further label is sent, even mid-fix.
+func TestTryNoPrintAfterInputEnds(t *testing.T) {
+	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
+	d := start(t, fake.Start(t))
+	d.answer("Ask this printer what it is?", "y")
+	d.answer("Number, or Enter for", "")
+	d.answer("Print the test labels now?", "y")
+	d.answer("Did label 1/5 come out", "")
+	d.answer("whole frame", "n")
+	d.answer("Which side", "b")
+	d.finish() // closed at the mm question
+	if n := len(fake.Formats()); n != 1 {
+		t.Errorf("%d labels sent, want only 1/5", n)
+	}
+}

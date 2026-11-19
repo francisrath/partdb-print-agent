@@ -325,7 +325,8 @@ func (s *Server) setupIdentify(w http.ResponseWriter, r *http.Request) {
 	_, d, unlock := lockDraft(r)
 	defer unlock()
 	i, err := strconv.Atoi(r.FormValue("candidate"))
-	if err == nil && i >= 0 && i < len(d.Candidates) && d.Candidates[i].Kind == "tcp" {
+	// the host too: the list may have changed since the page was shown, and the consent was for this printer
+	if err == nil && i >= 0 && i < len(d.Candidates) && d.Candidates[i].Kind == "tcp" && d.Candidates[i].Host == r.FormValue("host") {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		c, _, err := discovery.Identify(ctx, devicedb.Default(), d.Candidates[i])
 		cancel()

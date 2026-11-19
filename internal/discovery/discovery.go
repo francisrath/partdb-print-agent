@@ -79,6 +79,9 @@ func byUSB(db *devicedb.DB, usbID, mdl string) *devicedb.Model {
 			byMDL = m
 		}
 	}
+	if byMDL == nil {
+		byMDL, _ = db.ModelByZebraMDL(mdl) // Zebras without a known USB id
+	}
 	return byMDL
 }
 

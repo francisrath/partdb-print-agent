@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -278,6 +279,28 @@ func (db *DB) MediaFor(m *Model) []Media {
 // have 8 and 12 dots/mm heads (~HI reports dots/mm), i.e. 203.2 and 304.8 dpi.
 func dots(mm float64, dpi int) int {
 	return int(math.Round(mm * math.Round(float64(dpi)/25.4)))
+}
+
+// ModelByZebraMDL finds a Zebra from the MODEL of its IEEE 1284 device ID on USB: "ZTC GK420d" or
+// "ZTC ZD420-300dpi ZPL" (the dpi, when there, picks the variant; else the model's first one).
+func (db *DB) ModelByZebraMDL(mdl string) (*Model, bool) {
+	name, ok := strings.CutPrefix(strings.TrimSpace(mdl), "ZTC ")
+	if !ok {
+		return nil, false
+	}
+	name = strings.Fields(name + " ")[0]
+	dpi := 0
+	if i := strings.LastIndex(name, "-"); i > 0 && strings.HasSuffix(name, "dpi") {
+		dpi, _ = strconv.Atoi(strings.TrimSuffix(name[i+1:], "dpi"))
+		dpi = map[int]int{200: 203, 203: 203, 300: 300, 600: 600}[dpi]
+	}
+	for _, id := range db.ModelIDs() {
+		m := db.models[id]
+		if m.hiRe != nil && m.hiRe.MatchString(name) && (dpi == 0 || m.DPI == dpi) {
+			return m, true
+		}
+	}
+	return nil, false
 }
 
 // ModelByHI finds a model from a Zebra ~HI reply ("GK420d-200dpi,V61.17.11Z,8,2104KB"): the model

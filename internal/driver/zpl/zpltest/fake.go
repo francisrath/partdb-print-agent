@@ -29,19 +29,20 @@ var (
 // Fake answers like that GK420d: ~HI, ~HQSN, ^HH and ^HZA with its real replies, ~HS and ~HQES
 // in its format but from the fields below. Change fields with Set while it runs.
 type Fake struct {
-	Model      string        // ~HI model part; "" = GK420d-200dpi
-	DPM        int           // dots per mm in ~HI; 0 = 8
-	LabelDots  int           // ~HS label length; 0 = 812
-	PrintWidth int           // ^HH PRINT WIDTH; 0 = 799
-	Errors     uint64        // ~HQES error bits (group 2 << 32 | group 1)
-	PaperOut   bool          // ~HS flags
-	Paused     bool          //
-	HeadUp     bool          //
-	SilentHS   bool          // no ~HS reply (as a Zebra in an error state)
-	SilentHI   bool          // no ~HI reply (not a Zebra, or a Zebra in EPL mode)
-	NoHQES     bool          // old firmware without ~HQES
-	Hold       time.Duration // how long a received label stays in the buffer; 0 = 300 ms
-	Invisible  bool          // labels never show in the buffer (printed before ~HS could see them)
+	Model         string        // ~HI model part; "" = GK420d-200dpi
+	DPM           int           // dots per mm in ~HI; 0 = 8
+	LabelDots     int           // ~HS label length; 0 = 812
+	PrintWidth    int           // ^HH PRINT WIDTH; 0 = 799
+	Errors        uint64        // ~HQES error bits (group 2 << 32 | group 1)
+	PaperOut      bool          // ~HS flags
+	Paused        bool          //
+	PartialFormat bool          // "partial format in progress"
+	HeadUp        bool          //
+	SilentHS      bool          // no ~HS reply (as a Zebra in an error state)
+	SilentHI      bool          // no ~HI reply (not a Zebra, or a Zebra in EPL mode)
+	NoHQES        bool          // old firmware without ~HQES
+	Hold          time.Duration // how long a received label stays in the buffer; 0 = 300 ms
+	Invisible     bool          // labels never show in the buffer (printed before ~HS could see them)
 
 	mu       sync.Mutex
 	received bytes.Buffer
@@ -151,6 +152,11 @@ func (f *Fake) handle(c net.Conn, buf string) string {
 			f.format(c, buf[:end+3])
 			buf = buf[end+3:]
 		default:
+			for _, cmd := range []string{"~HQES", "~HQSN", "~HI", "~HS", "^XA"} {
+				if len(buf) < len(cmd) && strings.HasPrefix(cmd, buf) {
+					return buf // the rest of the command is still coming
+				}
+			}
 			buf = buf[1:] // CR, LF and anything we don't know
 		}
 	}
@@ -222,8 +228,8 @@ func (f *Fake) hs() string {
 		}
 		return 0
 	}
-	return fmt.Sprintf("\x02030,%d,%d,%04d,%03d,0,0,0,000,0,0,0\x03\r\n\x02000,0,%d,0,0,2,6,0,%08d,1,000\x03\r\n\x021234,0\x03\r\n",
-		b(f.PaperOut), b(f.Paused), or(f.LabelDots, 812), f.pending, b(f.HeadUp), f.pending)
+	return fmt.Sprintf("\x02030,%d,%d,%04d,%03d,0,0,%d,000,0,0,0\x03\r\n\x02000,0,%d,0,0,2,6,0,%08d,1,000\x03\r\n\x021234,0\x03\r\n",
+		b(f.PaperOut), b(f.Paused), or(f.LabelDots, 812), f.pending, b(f.PartialFormat), b(f.HeadUp), f.pending)
 }
 
 func (f *Fake) hqes() string {

@@ -85,8 +85,7 @@ func TestStatusSilentHS(t *testing.T) {
 	}
 	fake.Set(func(f *zpltest.Fake) { f.NoHQES, f.Errors = true, 0 })
 	_, err = d.Status(context.Background(), tcp.New(fake.Start(t)))
-	var de *driver.Error
-	if !errors.As(err, &de) || de.Code != driver.CommsError || !strings.Contains(de.Detail, "head open") {
+	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "head open") {
 		t.Errorf("silent printer: %v", err)
 	}
 }
@@ -103,7 +102,7 @@ func TestPrintConfirms(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	f := fake.Formats()
-	if len(f) != 2 || !strings.Contains(f[0], "^PON^LH0,0^LS0^LT0^PW816^LL816^FO0,0^GFA,") {
+	if len(f) != 2 || !strings.Contains(f[0], "^PON^PMN^LH0,0^LS0^LT0^PW816^LL816^FO0,0^GFA,") {
 		t.Errorf("formats %d: %.80q", len(f), f)
 	}
 }
@@ -168,5 +167,36 @@ func TestEncodeOffsets(t *testing.T) {
 		if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{page(md)}, Media: md}); err != nil || !strings.Contains(b.String(), tc.want) {
 			t.Errorf("%+v: %.70q, want %s", tc.o, b.String(), tc.want)
 		}
+	}
+}
+
+// A Zebra that answers nothing to ~HS (and has no ~HQES) can't be read: ErrNoReadback.
+func TestStatusSilentIsNoReadback(t *testing.T) {
+	d, _ := gk420d(t)
+	fake := &zpltest.Fake{SilentHS: true, NoHQES: true}
+	_, err := d.Status(context.Background(), tcp.New(fake.Start(t)))
+	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "head open") {
+		t.Errorf("%v", err)
+	}
+}
+
+// "Partial format in progress" means the job is still arriving: not idle.
+func TestStatusPartialFormatNotIdle(t *testing.T) {
+	d, _ := gk420d(t)
+	fake := &zpltest.Fake{PartialFormat: true}
+	st, err := d.Status(context.Background(), tcp.New(fake.Start(t)))
+	if err != nil || st.Idle {
+		t.Errorf("%+v %v", st, err)
+	}
+}
+
+func TestEncodeResetsPrinterMirror(t *testing.T) {
+	m, _ := devicedb.Default().Model("GK420d")
+	md := media(t, m, "label-102x102")
+	d, _ := driver.New(m, driver.Options{})
+	var b strings.Builder
+	_ = d.Encode(&b, &driver.Job{Pages: []*image.Gray{page(md)}, Media: md})
+	if !strings.HasPrefix(b.String(), "^XA^PON^PMN^") {
+		t.Errorf("%.40q", b.String())
 	}
 }

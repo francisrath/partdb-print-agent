@@ -80,10 +80,9 @@ func (z *zpl) Status(ctx context.Context, t driver.Transport) (*driver.Status, e
 				return &driver.Status{Code: code, Detail: detail, Via: "tcp"}, nil
 			}
 		}
-		return nil, &driver.Error{Code: driver.CommsError,
-			Detail: "printer doesn't answer status queries (paused, head open or out of labels?): " + err.Error()}
+		return nil, fmt.Errorf("%w: the printer doesn't answer status queries (paused, head open or out of labels?): %v", driver.ErrNoReadback, err)
 	}
-	st := &driver.Status{Code: driver.OK, Via: "tcp", Idle: h.Formats == 0 && h.LabelsRemaining == 0,
+	st := &driver.Status{Code: driver.OK, Via: "tcp", Idle: h.Formats == 0 && h.LabelsRemaining == 0 && !h.PartialFormat,
 		Media: &driver.Media{ID: "unknown", Name: "labels loaded", Kind: driver.DieCut, DPI: z.model.DPI,
 			LengthMM: float64(h.LabelLengthDots) / z.dpm(), PrintableLengthDots: h.LabelLengthDots}}
 	if hq != nil {
