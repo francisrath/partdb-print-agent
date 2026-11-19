@@ -130,3 +130,19 @@ func (c *Client) agentCall(ctx context.Context, method, path string, in, out any
 	}
 	return resp.StatusCode, json.Unmarshal(data, out)
 }
+
+// HasAgentAPI reports whether this Part-DB has the print agent API, without registering an
+// agent: a GET on the heartbeat route (POST only) is 405 where the route exists, 404 where not.
+func (c *Client) HasAgentAPI(ctx context.Context) (bool, error) {
+	status, err := c.agentCall(ctx, http.MethodGet, "/agents/00000000-0000-4000-8000-000000000000/heartbeat", nil, nil)
+	switch status {
+	case http.StatusMethodNotAllowed:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("unexpected HTTP %d from the print agent API", status)
+	}
+	return false, err
+}

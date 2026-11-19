@@ -1,0 +1,162 @@
+{{define "setup-top"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up pdb-print</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="setup">
+<header>
+  <img src="/favicon.svg" alt="" width="40" height="40">
+  <h1>Set up pdb-print</h1>
+</header>
+{{if .Step}}<nav class="steps" aria-label="Setup steps">
+  {{range $i, $n := steps}}{{$s := add $i 1}}<span class="{{if lt $s $.Step}}done{{else if eq $s $.Step}}now{{end}}"{{if eq $s $.Step}} aria-current="step"{{end}}>{{if lt $s $.Step}}✓{{else}}{{$s}}{{end}} {{$n}}</span>{{end}}
+</nav>{{end}}
+<main>
+<section>
+{{end}}
+
+{{define "setup-bottom"}}
+</section>
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
+
+{{define "setup-partdb"}}{{template "setup-top" .}}
+<h2>Connect to Part-DB</h2>
+<p>pdb-print fetches labels from your Part-DB. It needs Part-DB's address and an API token:
+in Part-DB, click your user name (top right) → User settings → API tokens, and create a
+<strong>read-only</strong> token.</p>
+{{with .Err}}<p class="flash err" role="alert">{{.}}</p>{{end}}
+<form method="post" action="/setup/partdb">
+  {{template "csrf" .}}
+  <label>Part-DB address <input name="base_url" value="{{.BaseURL}}" placeholder="https://partdb.example.org" required autofocus></label>
+  <label>API token <input name="token" type="password" autocomplete="off" required></label>
+  <div class="nav"><span></span><button>Next</button></div>
+</form>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "setup-printer"}}{{template "setup-top" .}}
+<h2>Which printer do you want to use?</h2>
+{{range .D.Notes}}<p class="flash">{{.}}</p>{{end}}
+{{if .D.NoAgentAPI}}<p class="flash err">This Part-DB can't send print jobs to a print server yet (it has no print agent
+API). You can still set up the printer; printing from Part-DB needs a newer Part-DB.</p>{{end}}
+{{with .ScanErr}}<p class="flash err">Searching the network failed: {{.}}</p>{{end}}
+{{if .Rows}}
+<form method="post" action="/setup/printer" id="pick">
+  {{template "csrf" .}}
+  {{range .Rows}}
+  <label class="option{{if not .Supported}} off{{end}}">
+    <span><input type="radio" name="choice" value="{{.Index}}" {{if not .Supported}}disabled{{end}} required>
+    <strong>{{or .C.ModelID .C.SNMPDescr (index .C.IEEE1284 "MDL") "Unknown printer"}}</strong> · {{.Where}}</span>
+    <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
+  </label>
+  {{if not .Supported}}<p class="indent"><a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
+  {{end}}
+</form>
+{{else}}
+<p>No printers found. Check the printer is switched on and connected by USB or to the same network.</p>
+{{end}}
+<form method="post" action="/setup/printer/probe" class="inline-form">
+  {{template "csrf" .}}
+  <label>Not listed? Printer's IP address <input name="ip" placeholder="192.168.1.50" inputmode="decimal"></label>
+  <button class="secondary">Look there</button>
+</form>
+<div class="nav">
+  <a class="button secondary" href="/setup/partdb?edit=1">Back</a>
+  <span><a class="button secondary" href="/setup/printer?rescan=1">Search again</a>
+  {{if .Rows}}<button form="pick">Next</button>{{end}}</span>
+</div>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "card"}}<span class="card {{.}}"><b>▲ TOP</b><br>pdb-print<i></i></span>{{end}}
+
+{{define "setup-test"}}{{template "setup-top" .}}
+{{$p := .D.Printer}}
+<h2>Test print</h2>
+<p class="muted">{{$p.Model}} · {{if eq $p.Transport.Kind "tcp"}}network {{$p.Transport.Host}}{{else}}USB{{end}}{{with $p.Media}} · {{.}}{{end}}</p>
+{{with .D.Msg}}<p class="flash err" role="status">{{.}}</p>{{end}}
+{{if .D.AskMedia}}
+  <form method="post" action="/setup/test">
+    {{template "csrf" .}}
+    <input type="hidden" name="action" value="media">
+    <label>Which tape is in the printer?
+      <select name="media" required>{{range .Media}}<option value="{{.ID}}" {{if eq .ID $p.Media}}selected{{end}}>{{.Name}} ({{.ID}})</option>{{end}}</select>
+    </label>
+    <button>Print the test label</button>
+  </form>
+{{else if not .D.Printed}}
+  <p>Print a test label to check that everything comes out right.</p>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button name="action" value="print">Print test label</button></form>
+{{else}}
+  <p>A test label is printing. Which one looks like yours?</p>
+  <form method="post" action="/setup/test" class="pictures">
+    {{template "csrf" .}}
+    <button name="action" value="right">{{template "card" "right"}}Looks right</button>
+    <button name="action" value="mirrored">{{template "card" "mirrored"}}Mirrored</button>
+    <button name="action" value="upside-down">{{template "card" "upside-down"}}Upside down</button>
+    <button name="action" value="cut-off">{{template "card" "cut-off"}}Cut off</button>
+    <button name="action" value="faint">{{template "card" "faint"}}Too faint</button>
+    <button name="action" value="nothing"><span class="card nothing">nothing<br>came out</span>Nothing printed</button>
+  </form>
+  <p class="muted">Picking a problem changes a setting and prints the label again.</p>
+{{end}}
+{{if .D.ShowReport}}<form method="get" action="/setup/report"><p>Still not right? <button class="link">Send us a report</button> and we'll look into it.</p></form>{{end}}
+<div class="nav"><a class="button secondary" href="/setup/printer">Back</a><span></span></div>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "setup-name"}}{{template "setup-top" .}}
+<h2>What should Part-DB call this printer?</h2>
+<p class="muted">Name it after where it is or what it's for. This is what you pick when printing.</p>
+{{with .Err}}<p class="flash err" role="alert">{{.}}</p>{{end}}
+<form method="post" action="/setup/name">
+  {{template "csrf" .}}
+  <label>Name <input name="name" list="ideas" maxlength="60" placeholder="Receiving desk" required autofocus></label>
+  <datalist id="ideas">{{range .Ideas}}<option value="{{.}}">{{end}}</datalist>
+  <p class="muted">Ideas: {{range $i, $n := .Ideas}}{{if $i}} · {{end}}{{$n}}{{end}}</p>
+  <div class="nav"><a class="button secondary" href="/setup/test">Back</a><button>Save</button></div>
+</form>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "setup-done"}}{{template "setup-top" .}}
+<h2>Done</h2>
+{{$last := index .D.Saved (sub (len .D.Saved) 1)}}
+{{if .D.NoAgentAPI}}
+<p>“{{$last}}” is set up. This Part-DB can't send print jobs to a print server yet; once it can,
+the printer shows up there by itself.</p>
+{{else}}
+<p>Part-DB now shows “{{$last}}” when you print labels.</p>
+{{end}}
+{{if gt (len .D.Saved) 1}}<p class="muted">Set up in this session: {{range $i, $n := .D.Saved}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}
+<form method="post" action="/setup/done" class="nav">
+  {{template "csrf" .}}
+  <button class="secondary" name="action" value="another">Add another printer</button>
+  <button name="action" value="finish">Finish</button>
+</form>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "setup-finished"}}{{template "setup-top" .}}
+<h2>All set</h2>
+<p>Setup is closed. You can close this tab. To change something later, run <code>pdb-print pair</code>
+on the print server.</p>
+{{template "setup-bottom" .}}{{end}}
+
+{{define "setup-report"}}{{template "setup-top" .}}
+<h2>Help us support your printer</h2>
+<p>pdb-print can collect what we need to know about the printer into a file: its model, what it
+answers when asked, and how it is connected. Addresses, serial numbers and names are masked. It
+doesn't print anything.</p>
+<form method="post" action="/setup/report">
+  {{template "csrf" .}}
+  <input type="hidden" name="candidate" value="{{.Candidate}}">
+  <button>Download the report</button>
+</form>
+<p>Then <a href="{{.IssueURL}}" target="_blank" rel="noopener">open an issue on GitHub</a> and attach the file.</p>
+<div class="nav"><a class="button secondary" href="/setup/printer">Back</a><span></span></div>
+{{template "setup-bottom" .}}{{end}}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,31 @@ func TestHeartbeatMercureOffer(t *testing.T) {
 	want := Mercure{Hub: "https://pdb.test/.well-known/mercure", Topic: "urn:part-db:agent:3:jobs", Token: "t"}
 	if err != nil || reply.Mercure == nil || *reply.Mercure != want || reply.Pending == nil || *reply.Pending != 2 {
 		t.Fatalf("got %+v %v", reply.Mercure, err)
+	}
+}
+
+// HasAgentAPI asks without registering anything: a GET on the heartbeat route is 405 where
+// the API exists and 404 where it doesn't.
+func TestHasAgentAPI(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   bool
+		err    bool
+	}{
+		{http.StatusMethodNotAllowed, true, false},
+		{http.StatusNotFound, false, false},
+		{http.StatusInternalServerError, false, true},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/en/agent-api/v1/agents/") {
+				t.Errorf("%s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(tc.status)
+		}))
+		got, err := New(srv.URL, "tcp_test").HasAgentAPI(context.Background())
+		srv.Close()
+		if got != tc.want || (err != nil) != tc.err {
+			t.Errorf("status %d: %v %v", tc.status, got, err)
+		}
 	}
 }

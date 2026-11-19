@@ -35,4 +35,24 @@ body.handoff { max-width: 420px; text-align: center; padding-top: 32px; }
 body.handoff h1 { font-size: 1.4rem; }
 body.setup { max-width: 640px; }
 form.pair { display: flex; gap: 10px; align-items: end; }
+form.pair label { margin-bottom: 0 !important; }
 form.pair input { font-size: 1.4rem; letter-spacing: .3em; width: 9ch; }
+nav.steps { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .9rem; color: var(--muted); margin: 8px 0; }
+nav.steps .now { color: var(--fg); font-weight: 600; }
+.setup .nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; }
+a.button { display: inline-block; font: inherit; padding: 6px 14px; border-radius: 6px; background: var(--accent); color: var(--accent-fg); text-decoration: none; }
+a.button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+label.option { flex-direction: row; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; color: var(--fg); max-width: none !important; cursor: pointer; }
+label.option.off { opacity: .6; cursor: default; }
+.indent { margin: -2px 0 8px 14px; font-size: .9rem; }
+form.inline-form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 14px; }
+form.inline-form label { margin: 0 !important; }
+form.pictures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+form.pictures button { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; background: var(--card); color: var(--fg); border: 1px solid var(--line); }
+form.pictures button:hover, form.pictures button:focus-visible { border-color: var(--accent); }
+.card { display: inline-block; position: relative; width: 96px; padding: 8px 6px; border: 1.5px solid currentColor; border-radius: 3px; font-size: .8rem; line-height: 1.3; background: var(--bg); overflow: hidden; }
+.card.mirrored { transform: scaleX(-1); }
+.card.upside-down { transform: rotate(180deg); }
+.card.cut-off { clip-path: inset(0 0 45% 0); }
+.card.faint { opacity: .3; }
+.card.nothing { border-style: dashed; color: var(--muted); }

@@ -32,6 +32,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/assets"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
@@ -54,6 +55,9 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return "unknown level"
 	},
+	"steps": func() []string { return []string{"Part-DB", "Printer", "Test", "Name", "Done"} },
+	"add":   func(a, b int) int { return a + b },
+	"sub":   func(a, b int) int { return a - b },
 }).ParseFS(webFS, "web/*.html", "web/setup/*.html"))
 
 const handoffWindow = 120 * time.Second
@@ -71,6 +75,9 @@ type Server struct {
 	Window   *Window
 	LANAddrs func() []netip.Addr
 	kick     chan struct{} // wakes SetupLoop
+	local    *Session      // the wizard's session on loopback (no code needed there)
+	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
+	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
 	cfg   *config.Config
@@ -98,6 +105,7 @@ func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Lo
 	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
 		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1)}
 	s.Window.OnClose = s.kickSetup
+	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	return s
 }
 
@@ -124,6 +132,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /routes", s.saveRoute)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
 	mux.HandleFunc("POST /v1/pair", s.pairAPI)
+	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
+		d := s.local.Draft // a fresh start
+		d.mu.Lock()
+		d.Instance, d.Notes, d.NoAgentAPI, d.Candidates, d.Scanned, d.Saved = nil, nil, false, nil, false, nil
+		d.resetPrinter(config.Printer{})
+		d.mu.Unlock()
+		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+	})
+	s.setupRoutes(mux)
 	mux.HandleFunc("GET /v1/handoff", s.handoff)
 	mux.HandleFunc("POST /v1/handoff", s.handoff)
 
@@ -133,7 +150,7 @@ func (s *Server) Handler() http.Handler {
 	for _, f := range []string{"favicon.svg", "favicon.ico", "apple-touch-icon.png"} {
 		mux.Handle("GET /"+f, http.FileServerFS(icons))
 	}
-	return s.guard(mux)
+	return s.guard(s.withLocalSession(mux))
 }
 
 // guard enforces the loopback Host allowlist, CSRF on POST and safe headers.
@@ -325,22 +342,34 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		if tok.Level > 1 {
 			warn = " (this token can do more than needed: a Read-Only token is enough)"
 		}
-		if in.PairingKey == "" {
-			in.PairingKey = randomHex(32)
-		}
-		if err := keyring.Set(config.KeyringService, in.ID, token); err != nil {
-			s.Log.Warn("OS keychain unavailable; storing the token in the config file (0600)", "err", err)
-			in.Token = token
-			warn += " (no OS keychain: token stored in the config file)"
-		} else {
-			in.Token = ""
-		}
+		warn += s.putInstance(c, baseURL, token)
 		return nil
 	})
 	if err == nil {
 		s.instanceSaved("default")
 	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
+}
+
+// putInstance stores the first Part-DB instance's URL and token (in the OS keychain when there
+// is one, else in the 0600 config file); it returns a note for the user, or "".
+func (s *Server) putInstance(c *config.Config, baseURL, token string) string {
+	if len(c.Instances) == 0 {
+		c.Instances = append(c.Instances, config.Instance{ID: "default"})
+	}
+	in := &c.Instances[0]
+	in.BaseURL = baseURL
+	if in.PairingKey == "" {
+		in.PairingKey = randomHex(32)
+	}
+	if err := keyring.Set(config.KeyringService, in.ID, token); err != nil {
+		// normal on a headless server (no desktop keychain), so info, not a warning
+		s.Log.Info("no OS keychain; the token is kept in the config file, readable only by this user", "err", err)
+		in.Token = token
+		return " (token kept in the config file, readable only by pdb-print)"
+	}
+	in.Token = ""
+	return ""
 }
 
 // instanceSaved hands a newly saved instance (with its token) to OnInstance.
