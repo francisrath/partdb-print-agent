@@ -19,11 +19,11 @@ crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialog
 
 **Raspberry Pi OS, Debian, Ubuntu** (a print server, e.g. a Raspberry Pi next to the printer):
 
-> **Before installing:** the setup page is briefly open to your network (see below). Behind a home
-> router that is fine. If untrusted machines can reach the print server (it is connected straight to
-> your internet provider, or sits on a shared network), first limit TCP port 8631 to trusted sources
-> with a firewall: pdb-print refuses clients outside the local network, but can't tell a provider's
-> IPv6 network from your own.
+> **Before installing:** for up to 30 minutes the setup page is open to the network (see below), protected
+> only by a 6-digit code. Check who can reach TCP port 8631 on the print server: anyone who can, and
+> sees the code first, can set it up. On a network with devices you don't trust, or a print server
+> connected straight to your internet provider, limit port 8631 to trusted machines with a firewall
+> first. pdb-print only filters out obviously remote addresses; that is not a firewall.
 
 ```sh
 curl -fsSL https://github.com/francisrath/partdb-print-agent/releases/latest/download/install.sh | sh
