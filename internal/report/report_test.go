@@ -251,3 +251,12 @@ func TestReportMasksZebraSerial(t *testing.T) {
 		t.Errorf("serial or printer name left in the report:\n%s", masked)
 	}
 }
+
+// Addresses inside XML replies (a Zebra's ^HZA) are masked too.
+func TestRedactIPInXML(t *testing.T) {
+	r := &Report{Queries: []Query{{Name: "zpl ^HZA", Reply: "<IP-ADDRESS>192.168.105.33</IP-ADDRESS><GATEWAY>192.168.105.1</GATEWAY>"}}}
+	b, err := r.JSON(false)
+	if err != nil || strings.Contains(string(b), "192.168") {
+		t.Errorf("%s %v", b, err)
+	}
+}

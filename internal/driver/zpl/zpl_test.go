@@ -103,7 +103,7 @@ func TestPrintConfirms(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	f := fake.Formats()
-	if len(f) != 2 || !strings.Contains(f[0], "^PON^LH0,0^LS0^PW816^LL816^FO0,0^GFA,") {
+	if len(f) != 2 || !strings.Contains(f[0], "^PON^LH0,0^LS0^LT0^PW816^LL816^FO0,0^GFA,") {
 		t.Errorf("formats %d: %.80q", len(f), f)
 	}
 }
@@ -146,5 +146,26 @@ func TestPrintErrorWhilePrinting(t *testing.T) {
 	var de *driver.Error
 	if !errors.As(err, &de) || de.Code != driver.NoMedia {
 		t.Errorf("err %v", err)
+	}
+}
+
+// pdb-print try moves the print or widens it to fix a cut-off edge.
+func TestEncodeOffsets(t *testing.T) {
+	m, _ := devicedb.Default().Model("GK420d")
+	md := media(t, m, "label-102x102")
+	for _, tc := range []struct {
+		o    driver.Options
+		want string
+	}{
+		{driver.Options{}, "^LH0,0^LS0^LT0^PW816^LL816"},
+		{driver.Options{OffsetXDots: 24, OffsetYDots: 16}, "^LH24,16^LS0^LT0^PW816^LL816"},
+		{driver.Options{OffsetXDots: -24, OffsetYDots: -16}, "^LH0,0^LS24^LT-16^PW816^LL816"},
+		{driver.Options{PrintWidthDots: 832}, "^LH0,0^LS0^LT0^PW832^LL816"},
+	} {
+		d, _ := driver.New(m, tc.o)
+		var b strings.Builder
+		if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{page(md)}, Media: md}); err != nil || !strings.Contains(b.String(), tc.want) {
+			t.Errorf("%+v: %.70q, want %s", tc.o, b.String(), tc.want)
+		}
 	}
 }

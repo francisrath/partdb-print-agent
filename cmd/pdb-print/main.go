@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/report"
+	"github.com/francisrath/partdb-print-agent/internal/try"
 	"image/png"
 	"io"
 	"log/slog"
@@ -50,6 +51,8 @@ commands:
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
+  try [HOST] [--port N]            guided test of a printer (Zebra for now) by someone next to it:
+                                   numbered test labels, questions, fixes; writes a report file
   pair [--addr 127.0.0.1:8631]     open the setup wizard to the LAN for a while (prints a code)
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
                                    rasterise to PNGs at printhead dots (no printing)
@@ -108,6 +111,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
+	}
+	if cmd == "try" { // a guided test of a printer; needs no config
+		return tryCmd(ctx, rest)
 	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)
@@ -662,6 +668,28 @@ func discover(ctx context.Context, args []string) error {
 		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
 	return nil
+}
+
+func tryCmd(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("try", flag.ContinueOnError)
+	port := fs.Int("port", 9100, "print port of a network printer")
+	hosts, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(hosts) > 1 {
+		return errors.New("try takes at most one printer address")
+	}
+	host := ""
+	if len(hosts) == 1 {
+		host = hosts[0]
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	svc := &printing.Service{Log: log}
+	defer svc.Close()
+	_, err = try.Run(ctx, try.Options{In: os.Stdin, Out: os.Stdout, Host: host, Port: *port, Svc: svc,
+		DB: devicedb.Default(), Version: appVersion()})
+	return err
 }
 
 func reportCmd(ctx context.Context, args []string) error {

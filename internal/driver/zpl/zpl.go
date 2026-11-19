@@ -115,6 +115,9 @@ func (z *zpl) dpm() float64 { return math.Round(float64(z.model.DPI) / 25.4) }
 
 func (z *zpl) size(job *driver.Job) (w, l int) {
 	w, l = job.Media.PrintableWidthDots, job.Media.PrintableLengthDots
+	if z.opts.PrintWidthDots > 0 {
+		w = z.opts.PrintWidthDots
+	}
 	if l == 0 && len(job.Pages) > 0 { // continuous: as long as the page
 		l = job.Pages[0].Bounds().Dy()
 	}
@@ -124,7 +127,7 @@ func (z *zpl) size(job *driver.Job) (w, l int) {
 func (z *zpl) Encode(w io.Writer, job *driver.Job) error {
 	pw, ll := z.size(job)
 	for _, pg := range job.Pages {
-		if err := encodePage(w, pg, pw, ll); err != nil {
+		if err := encodePageAt(w, pg, pw, ll, z.opts.OffsetXDots, z.opts.OffsetYDots); err != nil {
 			return err
 		}
 	}

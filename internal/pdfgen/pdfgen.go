@@ -68,6 +68,15 @@ func TestCard(wMM, hMM float64, lines []string) []byte {
 	return Page(wMM, hMM, testCard(wMM, hMM, lines, ""))
 }
 
+// TestCardsTagged is one tagged test card per tag, as pages of one PDF (a batch).
+func TestCardsTagged(wMM, hMM float64, lines []string, tags ...string) []byte {
+	var pages []string
+	for _, tag := range tags {
+		pages = append(pages, testCard(wMM, hMM, lines, tag))
+	}
+	return Pages(wMM, hMM, pages...)
+}
+
 // TestCardTagged is TestCard with a tag ("1/5") printed large next to TOP, so a tester can say
 // which label is which.
 func TestCardTagged(wMM, hMM float64, lines []string, tag string) []byte {

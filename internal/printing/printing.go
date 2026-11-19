@@ -244,7 +244,8 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP}
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP,
+		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 
 // lazyTransport opens the connection on first use, so a driver that gets its answer elsewhere

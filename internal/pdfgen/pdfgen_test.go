@@ -112,3 +112,10 @@ func TestTestCardTag(t *testing.T) {
 		t.Error("no tag on the test card")
 	}
 }
+
+func TestTestCardsTagged(t *testing.T) {
+	pdf := string(TestCardsTagged(102, 102, []string{"batch"}, "3a/5", "3b/5"))
+	if strings.Count(pdf, "/Type /Page ") != 2 || !strings.Contains(pdf, "(3a/5) Tj") || !strings.Contains(pdf, "(3b/5) Tj") {
+		t.Errorf("want two pages tagged 3a and 3b")
+	}
+}

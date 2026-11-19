@@ -4,6 +4,7 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -86,6 +87,18 @@ var zebraSecretRes = []*regexp.Regexp{
 	regexp.MustCompile(`<PRINTER-NAME>([^<]+)</PRINTER-NAME>`),                               // ^HZA
 	regexp.MustCompile(`<(?:SERIAL-NUMBER|HOST-NAME)>([^<]+)</(?:SERIAL-NUMBER|HOST-NAME)>`), // ^HZA, newer firmware
 }
+
+// ZebraQueries records a Zebra's read-only status and setup queries (~HS, ~HQES, ~HQSN, ^HH,
+// ^HZA) and adds the serial number and printer name they reveal to the mask list. Only for a
+// printer that answered ~HI.
+func (r *Report) ZebraQueries(ctx context.Context, c discovery.Candidate, where string) {
+	for _, q := range zplQueries {
+		r.Secrets = append(r.Secrets, zebraSecrets(r.exchange(ctx, c, where, q.name, q.data))...)
+	}
+}
+
+// Escape is how replies are recorded: non-ASCII as \xNN.
+func Escape(b []byte) string { return escape(b) }
 
 func zebraSecrets(reply string) []string {
 	var out []string
@@ -173,9 +186,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 						r.Candidates[i].Status = discovery.Supported
 					}
 				}
-				for _, q := range zplQueries {
-					r.Secrets = append(r.Secrets, zebraSecrets(r.exchange(ctx, c, where, q.name, q.data))...)
-				}
+				r.ZebraQueries(ctx, c, where)
 			} else {
 				r.exchange(ctx, c, where, "brother status", brotherQuery)
 			}
@@ -354,11 +365,16 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 			c.IEEE1284[k] = text(v)
 		}
 	}
-	b, err := json.MarshalIndent(&masked, "", "  ")
-	if err != nil {
+	// no HTML escaping: "\u003e192.168.1.5" has no word boundary before the address, so the
+	// masks below would miss addresses in XML replies
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(&masked); err != nil {
 		return nil, err
 	}
-	s := string(b)
+	s := strings.TrimSuffix(buf.String(), "\n")
 	if h, _ := os.Hostname(); len(h) > 2 {
 		s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(h)).ReplaceAllString(s, "this-computer")
 	}

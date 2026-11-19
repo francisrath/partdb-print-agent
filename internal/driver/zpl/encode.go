@@ -11,10 +11,15 @@ import (
 	"io"
 )
 
-// encodePage writes one label: the page setup sent with every job (^PO, ^LH, ^LS, ^PW, ^LL stay in
+// encodePage writes one label: the page setup sent with every job (^PO, ^LH, ^LS, ^LT, ^PW, ^LL stay in
 // effect on the printer until power-off, so we never rely on what was set before) and the raster.
 // The image is placed at the top left; wider than widthDots is clipped, smaller is padded white.
 func encodePage(w io.Writer, img *image.Gray, widthDots, lengthDots int) error {
+	return encodePageAt(w, img, widthDots, lengthDots, 0, 0)
+}
+
+// encodePageAt is encodePage moved by x, y dots: right/down with ^LH, left with ^LS, up with ^LT.
+func encodePageAt(w io.Writer, img *image.Gray, widthDots, lengthDots, x, y int) error {
 	rowBytes := (widthDots + 7) / 8
 	raw := make([]byte, rowBytes*lengthDots)
 	b := img.Bounds()
@@ -38,8 +43,8 @@ func encodePage(w io.Writer, img *image.Gray, widthDots, lengthDots int) error {
 		return err
 	}
 	enc := base64.StdEncoding.EncodeToString(z.Bytes())
-	_, err = fmt.Fprintf(w, "^XA^PON^LH0,0^LS0^PW%d^LL%d^FO0,0^GFA,%d,%d,%d,:Z64:%s:%04X^FS^XZ\n",
-		widthDots, lengthDots, len(raw), len(raw), rowBytes, enc, crc16XMODEM([]byte(enc)))
+	_, err = fmt.Fprintf(w, "^XA^PON^LH%d,%d^LS%d^LT%d^PW%d^LL%d^FO0,0^GFA,%d,%d,%d,:Z64:%s:%04X^FS^XZ\n",
+		max(x, 0), max(y, 0), max(-x, 0), min(y, 0), widthDots, lengthDots, len(raw), len(raw), rowBytes, enc, crc16XMODEM([]byte(enc)))
 	return err
 }
 

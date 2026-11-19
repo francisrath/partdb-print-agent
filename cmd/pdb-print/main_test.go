@@ -375,3 +375,9 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+func TestTryArgs(t *testing.T) {
+	if err := run(context.Background(), []string{"try", "10.0.0.1", "10.0.0.2"}); err == nil || !strings.Contains(err.Error(), "at most one") {
+		t.Errorf("two addresses: %v", err)
+	}
+}
