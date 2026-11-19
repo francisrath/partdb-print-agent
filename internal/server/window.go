@@ -40,6 +40,7 @@ type Window struct {
 	tries    int
 	opened   time.Time
 	expires  time.Time
+	gen      uint64 // counts Opens (two can share a clock tick)
 	sessions map[string]*Session
 	// OnClose is called (without the lock) whenever the window closes.
 	OnClose func()
@@ -59,7 +60,7 @@ func (w *Window) Open(now time.Time) (code string, expires time.Time) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.open, w.code, w.tries = true, fmt.Sprintf("%06d", n.Int64()), 0
+	w.open, w.code, w.tries, w.gen = true, fmt.Sprintf("%06d", n.Int64()), 0, w.gen+1
 	w.opened, w.expires = now, now.Add(windowOpen)
 	w.sessions = map[string]*Session{}
 	return w.code, w.expires
@@ -128,17 +129,17 @@ func (w *Window) Touch(now time.Time) {
 	}
 }
 
-// Opened is when the current window was opened (zero when it never was).
-func (w *Window) Opened() time.Time {
+// Generation identifies the current window; each Open starts a new one.
+func (w *Window) Generation() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.opened
+	return w.gen
 }
 
-// CloseIfOpenedAt closes the window only if it is still the one opened at t.
-func (w *Window) CloseIfOpenedAt(t time.Time) {
+// CloseGeneration closes the window only if it is still generation g.
+func (w *Window) CloseGeneration(g uint64) {
 	w.mu.Lock()
-	closed := w.opened.Equal(t) && w.closeLocked()
+	closed := w.gen == g && w.closeLocked()
 	w.mu.Unlock()
 	if closed {
 		w.notifyClose()

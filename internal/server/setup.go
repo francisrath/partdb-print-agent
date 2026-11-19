@@ -552,8 +552,8 @@ func (s *Server) setupDonePost(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setupPage(w, r, "setup-finished", 5, nil)
 	// a moment later, so the page can still load its stylesheet; a window reopened meanwhile stays
-	opened := s.Window.Opened()
-	time.AfterFunc(s.finishGrace, func() { s.Window.CloseIfOpenedAt(opened) })
+	gen := s.Window.Generation()
+	time.AfterFunc(s.finishGrace, func() { s.Window.CloseGeneration(gen) })
 }
 
 // --- report
