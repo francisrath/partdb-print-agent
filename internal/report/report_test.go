@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 	"net"
 	"os"
 	"strings"
@@ -186,5 +187,67 @@ func TestRedactSerialKeepsLast4(t *testing.T) {
 	got := []string{back.Candidates[0].Serial, back.Candidates[1].Serial, back.Candidates[2].Serial}
 	if got[0] != "xxxxx1568" || got[1] == got[0] || strings.Contains(got[1], "Q8X2") || got[2] != "serial-3" || back.Queries[0].Reply != "sn xxxxx1568" {
 		t.Errorf("serials %q, reply %q", got, back.Queries[0].Reply)
+	}
+}
+
+func zebraOptions(t *testing.T, addr string) Options {
+	_, port, _ := net.SplitHostPort(addr)
+	return options(port, true, func(string) bool { return true })
+}
+
+// After a silent ~HI no ZPL follows: it isn't a Zebra (or one set to EPL only).
+func TestReportStopsAfterSilentHI(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				b := make([]byte, 4096)
+				for {
+					n, err := c.Read(b)
+					mu.Lock()
+					got = append(got, b[:n]...)
+					mu.Unlock()
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	if _, err := Run(context.Background(), zebraOptions(t, ln.Addr().String())); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if s := string(got); !strings.HasPrefix(s, "~HI\r\n") || strings.Contains(s, "~HS") || strings.Contains(s, "^XA") || strings.Contains(s, "~HQ") {
+		t.Errorf("printer received %q", s)
+	}
+}
+
+// A Zebra's serial number and printer name don't leave in the report.
+func TestReportMasksZebraSerial(t *testing.T) {
+	fake := &zpltest.Fake{}
+	r, err := Run(context.Background(), zebraOptions(t, fake.Start(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := r.JSON(true)
+	masked, _ := r.JSON(false)
+	if !strings.Contains(string(raw), "28J124202270") || !strings.Contains(string(raw), "ZBR4580776") {
+		t.Fatalf("queries didn't fetch serial and name: %s", raw)
+	}
+	if strings.Contains(string(masked), "28J124202270") || strings.Contains(string(masked), "ZBR4580776") {
+		t.Errorf("serial or printer name left in the report:\n%s", masked)
 	}
 }

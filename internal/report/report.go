@@ -35,6 +35,9 @@ type Report struct {
 	Candidates []discovery.Candidate `json:"candidates"`
 	Queries    []Query               `json:"queries"`
 	Notes      []string              `json:"notes,omitempty"`
+	// Secrets are values found in replies that JSON masks like serial numbers (a Zebra's serial
+	// and printer name).
+	Secrets []string `json:"-"`
 }
 
 // Query is one exchange with a printer. Sent and Reply are escaped text (non-ASCII as \xNN).
@@ -63,11 +66,35 @@ type Options struct {
 	SysDescr  func(ctx context.Context, host string) (string, error) // nil = SNMP
 }
 
-// identify queries per printer language; sent one per connection.
-var identify = []struct{ name, data string }{
-	{"zpl ~HI", "~HI\r\n"},
-	{"zpl ~HS", "~HS\r\n"},
-	{"brother status", string(make([]byte, 100)) + "\x1b@\x1biS"},
+// Identify queries, one per connection: ~HI first; the other ZPL queries only to a printer that
+// answered it (anything else could print them), the Brother status query only to one that didn't.
+var (
+	zplQueries = []struct{ name, data string }{
+		{"zpl ~HS", "~HS\r\n"},
+		{"zpl ~HQES", "~HQES\r\n"},
+		{"zpl ~HQSN", "~HQSN\r\n"},
+		{"zpl ^HH", "^XA^HH^XZ\r\n"},
+		{"zpl ^HZA", "^XA^HZA^XZ\r\n"},
+	}
+	brotherQuery = string(make([]byte, 100)) + "\x1b@\x1biS"
+)
+
+// zebraSecrets finds a Zebra's serial number and printer name in a (escaped) reply.
+var zebraSecretRes = []*regexp.Regexp{
+	regexp.MustCompile(`([A-Z0-9]{6,})\s+SERIAL NUMBER`),                                     // ^HH
+	regexp.MustCompile(`SERIAL NUMBER(?:\\r|\\n|\s)+([A-Z0-9]{6,})`),                         // ~HQSN
+	regexp.MustCompile(`<PRINTER-NAME>([^<]+)</PRINTER-NAME>`),                               // ^HZA
+	regexp.MustCompile(`<(?:SERIAL-NUMBER|HOST-NAME)>([^<]+)</(?:SERIAL-NUMBER|HOST-NAME)>`), // ^HZA, newer firmware
+}
+
+func zebraSecrets(reply string) []string {
+	var out []string
+	for _, re := range zebraSecretRes {
+		for _, m := range re.FindAllStringSubmatch(reply, -1) {
+			out = append(out, strings.TrimSpace(m[1]))
+		}
+	}
+	return out
 }
 
 func Run(ctx context.Context, o Options) (*Report, error) {
@@ -139,8 +166,18 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 		}
 		if o.Identify && c.Status != discovery.Supported &&
 			o.Confirm(fmt.Sprintf("Send identify queries to %s %s? A printer that doesn't understand them may print them as a page.", c.Kind, where)) {
-			for _, q := range identify {
-				r.exchange(ctx, c, where, q.name, q.data)
+			if hi := r.exchange(ctx, c, where, "zpl ~HI", "~HI\r\n"); strings.Count(hi, ",") >= 2 {
+				if m, ok := o.DB.ModelByHI(hi); ok && c.Kind == "tcp" {
+					r.Candidates[i].Model, r.Candidates[i].ModelID = m, m.ID
+					if slices.Contains(driver.Families(), m.Driver) {
+						r.Candidates[i].Status = discovery.Supported
+					}
+				}
+				for _, q := range zplQueries {
+					r.Secrets = append(r.Secrets, zebraSecrets(r.exchange(ctx, c, where, q.name, q.data))...)
+				}
+			} else {
+				r.exchange(ctx, c, where, "brother status", brotherQuery)
 			}
 		}
 		if o.Print && o.Svc != nil && c.Status == discovery.Supported &&
@@ -177,7 +214,8 @@ func (r *Report) query(target, name, sent string, f func() (string, error)) {
 }
 
 // exchange sends data on a fresh connection (or the USB device) and records the reply.
-func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, name, data string) {
+// exchange returns the reply as recorded (escaped), "" when there was none.
+func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, name, data string) string {
 	r.query(where, name, data, func() (string, error) {
 		var t driver.Transport
 		if c.Kind == "usb" {
@@ -207,6 +245,7 @@ func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, nam
 		}
 		return escape(got), nil
 	})
+	return r.Queries[len(r.Queries)-1].Reply
 }
 
 // connTransport reads with a 1.5 s idle timeout; replies end when the printer stops talking.
@@ -263,6 +302,9 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 			tokens[v], used[t] = t, true
 		}
 		return tokens[v]
+	}
+	for _, v := range r.Secrets {
+		token(v)
 	}
 	masked := *r
 	masked.Candidates = make([]discovery.Candidate, len(r.Candidates))

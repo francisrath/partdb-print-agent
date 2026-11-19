@@ -3,6 +3,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -232,4 +234,41 @@ func TransportLine(c Candidate) string {
 		return fmt.Sprintf("transport: {kind: tcp, host: %s, port: %d}", c.Host, c.Port)
 	}
 	return fmt.Sprintf("transport: {kind: tcp, host: %s}", c.Host)
+}
+
+// Identify asks a network printer what it is with Zebra's ~HI. Call it only after the user said
+// yes: a printer that isn't a Zebra may print the few bytes as a page. The reply names the model
+// and its dots per mm; reply is the raw answer ("" when there was none).
+func Identify(ctx context.Context, db *devicedb.DB, c Candidate) (Candidate, string, error) {
+	port := c.Port
+	if port == 0 {
+		port = 9100
+	}
+	conn, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(c.Host, strconv.Itoa(port)))
+	if err != nil {
+		return c, "", err
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("~HI\r\n")); err != nil {
+		return c, "", err
+	}
+	var reply []byte
+	buf := make([]byte, 512)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for !bytes.Contains(reply, []byte{0x03}) && !bytes.Contains(reply, []byte{'\n'}) && len(reply) < 4096 {
+		n, err := conn.Read(buf)
+		reply = append(reply, buf[:n]...)
+		if err != nil {
+			break
+		}
+	}
+	if len(bytes.TrimSpace(reply)) == 0 {
+		return c, "", errors.New(`no answer to ~HI: not a Zebra, or a Zebra set to EPL only (on the printer: ! U1 setvar "device.languages" "zpl")`)
+	}
+	m, ok := db.ModelByHI(string(reply))
+	if !ok {
+		return c, string(reply), fmt.Errorf("a printer we don't know yet answered: %q", strings.TrimSpace(strings.Trim(string(reply), "\x02\x03")))
+	}
+	c.setModel(m)
+	return c, string(reply), nil
 }

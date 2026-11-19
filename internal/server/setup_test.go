@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -395,5 +397,29 @@ func TestCandidateNameShort(t *testing.T) {
 	c := discovery.Candidate{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z ,MID 84E-755"}
 	if got := candidateName(c); got != "Brother HL-L3270CDW series" {
 		t.Errorf("name %q", got)
+	}
+}
+
+// A printer that didn't say what it is (a Zebra without SNMP) can be asked, with a warning.
+func TestWizardIdentify(t *testing.T) {
+	h := newHarness(t)
+	fake := &zpltest.Fake{}
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	p, _ := strconv.Atoi(port)
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "tcp", Host: host, Port: p, Status: discovery.Unknown}}, nil
+	}
+	h.do("GET", "/setup/", nil)
+	h.srv.local.Draft.Instance = &config.Instance{ID: "default", BaseURL: h.partdb.URL, Token: "tcp_test"} // step 1 done
+	body := h.do("GET", "/setup/printer", nil).Body.String()
+	if !strings.Contains(body, "Ask this printer what it is") || !strings.Contains(body, "isn't a Zebra may print") {
+		t.Fatalf("no identify button with warning: %s", body)
+	}
+	if fake.Received() != "" {
+		t.Fatal("sent something before the button was pressed")
+	}
+	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}}), "/setup/printer")
+	if c := h.srv.local.Draft.Candidates[0]; c.ModelID != "GK420d" || c.Status != discovery.Supported {
+		t.Errorf("after identify: %+v", c)
 	}
 }

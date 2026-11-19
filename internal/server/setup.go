@@ -64,6 +64,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /setup/printer", s.setupPrinter)
 	mux.HandleFunc("POST /setup/printer", s.setupPrinterPost)
 	mux.HandleFunc("POST /setup/printer/probe", s.setupProbe)
+	mux.HandleFunc("POST /setup/printer/identify", s.setupIdentify)
 	mux.HandleFunc("GET /setup/test", s.setupTest)
 	mux.HandleFunc("POST /setup/test", s.setupTestPost)
 	mux.HandleFunc("GET /setup/name", s.setupName)
@@ -315,6 +316,25 @@ func (s *Server) setupProbe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d.Candidates = sortCandidates(d.Candidates)
+	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
+}
+
+// setupIdentify asks an unknown network printer what it is (Zebra ~HI), after the user pressed
+// the button that warns about it.
+func (s *Server) setupIdentify(w http.ResponseWriter, r *http.Request) {
+	_, d, unlock := lockDraft(r)
+	defer unlock()
+	i, err := strconv.Atoi(r.FormValue("candidate"))
+	if err == nil && i >= 0 && i < len(d.Candidates) && d.Candidates[i].Kind == "tcp" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		c, _, err := discovery.Identify(ctx, devicedb.Default(), d.Candidates[i])
+		cancel()
+		d.Candidates[i] = c
+		if err != nil {
+			d.Notes = []string{fmt.Sprintf("%s: %v", c.Host, err)}
+		}
+		d.Candidates = sortCandidates(d.Candidates)
+	}
 	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 }
 
