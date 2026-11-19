@@ -362,3 +362,15 @@ func TestPollWait(t *testing.T) {
 		}
 	}
 }
+
+// A loop replaced after a settings change passes on the results Part-DB didn't accept yet,
+// so a printed job doesn't stay "claimed".
+func TestHandOverUnreported(t *testing.T) {
+	old, next := &Loop{}, &Loop{}
+	old.unreported = []report{{id: 7, ok: true, message: "printed"}}
+	next.unreported = []report{{id: 9}}
+	old.HandOver(next)
+	if len(old.unreported) != 0 || len(next.unreported) != 2 || next.unreported[0].id != 7 {
+		t.Errorf("old %+v next %+v", old.unreported, next.unreported)
+	}
+}

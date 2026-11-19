@@ -47,6 +47,8 @@ in Part-DB, click your user name (top right) → User settings → API tokens, a
 {{define "setup-printer"}}{{template "setup-top" .}}
 <h2>Which printer do you want to use?</h2>
 {{range .D.Notes}}<p class="flash">{{.}}</p>{{end}}
+{{with .D.APIErr}}<p class="flash err">Couldn't check whether this Part-DB can send print jobs to a print server ({{.}}).
+You can still set up the printer.</p>{{end}}
 {{if .D.NoAgentAPI}}<p class="flash err">This Part-DB can't send print jobs to a print server yet (it has no print agent
 API). You can still set up the printer; printing from Part-DB needs a newer Part-DB.</p>{{end}}
 {{with .ScanErr}}<p class="flash err">Searching the network failed: {{.}}</p>{{end}}
@@ -108,6 +110,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <button name="action" value="nothing"><span class="card nothing">nothing<br>came out</span>Nothing printed</button>
   </form>
   <p class="muted">Picking a problem changes a setting and prints the label again.</p>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button class="secondary" name="action" value="print">Print again</button></form>
 {{end}}
 {{if .D.ShowReport}}<form method="get" action="/setup/report"><p>Still not right? <button class="link">Send us a report</button> and we'll look into it.</p></form>{{end}}
 <div class="nav"><a class="button secondary" href="/setup/printer">Back</a><span></span></div>
@@ -132,6 +135,9 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
 {{if .D.NoAgentAPI}}
 <p>“{{$last}}” is set up. This Part-DB can't send print jobs to a print server yet; once it can,
 the printer shows up there by itself.</p>
+{{else if .D.APIErr}}
+<p>“{{$last}}” is set up. pdb-print couldn't check whether this Part-DB can send print jobs to a
+print server; if it can, the printer shows up there by itself.</p>
 {{else}}
 <p>Part-DB now shows “{{$last}}” when you print labels.</p>
 {{end}}

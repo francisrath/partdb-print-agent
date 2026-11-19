@@ -373,7 +373,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if folderDone != nil {
 		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
 	}
-	jobsDone.Wait() // same for a print job from Part-DB
+	jobsDone.wait() // same for a print job from Part-DB
 	<-setupDone
 	return nil
 }
@@ -411,6 +411,9 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return err
 	}
+	if len(res.URLs) == 0 {
+		return errors.New("setup couldn't listen on the local network (no network address yet, or port 8631 in use): see the service log")
+	}
 	fmt.Fprintf(out, "Setup is open until %s. On another computer, open one of:\n\n", res.Expires.Local().Format("15:04"))
 	for _, u := range res.URLs {
 		fmt.Fprintf(out, "    %s\n", u)
@@ -422,30 +425,39 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 // agentJobs fetches print jobs from Part-DB instances that have a token (and the print agent API),
 // one loop per instance.
 type agentJobs struct {
-	ctx           context.Context
-	srv           *server.Server
-	log           *slog.Logger
-	agentID, name string
-	wg            sync.WaitGroup
-	mu            sync.Mutex
-	stop          map[string]context.CancelFunc // running loop per instance id
+	ctx  context.Context
+	srv  *server.Server
+	log  *slog.Logger
+	name string
+	wg   sync.WaitGroup
+
+	mu      sync.Mutex
+	closed  bool   // shutting down: no new loops
+	agentID string // persisted; "" until EnsureAgentID worked
+	loops   map[string]*jobLoop
+}
+
+type jobLoop struct {
+	loop *agentjobs.Loop
+	stop context.CancelFunc
+	done chan struct{} // closed when Run has returned
 }
 
 // startAgentJobs starts a loop for every configured instance and, through srv.OnInstance, for
 // instances connected later in the web UI.
-func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.WaitGroup {
-	j := &agentJobs{ctx: ctx, srv: srv, log: a.log, stop: map[string]context.CancelFunc{}}
-	agentID, err := srv.EnsureAgentID()
-	if err != nil {
-		a.log.Warn("print jobs disabled: can't save the agent id", "err", err)
-		return &j.wg
-	}
-	j.agentID = agentID
+func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *agentJobs {
+	j := &agentJobs{ctx: ctx, srv: srv, log: a.log, loops: map[string]*jobLoop{}}
 	j.name, _ = os.Hostname()
-	srv.OnInstance = j.start
+	srv.OnInstance = j.start // also when the agent id can't be saved yet: start retries it
+	id, err := srv.EnsureAgentID()
+	if err != nil {
+		a.log.Warn("print jobs disabled for now: can't save the agent id", "err", err)
+		return j
+	}
+	j.agentID = id
 	if len(a.cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == "" {
 		a.log.Info("not fetching print jobs", "reason", "no Part-DB connected")
-		return &j.wg
+		return j
 	}
 	ids := []string{""} // only PDB_PRINT_URL/PDB_PRINT_TOKEN
 	if len(a.cfg.Instances) > 0 {
@@ -462,31 +474,59 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 		}
 		j.start(*in)
 	}
-	return &j.wg
+	return j
 }
 
-// start runs the jobs loop for in, replacing a running one for the same instance
-// (a changed URL or token takes effect at once).
+// start runs the jobs loop for in, replacing a running one for the same instance (a changed URL
+// or token takes effect at once). The new loop takes over the old one's unreported results once
+// the old one has finished its job.
 func (j *agentJobs) start(in config.Instance) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.ctx.Err() != nil { // shutting down: serve is waiting for the loops already running
+	if j.closed || j.ctx.Err() != nil { // shutting down: wait() covers only loops already running
 		return
 	}
-	if stop := j.stop[in.ID]; stop != nil {
-		stop()
+	if j.agentID == "" {
+		id, err := j.srv.EnsureAgentID()
+		if err != nil {
+			j.log.Warn("not fetching print jobs: can't save the agent id", "err", err)
+			return
+		}
+		j.agentID = id
+	}
+	// whichever save notified last, run with the settings saved last
+	if cur, err := j.srv.Instance(in.ID); err == nil {
+		in = *cur
+	}
+	old := j.loops[in.ID]
+	if old != nil {
+		old.stop()
 	}
 	ctx, stop := context.WithCancel(j.ctx)
-	j.stop[in.ID] = stop
-	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
-	loop := &agentjobs.Loop{Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
+	l := &jobLoop{stop: stop, done: make(chan struct{}), loop: &agentjobs.Loop{
+		Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
 		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
-		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}
+		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}}
+	j.loops[in.ID] = l
+	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
 	j.wg.Add(1)
 	go func() {
 		defer j.wg.Done()
-		_ = loop.Run(ctx)
+		defer close(l.done)
+		if old != nil {
+			<-old.done
+			old.loop.HandOver(l.loop)
+		}
+		_ = l.loop.Run(ctx)
 	}()
+}
+
+// wait stops new loops from starting and waits for the running ones (after ctx is done).
+func (j *agentJobs) wait() {
+	j.mu.Lock()
+	j.closed = true
+	j.mu.Unlock()
+	j.wg.Wait()
 }
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {

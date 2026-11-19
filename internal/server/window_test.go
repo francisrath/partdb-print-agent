@@ -252,6 +252,7 @@ func startLAN(t *testing.T, h *harness, addrs func() []netip.Addr) (port int, ti
 	wg.Add(1)
 	go func() { defer wg.Done(); h.srv.SetupLoop(ctx, tick) }()
 	t.Cleanup(func() { cancel(); wg.Wait() })
+	eventually(t, "SetupLoop not started", h.srv.loopRunning.Load)
 	return port, tick
 }
 
@@ -282,8 +283,9 @@ func TestWindowCloseStopsLAN(t *testing.T) {
 	h.srv.Window.Close()
 	eventually(t, "LAN listener still up after Close", func() bool { return !reachable(addr) })
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := conn.Read(buf); err == nil {
-		t.Error("open connection survived the window")
+	_, err = conn.Read(buf)
+	if ne, ok := err.(net.Error); err == nil || ok && ne.Timeout() {
+		t.Errorf("open connection survived the window: %v", err)
 	}
 	if w := h.do("GET", "/", nil); w.Code != http.StatusOK {
 		t.Errorf("loopback UI after close: %d", w.Code)
@@ -337,5 +339,39 @@ func TestLANRejectsForeignHost(t *testing.T) {
 	r.Host = host + ".local:8631"
 	if w := serveLAN(lan, r); w.Code != http.StatusOK {
 		t.Errorf("mDNS name %s.local: %d", host, w.Code)
+	}
+}
+
+// Only addresses the setup server could listen on are advertised; one that can't be bound
+// (here: not this machine's) is left out.
+func TestPairAdvertisesBoundOnly(t *testing.T) {
+	h := newHarness(t)
+	startLAN(t, h, func() []netip.Addr {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("192.0.2.77")}
+	})
+	_, urls, _ := h.srv.OpenWindow(time.Now())
+	all := strings.Join(urls, " ")
+	if !strings.Contains(all, "127.0.0.1") || strings.Contains(all, "192.0.2.77") {
+		t.Errorf("urls %v", urls)
+	}
+}
+
+// The wizard answers only clients on the local network, even on a public address.
+func TestLANRejectsInternetClients(t *testing.T) {
+	h := newHarness(t)
+	h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	for remote, want := range map[string]int{
+		"203.0.113.5:4000":    http.StatusForbidden, // the internet
+		"[2001:db8::5]:4000":  http.StatusForbidden,
+		"192.168.1.40:4000":   http.StatusOK, // private
+		"[fd00::5]:4000":      http.StatusOK, // ULA
+		"[fe80::1%eth0]:4000": http.StatusOK, // link-local
+	} {
+		r := lanReq("GET", "/setup/", nil, nil)
+		r.RemoteAddr = remote
+		if w := serveLAN(lan, r); w.Code != want {
+			t.Errorf("client %s: %d, want %d", remote, w.Code, want)
+		}
 	}
 }

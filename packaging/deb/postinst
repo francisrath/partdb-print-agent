@@ -1,6 +1,7 @@
 #!/bin/sh
 # Runs after the package is installed or upgraded.
 set -e
+if [ "$1" != configure ]; then exit 0; fi
 # a system user for the service (no login, no home)
 if ! getent passwd pdb-print > /dev/null; then
   useradd --system --user-group --home-dir /var/lib/pdb-print --no-create-home --shell /usr/sbin/nologin pdb-print
@@ -10,10 +11,16 @@ if [ ! -e /var/lib/pdb-print/config.yaml ]; then
   install -d -o pdb-print -g pdb-print -m 0700 /var/lib/pdb-print
   install -o pdb-print -g pdb-print -m 0600 /dev/null /var/lib/pdb-print/config.yaml
 fi
-# start the service now and at every boot (restart: an upgrade runs the new version);
-# skipped where systemd isn't running (a container or chroot)
+# start the service at boot, unless an administrator disabled it (Debian's helpers remember that)
+deb-systemd-helper unmask pdb-print.service > /dev/null || true
+if deb-systemd-helper --quiet was-enabled pdb-print.service; then
+  deb-systemd-helper enable pdb-print.service > /dev/null || true
+else
+  deb-systemd-helper update-state pdb-print.service > /dev/null || true
+fi
+# (re)start it now (an upgrade runs the new version); skipped in a container or chroot and when
+# the administrator's policy-rc.d says no
 if [ -d /run/systemd/system ]; then
-  systemctl daemon-reload
-  systemctl enable pdb-print.service
-  systemctl restart pdb-print.service
+  systemctl --system daemon-reload > /dev/null || true
+  deb-systemd-invoke restart pdb-print.service > /dev/null || true
 fi

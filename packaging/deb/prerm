@@ -3,5 +3,5 @@
 # the pdb-print user stay, so reinstalling keeps the setup.
 set -e
 if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
-  systemctl disable --now pdb-print.service || true
+  deb-systemd-invoke stop pdb-print.service > /dev/null || true
 fi

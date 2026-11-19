@@ -31,6 +31,7 @@ type Draft struct {
 	Instance   *config.Instance // a new Part-DB connection (token included); nil = keep the configured one
 	Notes      []string         // shown on the printer page (connected as …, warnings)
 	NoAgentAPI bool             // Part-DB can't send jobs to this agent
+	APIErr     string           // the print agent API couldn't be checked (unknown)
 	APIChecked bool             // NoAgentAPI is known for the configured instance
 
 	Candidates []discovery.Candidate
@@ -44,12 +45,14 @@ type Draft struct {
 	ShowReport    bool
 	FixRounds     int
 
-	Saved []string // names saved in this session
+	SavedCurrent bool     // this printer is saved (a repeated Save goes to Done)
+	Saved        []string // names saved in this session
 }
 
 // resetPrinter starts the printer steps over with p.
 func (d *Draft) resetPrinter(p config.Printer) {
 	d.Printer, d.Printed, d.MediaReported, d.AskMedia, d.Msg, d.ShowReport, d.FixRounds = p, false, false, false, "", false, 0
+	d.SavedCurrent = false
 }
 
 const issueURL = "https://github.com/francisrath/partdb-print-agent/issues/new"
@@ -114,7 +117,7 @@ func (s *Server) setupPartDB(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			ok, err := partdb.FromInstance(cur).HasAgentAPI(ctx)
 			cancel()
-			d.NoAgentAPI, d.APIChecked = err == nil && !ok, true
+			d.NoAgentAPI, d.APIErr, d.APIChecked = err == nil && !ok, errText(err), true
 		}
 		http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 		return
@@ -152,12 +155,19 @@ func (s *Server) setupPartDBPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api, apiErr := c.HasAgentAPI(ctx)
-	d.Instance, d.NoAgentAPI = &in, apiErr == nil && !api
+	d.Instance, d.NoAgentAPI, d.APIErr, d.APIChecked = &in, apiErr == nil && !api, errText(apiErr), true
 	d.Notes = []string{fmt.Sprintf("Connected to Part-DB as %s.", tok.User.Name)}
 	if tok.Level > 1 {
 		d.Notes = append(d.Notes, "This token can change data in Part-DB; a read-only token is enough. You can carry on, or create a read-only one and come back.")
 	}
 	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // partDBError says in plain words why Part-DB couldn't be reached.
@@ -379,6 +389,7 @@ func (s *Server) setupTestPost(w http.ResponseWriter, r *http.Request) {
 // roll is asked about first.
 func (s *Server) setupPrint(ctx context.Context, d *Draft) {
 	p := &d.Printer
+	d.Printed = false // only a label printed with the current settings counts
 	if p.Media == "" {
 		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		st, err := s.Svc.Status(sctx, p)
@@ -440,6 +451,10 @@ func (s *Server) setupName(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	_, d, unlock := lockDraft(r)
 	defer unlock()
+	if d.SavedCurrent { // a repeated Save
+		http.Redirect(w, r, "/setup/done", http.StatusSeeOther)
+		return
+	}
 	if !d.Printed {
 		http.Redirect(w, r, "/setup/test", http.StatusSeeOther)
 		return
@@ -452,15 +467,19 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 	p := d.Printer
 	p.Name = name
 	var warn, instID string
+	var undo func()
 	err := s.update(func(c *config.Config) error {
 		if d.Instance != nil {
-			instID, warn = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
+			instID, warn, undo = s.putInstance(c, d.Instance.BaseURL, d.Instance.Token, d.Instance.AllowHTTP)
 		}
 		p.ID = uniqueID(c, slug(name))
 		c.Printers = append(c.Printers, p)
 		return nil
 	})
 	if err != nil {
+		if undo != nil {
+			undo()
+		}
 		s.setupPage(w, r, "setup-name", 4, map[string]any{"Err": "Couldn't save: " + err.Error(), "Ideas": nameIdeas(d)})
 		return
 	}
@@ -471,7 +490,7 @@ func (s *Server) setupNamePost(w http.ResponseWriter, r *http.Request) {
 		d.Instance = nil
 		s.instanceSaved(instID)
 	}
-	d.Saved = append(d.Saved, name)
+	d.Saved, d.SavedCurrent = append(d.Saved, name), true
 	http.Redirect(w, r, "/setup/done", http.StatusSeeOther)
 }
 

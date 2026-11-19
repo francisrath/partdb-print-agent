@@ -213,3 +213,10 @@ func (l *Loop) retryReports(ctx context.Context) {
 	}
 	l.unreported = failed
 }
+
+// HandOver gives next the results l couldn't report to Part-DB yet (they are retried first).
+// Call it only after l.Run has returned.
+func (l *Loop) HandOver(next *Loop) {
+	next.unreported = append(l.unreported, next.unreported...)
+	l.unreported = nil
+}

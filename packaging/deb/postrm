@@ -1,6 +1,13 @@
 #!/bin/sh
-# Runs after the package is removed: forget the removed service unit.
+# Runs after the package is removed: forget the service's boot setting (on purge) and the unit.
 set -e
+if [ "$1" = remove ] && [ -x /usr/bin/deb-systemd-helper ]; then
+  deb-systemd-helper mask pdb-print.service > /dev/null || true
+fi
+if [ "$1" = purge ] && [ -x /usr/bin/deb-systemd-helper ]; then
+  deb-systemd-helper purge pdb-print.service > /dev/null || true
+  deb-systemd-helper unmask pdb-print.service > /dev/null || true
+fi
 if [ -d /run/systemd/system ]; then
-  systemctl daemon-reload || true
+  systemctl --system daemon-reload > /dev/null || true
 fi

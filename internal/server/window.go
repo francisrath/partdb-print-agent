@@ -69,10 +69,10 @@ func (w *Window) Open(now time.Time) (code string, expires time.Time) {
 func (w *Window) IsOpen(now time.Time) bool {
 	w.mu.Lock()
 	open := w.open && now.Before(w.expires.Add(time.Nanosecond))
-	expired := w.open && !open
+	closed := w.open && !open && w.closeLocked()
 	w.mu.Unlock()
-	if expired {
-		w.Close()
+	if closed {
+		w.notifyClose()
 	}
 	return open
 }
@@ -89,10 +89,10 @@ func (w *Window) Check(code string, now time.Time) (*Session, bool) {
 	}
 	if subtle.ConstantTimeCompare([]byte(code), []byte(w.code)) != 1 {
 		w.tries++
-		tooMany := w.tries >= windowTries
+		closed := w.tries >= windowTries && w.closeLocked() // under the lock: no session after the 5th
 		w.mu.Unlock()
-		if tooMany {
-			w.Close()
+		if closed {
+			w.notifyClose()
 		}
 		return nil, false
 	}
@@ -138,10 +138,22 @@ func (w *Window) Expires() time.Time {
 // Close ends the window and every session.
 func (w *Window) Close() {
 	w.mu.Lock()
+	closed := w.closeLocked()
+	w.mu.Unlock()
+	if closed {
+		w.notifyClose()
+	}
+}
+
+// closeLocked closes the window (w.mu held) and reports whether it was open.
+func (w *Window) closeLocked() bool {
 	was := w.open
 	w.open, w.code, w.sessions = false, "", nil
-	w.mu.Unlock()
-	if was && w.OnClose != nil {
+	return was
+}
+
+func (w *Window) notifyClose() {
+	if w.OnClose != nil {
 		w.OnClose()
 	}
 }
@@ -149,18 +161,45 @@ func (w *Window) Close() {
 // OpenWindow opens the setup window and returns the code and the URLs to type it at.
 func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires time.Time) {
 	code, expires = s.Window.Open(now)
+	select { // forget an older scan, then wait for SetupLoop to listen
+	case <-s.scanned:
+	default:
+	}
 	s.kickSetup()
+	if s.loopRunning.Load() {
+		select {
+		case <-s.scanned:
+		case <-time.After(3 * time.Second): // slow: advertise what's bound so far
+		}
+	}
 	_, port, _ := net.SplitHostPort(s.Addr)
-	if h, err := os.Hostname(); err == nil && h != "" && h != "localhost" {
+	addrs := s.boundAddrs()
+	if h, err := os.Hostname(); err == nil && h != "" && h != "localhost" && len(addrs) > 0 {
 		h, _, _ = strings.Cut(h, ".") // mDNS name: pdb-print-pi.local
 		urls = append(urls, "http://"+net.JoinHostPort(h+".local", port)+"/setup/")
 	}
-	addrs := s.lanAddrs()
 	slices.SortStableFunc(addrs, func(a, b netip.Addr) int { return cmp.Compare(a.BitLen(), b.BitLen()) }) // IPv4 first
 	for _, a := range addrs {
 		urls = append(urls, "http://"+net.JoinHostPort(a.String(), port)+"/setup/")
 	}
 	return code, urls, expires
+}
+
+// boundAddrs are the LAN addresses the setup server listens on right now.
+func (s *Server) boundAddrs() []netip.Addr {
+	s.boundMu.Lock()
+	defer s.boundMu.Unlock()
+	return slices.Clone(s.bound)
+}
+
+func (s *Server) setBound(m map[netip.Addr]bool) {
+	s.boundMu.Lock()
+	s.bound = s.bound[:0]
+	for a := range m {
+		s.bound = append(s.bound, a)
+	}
+	slices.SortFunc(s.bound, func(a, b netip.Addr) int { return a.Compare(b) })
+	s.boundMu.Unlock()
 }
 
 func (s *Server) kickSetup() {
@@ -202,8 +241,11 @@ func LocalAddrs() []netip.Addr {
 // (rescanning on each tick, so Wi-Fi that comes up late is picked up); when it closes, the
 // listeners and their connections are closed. Run it for the lifetime of serve.
 func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
+	s.loopRunning.Store(true)
+	defer s.loopRunning.Store(false)
 	var hs *http.Server
 	bound := map[netip.Addr]bool{}
+	failed := map[netip.Addr]bool{} // warned about once per window
 	_, portS, _ := net.SplitHostPort(s.Addr)
 	port, _ := strconv.Atoi(portS)
 	stop := func() {
@@ -214,7 +256,8 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 				_ = hs.Close()
 			}
 			cancel()
-			hs, bound = nil, map[netip.Addr]bool{}
+			hs, bound, failed = nil, map[netip.Addr]bool{}, map[netip.Addr]bool{}
+			s.setBound(bound)
 			s.Log.Info("setup window closed")
 		}
 	}
@@ -230,7 +273,10 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 				}
 				ln, err := net.Listen("tcp", netip.AddrPortFrom(a, uint16(port)).String())
 				if err != nil {
-					s.Log.Debug("setup window: can't listen", "addr", a, "err", err)
+					if !failed[a] {
+						s.Log.Warn("setup window: can't listen on this address; it won't be offered", "addr", a, "err", err)
+						failed[a] = true
+					}
 					continue
 				}
 				bound[a] = true
@@ -241,8 +287,13 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 					}
 				}(hs)
 			}
+			s.setBound(bound)
 		} else {
 			stop()
+		}
+		select { // tell OpenWindow this scan is done
+		case s.scanned <- struct{}{}:
+		default:
 		}
 		select {
 		case <-ctx.Done():
@@ -268,6 +319,10 @@ func (s *Server) LANHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w)
 		now := time.Now()
+		if !s.lanClient(r.RemoteAddr) {
+			http.Error(w, "setup is only open to the local network", http.StatusForbidden)
+			return
+		}
 		if !s.lanHost(r.Host) { // against DNS rebinding: only our own addresses and mDNS name
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
@@ -303,6 +358,34 @@ func (s *Server) LANHandler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// lanClient reports whether a request comes from the local network: a private, unique-local,
+// link-local or loopback address, or the same subnet as one of ours (a LAN on public addresses).
+// ponytail: "same subnet" is assumed to be the /24 or /64; reading the real prefix is the upgrade.
+func (s *Server) lanClient(remote string) bool {
+	h, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap().WithZone("")
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	for _, a := range s.lanAddrs() {
+		bits := 64
+		if a.Is4() {
+			bits = 24
+		}
+		if p, err := a.Prefix(bits); err == nil && p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // lanHost reports whether host (host:port from the request) names this machine on the LAN.

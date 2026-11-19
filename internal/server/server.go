@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/assets"
@@ -72,10 +73,14 @@ type Server struct {
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
-	Window   *Window
-	LANAddrs func() []netip.Addr
-	kick     chan struct{} // wakes SetupLoop
-	local    *Session      // the wizard's session on loopback (no code needed there)
+	Window      *Window
+	LANAddrs    func() []netip.Addr
+	kick        chan struct{} // wakes SetupLoop
+	scanned     chan struct{} // SetupLoop finished a scan
+	boundMu     sync.Mutex
+	bound       []netip.Addr // LAN addresses the setup server listens on
+	loopRunning atomic.Bool  // SetupLoop is running (OpenWindow waits for its scan)
+	local       *Session     // the wizard's session on loopback (no code needed there)
 	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
@@ -103,7 +108,7 @@ type Job struct {
 
 func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Logger, addr, version string) *Server {
 	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
-		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1)}
+		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
 	s.Window.OnClose = s.kickSetup
 	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	return s
@@ -135,7 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
 		d := s.local.Draft // a fresh start
 		d.mu.Lock()
-		d.Instance, d.Notes, d.NoAgentAPI, d.Candidates, d.Scanned, d.Saved = nil, nil, false, nil, false, nil
+		d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
 		d.resetPrinter(config.Printer{})
 		d.mu.Unlock()
 		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
@@ -318,6 +323,7 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 	baseURL := strings.TrimRight(strings.TrimSpace(r.FormValue("base_url")), "/")
 	token := strings.TrimSpace(r.FormValue("token"))
 	var warn, id string
+	var undo func()
 	err := s.update(func(c *config.Config) error {
 		if len(c.Instances) == 0 {
 			c.Instances = append(c.Instances, config.Instance{ID: "default"})
@@ -343,19 +349,22 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 			warn = " (this token can do more than needed: a Read-Only token is enough)"
 		}
 		var note string
-		id, note = s.putInstance(c, baseURL, token, in.AllowHTTP)
+		id, note, undo = s.putInstance(c, baseURL, token, in.AllowHTTP)
 		warn += note
 		return nil
 	})
 	if err == nil {
 		s.instanceSaved(id)
+	} else if undo != nil {
+		undo()
 	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
 }
 
 // putInstance stores the first Part-DB instance's URL and token (in the OS keychain when there
-// is one, else in the 0600 config file); it returns the instance id and a note for the user, or "".
-func (s *Server) putInstance(c *config.Config, baseURL, token string, allowHTTP bool) (id, note string) {
+// is one, else in the 0600 config file); it returns the instance id, a note for the user (or "")
+// and, when it changed the keychain, a func that undoes that if the config isn't saved.
+func (s *Server) putInstance(c *config.Config, baseURL, token string, allowHTTP bool) (id, note string, undo func()) {
 	if len(c.Instances) == 0 {
 		c.Instances = append(c.Instances, config.Instance{ID: "default"})
 	}
@@ -364,15 +373,27 @@ func (s *Server) putInstance(c *config.Config, baseURL, token string, allowHTTP 
 	if in.PairingKey == "" {
 		in.PairingKey = randomHex(32)
 	}
+	prev, prevErr := keyring.Get(config.KeyringService, in.ID)
 	if err := keyring.Set(config.KeyringService, in.ID, token); err != nil {
 		// normal on a headless server (no desktop keychain), so info, not a warning
 		s.Log.Info("no OS keychain; the token is kept in the config file, readable only by this user", "err", err)
 		in.Token = token
-		return in.ID, " (token kept in the config file, readable only by pdb-print)"
+		return in.ID, " (token kept in the config file, readable only by pdb-print)", nil
 	}
 	in.Token = ""
-	return in.ID, ""
+	id = in.ID
+	// if the config can't be saved, the keychain must keep the token that goes with the old URL
+	return id, "", func() {
+		if prevErr == nil {
+			_ = keyring.Set(config.KeyringService, id, prev)
+		} else {
+			_ = keyring.Delete(config.KeyringService, id)
+		}
+	}
 }
+
+// Instance is a Part-DB instance as currently saved (token filled in).
+func (s *Server) Instance(id string) (*config.Instance, error) { return s.config().Instance(id) }
 
 // instanceSaved hands a newly saved instance (with its token) to OnInstance.
 func (s *Server) instanceSaved(id string) {

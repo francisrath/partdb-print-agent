@@ -32,6 +32,14 @@ cat > "$work/bin/pdb-print" <<'T'
 #!/bin/sh
 echo "pdb-print $*" >> "$LOG"
 T
+cat > "$work/bin/id" <<'T'
+#!/bin/sh
+echo "$FAKE_UID"
+T
+cat > "$work/bin/apt-get" <<'T'
+#!/bin/sh
+echo "apt-get $*" >> "$LOG"
+T
 chmod +x "$work/bin/"*
 
 # run ARCH [RELEASE]: runs install.sh, leaves its output in $out and the tool log in $log
@@ -68,15 +76,6 @@ run arm64
 check "explains sudo right before using it" sh -c 'echo "$1" | grep -q "administrator rights (sudo)"' _ "$out"
 
 # as root (no sudo on a minimal Debian): installs without sudo
-cat > "$work/bin/id" <<'T'
-#!/bin/sh
-echo "${FAKE_UID:-1000}"
-T
-cat > "$work/bin/apt-get" <<'T'
-#!/bin/sh
-echo "apt-get $*" >> "$LOG"
-T
-chmod +x "$work/bin/id" "$work/bin/apt-get"
 FAKE_UID=0 run amd64
 check "root: installs without sudo" sh -c "[ $status -eq 0 ] && grep -q '^apt-get install -y .*_amd64.deb$' '$log' && ! grep -q '^sudo' '$log'"
 

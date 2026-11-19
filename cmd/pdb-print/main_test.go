@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -207,9 +208,9 @@ func TestServeLogsWhichPartDBItFetchesJobsFrom(t *testing.T) {
 	srv := server.New(cfg, path, nil, a.log, "127.0.0.1:0", "test")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	wg := a.startAgentJobs(ctx, srv)
+	jobs := a.startAgentJobs(ctx, srv)
 	cancel()
-	wg.Wait()
+	jobs.wait()
 
 	out := logs.String()
 	if !strings.Contains(out, `msg="fetching print jobs" instance=home url=`+partDB.URL) {
@@ -231,7 +232,7 @@ func TestServeWithoutPartDBSaysSo(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	a := &app{cfg: cfg, cfgPath: path, log: slog.New(slog.NewTextHandler(&logs, nil))}
-	a.startAgentJobs(context.Background(), server.New(cfg, path, nil, a.log, "127.0.0.1:0", "test")).Wait()
+	a.startAgentJobs(context.Background(), server.New(cfg, path, nil, a.log, "127.0.0.1:0", "test")).wait()
 
 	if out := logs.String(); !strings.Contains(out, `msg="not fetching print jobs" reason="no Part-DB connected"`) {
 		t.Errorf("want a plain reason when no Part-DB is set up:\n%s", out)
@@ -317,6 +318,13 @@ func TestPairCmd(t *testing.T) {
 	if err := pairCmd(context.Background(), []string{"--addr", "127.0.0.1:1"}, &out); err == nil || !strings.Contains(err.Error(), "running") {
 		t.Errorf("no service: %v", err)
 	}
+	none := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":"482913","urls":[],"expires":"2026-11-19T12:15:00Z"}`)
+	}))
+	t.Cleanup(none.Close)
+	if err := pairCmd(context.Background(), []string{"--addr", strings.TrimPrefix(none.URL, "http://")}, &out); err == nil || !strings.Contains(err.Error(), "network") {
+		t.Errorf("no LAN address bound: %v", err)
+	}
 }
 
 func TestNeedsSetup(t *testing.T) {
@@ -332,3 +340,38 @@ func TestNeedsSetup(t *testing.T) {
 		t.Error("instance from the environment")
 	}
 }
+
+// When the agent id couldn't be saved at startup, connecting Part-DB later still starts the jobs.
+func TestJobsStartAfterAgentIDRecovers(t *testing.T) {
+	partDB := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(partDB.Close)
+	cfg := &config.Config{}
+	var logs syncBuffer
+	a := &app{cfg: cfg, log: slog.New(slog.NewTextHandler(&logs, nil))}
+	srv := server.New(cfg, t.TempDir(), nil, a.log, "127.0.0.1:0", "test") // a directory: saving fails
+	ctx, cancel := context.WithCancel(context.Background())
+	jobs := a.startAgentJobs(ctx, srv)
+	if srv.OnInstance == nil {
+		t.Fatal("no hook after the agent id failed")
+	}
+	srv.CfgPath = filepath.Join(t.TempDir(), "config.yaml") // storage is back
+	srv.OnInstance(config.Instance{ID: "default", BaseURL: partDB.URL, Token: "tcp_test"})
+	cancel()
+	jobs.wait()
+	if !strings.Contains(logs.String(), `msg="fetching print jobs" instance=default`) {
+		t.Errorf("jobs not started:\n%s", logs.String())
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the loop goroutines' logging.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

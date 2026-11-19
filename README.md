@@ -29,7 +29,8 @@ installs it with `apt-get` (the one step that needs `sudo`) and shows a setup co
 - a `pdb-print` systemd service; its config is `/var/lib/pdb-print/config.yaml`.
 
 Its scripts only create that user and an empty config, enable and (re)start the service, and stop
-and disable it on removal (`packaging/deb/`).
+it on removal, through Debian's `deb-systemd-helper`/`deb-systemd-invoke`, so a service you disabled
+stays disabled on upgrades (`packaging/deb/`).
 On 32-bit Raspberry Pi OS it also installs `poppler-utils`, whose `pdftoppm` renders labels much faster there.
 
 Then, on any computer on the same network, open the address the script shows

@@ -62,6 +62,7 @@ nfpms:
     description: Direct label printing for Part-DB
     license: MIT
     section: utils
+    dependencies: [init-system-helpers] # deb-systemd-helper/-invoke in the maintainer scripts
     contents:
       - src: packaging/deb/pdb-print.service
         dst: /usr/lib/systemd/system/pdb-print.service
@@ -72,7 +73,7 @@ nfpms:
   - <<: *deb
     id: deb-armhf
     ids: [pdb-print-arm]
-    dependencies: [poppler-utils]
+    dependencies: [init-system-helpers, poppler-utils]
 
 release:
   extra_files:

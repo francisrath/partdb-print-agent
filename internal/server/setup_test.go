@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/zalando/go-keyring"
 )
 
 // fakeQLCandidate is what discovery reports for the harness's fake network QL.
@@ -274,5 +277,86 @@ func TestWizardKeepsInstanceID(t *testing.T) {
 	h.post("/setup/name", url.Values{"name": {"Desk"}})
 	if len(started) != 1 || started[0] != "home" {
 		t.Errorf("jobs started for %v", started)
+	}
+}
+
+// brokenTransport is a printer that can't be reached.
+type brokenTransport struct{}
+
+func (brokenTransport) Open(context.Context) error  { return errors.New("no route to host") }
+func (brokenTransport) Write(p []byte) (int, error) { return 0, errors.New("closed") }
+func (brokenTransport) Read([]byte) (int, error)    { return 0, errors.New("closed") }
+func (brokenTransport) Close() error                { return nil }
+func (brokenTransport) Kind() string                { return "tcp" }
+
+// A fix whose reprint fails isn't confirmed by the earlier test: "Looks right" and saving wait
+// for a label that printed with the current settings; "Print again" retries without changes.
+func TestFailedReprintNeedsNewTest(t *testing.T) {
+	h := newHarness(t)
+	wizardToTest(t, h, partDBWith(t, h, nil))
+	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return brokenTransport{} }
+	body := h.post("/setup/test", url.Values{"action": {"mirrored"}}).Body.String()
+	if strings.Contains(body, `value="right"`) {
+		t.Errorf("Looks right offered after a failed print: %s", body)
+	}
+	if !strings.Contains(body, `value="print"`) {
+		t.Errorf("no Print again: %s", body)
+	}
+	wantRedirect(t, h.post("/setup/name", url.Values{"name": {"Desk"}}), "/setup/test")
+}
+
+func TestPrintAgainAfterNothingPrinted(t *testing.T) {
+	h := newHarness(t)
+	wizardToTest(t, h, partDBWith(t, h, nil))
+	if body := h.post("/setup/test", url.Values{"action": {"nothing"}}).Body.String(); !strings.Contains(body, `value="print"`) {
+		t.Errorf("no Print again after nothing printed: %s", body)
+	}
+	h.post("/setup/test", url.Values{"action": {"print"}})
+	<-h.jobs
+}
+
+// A repeated Save (double click, reload) doesn't add the printer twice.
+func TestNameSaveOnce(t *testing.T) {
+	h := newHarness(t)
+	wizardToTest(t, h, partDBWith(t, h, nil))
+	h.post("/setup/test", url.Values{"action": {"right"}})
+	h.post("/setup/name", url.Values{"name": {"Desk"}})
+	wantRedirect(t, h.post("/setup/name", url.Values{"name": {"Desk"}}), "/setup/done")
+	if n := len(h.srv.config().Printers); n != 2 { // the harness's "ql" + Desk
+		t.Errorf("%d printers", n)
+	}
+}
+
+// A Part-DB whose print agent API can't be checked isn't promised to work.
+func TestAgentAPIUnknown(t *testing.T) {
+	h := newHarness(t)
+	wizardToTest(t, h, partDBWith(t, h, map[string]http.HandlerFunc{"/en/agent-api/": agentAPI(http.StatusInternalServerError)}))
+	h.post("/setup/test", url.Values{"action": {"right"}})
+	h.post("/setup/name", url.Values{"name": {"Desk"}})
+	if body := h.do("GET", "/setup/done", nil).Body.String(); strings.Contains(body, "Part-DB now shows") || !strings.Contains(body, "couldn't check") {
+		t.Errorf("done page: %s", body)
+	}
+}
+
+// A fresh start checks the configured Part-DB again.
+func TestFreshStartRechecksAPI(t *testing.T) {
+	h := newHarness(t)
+	h.srv.local.Draft.APIChecked = true
+	h.do("GET", "/setup/", nil)
+	if h.srv.local.Draft.APIChecked {
+		t.Error("APIChecked survived a fresh start")
+	}
+}
+
+// When saving fails, the keychain keeps the token that goes with the saved URL.
+func TestFailedSaveKeepsKeychainToken(t *testing.T) {
+	h := newHarness(t)
+	if err := keyring.Set(config.KeyringService, "default", "old-token"); err != nil {
+		t.Fatal(err)
+	}
+	h.srv.CfgPath = t.TempDir() // a directory: writing the config fails
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	if got, _ := keyring.Get(config.KeyringService, "default"); got != "old-token" {
+		t.Errorf("keychain token %q after a failed save", got)
 	}
 }
