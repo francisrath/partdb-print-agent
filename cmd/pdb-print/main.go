@@ -356,20 +356,34 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	return nil
 }
 
-// startAgentJobs fetches print jobs from every Part-DB instance that has a token (and the print agent API).
-// ponytail: instances and tokens are read once at startup; changing them in the UI needs a restart.
+// agentJobs fetches print jobs from Part-DB instances that have a token (and the print agent API),
+// one loop per instance.
+type agentJobs struct {
+	ctx           context.Context
+	srv           *server.Server
+	log           *slog.Logger
+	agentID, name string
+	wg            sync.WaitGroup
+	mu            sync.Mutex
+	stop          map[string]context.CancelFunc // running loop per instance id
+}
+
+// startAgentJobs starts a loop for every configured instance and, through srv.OnInstance, for
+// instances connected later in the web UI.
 func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.WaitGroup {
-	var wg sync.WaitGroup
+	j := &agentJobs{ctx: ctx, srv: srv, log: a.log, stop: map[string]context.CancelFunc{}}
 	agentID, err := srv.EnsureAgentID()
 	if err != nil {
 		a.log.Warn("print jobs disabled: can't save the agent id", "err", err)
-		return &wg
+		return &j.wg
 	}
+	j.agentID = agentID
+	j.name, _ = os.Hostname()
+	srv.OnInstance = j.start
 	if len(a.cfg.Instances) == 0 && os.Getenv("PDB_PRINT_URL") == "" {
 		a.log.Info("not fetching print jobs", "reason", "no Part-DB connected")
-		return &wg
+		return &j.wg
 	}
-	name, _ := os.Hostname()
 	ids := []string{""} // only PDB_PRINT_URL/PDB_PRINT_TOKEN
 	if len(a.cfg.Instances) > 0 {
 		ids = nil
@@ -383,17 +397,30 @@ func (a *app) startAgentJobs(ctx context.Context, srv *server.Server) *sync.Wait
 			a.log.Info("not fetching print jobs", "instance", id, "reason", err)
 			continue
 		}
-		a.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
-		loop := &agentjobs.Loop{Client: partdb.FromInstance(in), AgentID: agentID, Name: name, Version: appVersion(),
-			Printers: srv.AgentPrinters, Log: a.log.With("instance", in.ID),
-			Print: func(ctx context.Context, job partdb.Job) (string, error) { return srv.PrintJob(ctx, in.ID, job) }}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = loop.Run(ctx)
-		}()
+		j.start(*in)
 	}
-	return &wg
+	return &j.wg
+}
+
+// start runs the jobs loop for in, replacing a running one for the same instance
+// (a changed URL or token takes effect at once).
+func (j *agentJobs) start(in config.Instance) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if stop := j.stop[in.ID]; stop != nil {
+		stop()
+	}
+	ctx, stop := context.WithCancel(j.ctx)
+	j.stop[in.ID] = stop
+	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
+	loop := &agentjobs.Loop{Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
+		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
+		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}
+	j.wg.Add(1)
+	go func() {
+		defer j.wg.Done()
+		_ = loop.Run(ctx)
+	}()
 }
 
 func (a *app) printPDF(ctx context.Context, printerID, dryRun string, src printing.Source) error {

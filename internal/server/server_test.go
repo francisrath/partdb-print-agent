@@ -523,3 +523,18 @@ func TestSavePrinterKeepsFixes(t *testing.T) {
 		t.Errorf("after edit: %+v %v", got, err)
 	}
 }
+
+// Connecting a Part-DB starts fetching its jobs without a restart.
+func TestSaveInstanceStartsJobs(t *testing.T) {
+	h := newHarness(t)
+	var got []config.Instance
+	h.srv.OnInstance = func(in config.Instance) { got = append(got, in) }
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {""}})
+	if len(got) != 0 {
+		t.Fatalf("called without a token: %+v", got)
+	}
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	if len(got) != 1 || got[0].BaseURL != h.partdb.URL || got[0].Token != "tcp_test" {
+		t.Errorf("OnInstance calls: %+v", got)
+	}
+}

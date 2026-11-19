@@ -63,6 +63,9 @@ type Server struct {
 	Log     *slog.Logger
 	Addr    string // host:port the listener is bound to (loopback)
 	Version string
+	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
+	// so its print jobs are fetched without a restart. nil = nothing.
+	OnInstance func(in config.Instance)
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
 	cfg   *config.Config
@@ -316,7 +319,23 @@ func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
+	if err == nil {
+		s.instanceSaved("default")
+	}
 	s.redirect(w, r, "Connected to Part-DB"+warn, err)
+}
+
+// instanceSaved hands a newly saved instance (with its token) to OnInstance.
+func (s *Server) instanceSaved(id string) {
+	if s.OnInstance == nil {
+		return
+	}
+	in, err := s.config().Instance(id)
+	if err != nil {
+		s.Log.Warn("not fetching print jobs", "instance", id, "reason", err)
+		return
+	}
+	s.OnInstance(*in)
 }
 
 func (s *Server) rotateKey(w http.ResponseWriter, r *http.Request) {
