@@ -134,6 +134,8 @@ const (
 	CutterJam     Code = "CUTTER_JAM"
 	PaperJam      Code = "PAPER_JAM"
 	Overheat      Code = "OVERHEAT"
+	Paused        Code = "PAUSED"     // the printer is paused (Zebra: press the feed button)
+	RibbonOut     Code = "RIBBON_OUT" // thermal transfer printers
 	CommsError    Code = "COMMS_ERROR"
 	Unsupported   Code = "UNSUPPORTED"
 	RenderError   Code = "RENDER_ERROR"
