@@ -244,10 +244,10 @@ func TestReportMasksZebraSerial(t *testing.T) {
 	}
 	raw, _ := r.JSON(true)
 	masked, _ := r.JSON(false)
-	if !strings.Contains(string(raw), "28J124202270") || !strings.Contains(string(raw), "ZBR4580776") {
+	if !strings.Contains(string(raw), "28J000000001") || !strings.Contains(string(raw), "ZBR0000001") {
 		t.Fatalf("queries didn't fetch serial and name: %s", raw)
 	}
-	if strings.Contains(string(masked), "28J124202270") || strings.Contains(string(masked), "ZBR4580776") {
+	if strings.Contains(string(masked), "28J000000001") || strings.Contains(string(masked), "ZBR0000001") || strings.Contains(string(masked), "192.0.2.10") {
 		t.Errorf("serial or printer name left in the report:\n%s", masked)
 	}
 }
@@ -258,5 +258,15 @@ func TestRedactIPInXML(t *testing.T) {
 	b, err := r.JSON(false)
 	if err != nil || strings.Contains(string(b), "192.168") {
 		t.Errorf("%s %v", b, err)
+	}
+}
+
+func TestMaskText(t *testing.T) {
+	r := &Report{Secrets: []string{"28J000000001"}}
+	got := r.Mask("dial tcp 192.168.105.33:9100: refused; serial 28J000000001; mac 00:07:4d:45:e5:a8")
+	for _, leak := range []string{"192.168", "28J000000001", "e5:a8"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q left in %q", leak, got)
+		}
 	}
 }

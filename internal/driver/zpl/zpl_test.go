@@ -161,6 +161,7 @@ func TestEncodeOffsets(t *testing.T) {
 		{driver.Options{OffsetXDots: 24, OffsetYDots: 16}, "^LH24,16^LS0^LT0^PW816^LL816"},
 		{driver.Options{OffsetXDots: -24, OffsetYDots: -16}, "^LH0,0^LS24^LT-16^PW816^LL816"},
 		{driver.Options{PrintWidthDots: 832}, "^LH0,0^LS0^LT0^PW832^LL816"},
+		{driver.Options{OffsetYDots: -400}, "^LH0,0^LS0^LT-120^PW816^LL816"}, // ^LT's limit
 	} {
 		d, _ := driver.New(m, tc.o)
 		var b strings.Builder

@@ -123,7 +123,7 @@ func TestTryHappyPath(t *testing.T) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}
 	}
-	for _, secret := range []string{"28J124202270", "ZBR4580776", "127.0.0.1", "192.168.105.33"} {
+	for _, secret := range []string{"28J000000001", "ZBR0000001", "127.0.0.1", "192.0.2.10", "192.0.2.11", "00:07:4D:00:00:01"} {
 		if strings.Contains(got, secret) {
 			t.Errorf("report contains %q: %s", secret, got[max(0, strings.Index(got, secret)-200):strings.Index(got, secret)+40])
 		}
@@ -210,4 +210,18 @@ func TestTryEOFWritesReport(t *testing.T) {
 	if !strings.Contains(got, "Label 1/5: printed") || !strings.Contains(all[len(all)-1], "^PW799^LL812") {
 		t.Errorf("report:\n%s\nlast sent %.80q", got, all[len(all)-1])
 	}
+}
+
+// Enter at "Which side" skips the fix but not the questions after it.
+func TestTrySkipSideContinues(t *testing.T) {
+	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
+	d := start(t, fake.Start(t))
+	d.answer("Ask this printer what it is?", "y")
+	d.answer("Number, or Enter for", "")
+	d.answer("Print the test labels now?", "y")
+	d.answer("Did label 1/5 come out", "")
+	d.answer("whole frame", "n")
+	d.answer("Which side", "")
+	d.answer("TOP at the top edge", "")
+	d.finish()
 }

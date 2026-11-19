@@ -44,16 +44,17 @@ type Options struct {
 }
 
 type session struct {
-	o       Options
-	ctx     context.Context
-	lines   chan string
-	stopped bool // input ended or the user quit: finish up
-	rep     *report.Report
-	sum     []string // the human summary at the top of the file
-	printer *config.Printer
-	model   *devicedb.Model
-	setup   map[string]int // the printer's own ^PW, ^LL, ^LH x/y, ^LS from ^HZA/^HH/~HS
-	printed bool           // a job ran: settings must be put back
+	o         Options
+	ctx       context.Context
+	lines     chan string
+	stopped   bool // input ended or the user quit: finish up
+	rep       *report.Report
+	sum       []string // the human summary at the top of the file
+	printer   *config.Printer
+	model     *devicedb.Model
+	candidate discovery.Candidate
+	setup     map[string]int // the printer's own ^PW, ^LL, ^LH x/y, ^LS from ^HZA/^HH/~HS
+	printed   bool           // a job ran: settings must be put back
 }
 
 // Run runs the session; it always writes the report (also when stopped early) and returns its path.
@@ -179,9 +180,9 @@ func (s *session) run() {
 	if !s.pickMedia() || s.stopped {
 		return
 	}
-	labels := 5
+	labels := 6 // 5 test labels; closing the lid at step 5 may feed one more
 	if s.square() {
-		labels = 4
+		labels = 5
 	}
 	if !s.ask(fmt.Sprintf("Print the test labels now? This uses %d labels (more if we try fixes).", labels), false) {
 		s.note("Stopped before printing.")
@@ -238,7 +239,11 @@ func (s *session) find() (discovery.Candidate, bool) {
 		return cs[0], true
 	}
 	for i, c := range cs {
-		s.say("  %d) %s %s\n", i+1, where(c), c.ModelID)
+		name := c.ModelID
+		if name == "" {
+			name = "(doesn't say what it is: could be the Zebra)"
+		}
+		s.say("  %d) %s %s\n", i+1, where(c), name)
 	}
 	for {
 		s.say("Which one is the printer to test? (1–%d) ", len(cs))
@@ -249,6 +254,7 @@ func (s *session) find() (discovery.Candidate, bool) {
 		if n, err := strconv.Atoi(a); err == nil && n >= 1 && n <= len(cs) {
 			return cs[n-1], true
 		}
+		s.say("Please type one of the numbers in the list.\n")
 	}
 }
 
@@ -283,7 +289,7 @@ func (s *session) identify(c discovery.Candidate) bool {
 		s.note("Not a Zebra: %q", c.ModelID)
 		return false
 	}
-	s.model = c.Model
+	s.model, s.candidate = c.Model, c
 	// the read-only queries, recorded with their replies (it answered ~HI: it's a Zebra)
 	s.rep.ZebraQueries(s.ctx, c, where(c))
 	s.readSetup()
@@ -295,12 +301,16 @@ func (s *session) identify(c discovery.Candidate) bool {
 	return true
 }
 
+// setupRes read the printer's own page settings from ^HH (print width, label length) and ^HZA
+// (shift, home, top), as a GK420d with firmware V61 writes them. Replies are recorded escaped
+// (\r\n as text), hence the (?:\\[rn]|\s)* between tags.
 var setupRes = map[string]*regexp.Regexp{
 	"pw":  regexp.MustCompile(`(\d+)\s+PRINT WIDTH`),
 	"ll":  regexp.MustCompile(`(\d+)\s+LABEL LENGTH`),
-	"lhx": regexp.MustCompile(`<LABEL-HOME>\s*<X>(-?\d+)</X>`),
-	"lhy": regexp.MustCompile(`<LABEL-HOME>\s*<X>-?\d+</X>\s*<Y>(-?\d+)</Y>`),
-	"ls":  regexp.MustCompile(`<LABEL-SHIFT>\s*<CURRENT>(-?\d+)</CURRENT>`),
+	"ls":  regexp.MustCompile(`<LABEL-SHIFT[^>]*>(-?\d+)</LABEL-SHIFT>`),
+	"lhx": regexp.MustCompile(`<LABEL-HOME>(?:\\[rn]|\s)*<X-AXIS[^>]*>(-?\d+)</X-AXIS>`),
+	"lhy": regexp.MustCompile(`<Y-AXIS[^>]*>(-?\d+)</Y-AXIS>`),
+	"lt":  regexp.MustCompile(`<LABEL-TOP[^>]*>(?:\\[rn]|\s)*<CURRENT>(-?\d+)</CURRENT>`),
 }
 
 // readSetup takes the printer's own settings from the recorded ^HH and ^HZA replies.
@@ -395,6 +405,7 @@ func (s *session) card1() {
 	retried := false
 	if !s.ask("Did label 1/5 come out of the printer?", true) {
 		s.status("nothing came out")
+		s.rep.ZebraQueries(s.ctx, s.candidate, where(s.candidate)) // buffer counters, errors, setup
 		s.ask("Is a light on the printer flashing red or orange?", false)
 		if !s.ask("Try printing it once more?", false) || !s.print("1b/5", src("1b/5")) || !s.ask("Did label 1b/5 come out?", false) {
 			return
@@ -414,8 +425,15 @@ func (s *session) card1() {
 		if s.stopped || s.ask("Is the whole frame (the border line) visible on all four sides?", true) {
 			break
 		}
-		side := s.choose("Which side is cut off or missing? t = top, b = bottom, l = left, r = right:", "t", "b", "l", "r")
-		gone, known := s.mm("About how many mm are missing there? Read the ruler at that edge (Enter if you can't tell):")
+		side := s.choose("Which side is cut off or missing? t = top, b = bottom, l = left, r = right (Enter = skip):", "t", "b", "l", "r")
+		if side == "" {
+			break
+		}
+		q := "About how many mm are missing there? (Enter if you can't tell)"
+		if side == "t" || side == "l" {
+			q = "About how many mm are missing there? The ruler along that edge shows it: 1 tick = 1 mm (Enter if you can't tell)"
+		}
+		gone, known := s.mm(q)
 		if !known {
 			gone = 2
 		}
@@ -440,8 +458,6 @@ func (s *session) card1() {
 				a.XDots -= d
 				what += "to the left"
 			}
-		default:
-			return
 		}
 		s.say("Printing it again, %s.\n", what)
 		s.note("  fix: %s (%+v)", what, *a)
@@ -510,7 +526,7 @@ func (s *session) card5() {
 	s.line()
 	got := s.status("head open")
 	s.say("The printer reports: %s\n", got)
-	s.say("Close the lid again, then press Enter.")
+	s.say("Close the lid again (the printer may feed one blank label), then press Enter.")
 	s.line()
 	s.say("The printer reports: %s\n", s.status("head closed"))
 }
@@ -549,7 +565,7 @@ func (s *session) restore() {
 		s.say("\nSwitch the printer off and on once to reset its settings.\n")
 		return
 	}
-	cmd := fmt.Sprintf("^XA^PON^PW%d^LL%d^LH%d,%d^LS%d^LT0^XZ\r\n", pw, ll, s.setup["lhx"], s.setup["lhy"], s.setup["ls"])
+	cmd := s.restoreCmd()
 	t, err := transport.New(s.printer.Transport)
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 5*time.Second)
@@ -565,6 +581,12 @@ func (s *session) restore() {
 		return
 	}
 	s.say("\nThe printer's own settings are back as they were.\n")
+}
+
+// restoreCmd is a format without fields that sets the printer's own page settings again.
+func (s *session) restoreCmd() string {
+	return fmt.Sprintf("^XA^PON^PW%d^LL%d^LH%d,%d^LS%d^LT%d^XZ\r\n",
+		s.setup["pw"], s.setup["ll"], s.setup["lhx"], s.setup["lhy"], s.setup["ls"], s.setup["lt"])
 }
 
 func errText(err error) string {
@@ -589,7 +611,7 @@ func (s *session) write() (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "pdb-print try – %s – %s\n\n", s.rep.Tool, s.o.Now().Format("2006-01-02 15:04"))
 	for _, l := range s.sum {
-		fmt.Fprintln(&b, l)
+		fmt.Fprintln(&b, s.rep.Mask(l)) // error texts can name addresses
 	}
 	fmt.Fprintf(&b, "\n--- data (addresses, serial numbers and names masked) ---\n%s\n", data)
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {

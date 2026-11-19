@@ -1,6 +1,6 @@
 # Testing a label printer with pdb-print
 
-Thanks for helping! This takes about 10 minutes and uses about 5 labels.
+Thanks for helping! This takes about 10 minutes and uses about 5–6 labels.
 
 1. Unzip this folder anywhere (for example on the desktop).
 2. Make sure the printer is switched on, connected to the same network as this PC (or by USB),
@@ -11,6 +11,9 @@ Thanks for helping! This takes about 10 minutes and uses about 5 labels.
    shown in capitals. Every label has a number on it (1/5, 2/5 …) so you can tell them apart.
 5. At the end it writes a file named `pdb-print-try-….txt` in this folder. Send that file and a
    photo of all the printed labels to Francis.
+
+To stop early, press Ctrl+C. If Windows then asks "Terminate batch job (Y/N)?", answer **N** so the
+window stays open and you can see where the file was saved.
 
 Nothing is changed on the printer: the program puts its settings back when it's done (if it
 can't, it tells you to switch the printer off and on once). It doesn't install anything.

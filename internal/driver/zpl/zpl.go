@@ -44,7 +44,7 @@ func query(ctx context.Context, t driver.Transport, cmd string, etx int) ([]byte
 	}
 	var reply []byte
 	buf := make([]byte, 64<<10)
-	for bytes.Count(reply, []byte{0x03}) < etx {
+	for bytes.Count(reply, []byte{0x03}) < etx && len(reply) < 64<<10 {
 		n, err := t.Read(buf)
 		reply = append(reply, buf[:n]...)
 		if err != nil {
@@ -145,6 +145,9 @@ func (z *zpl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	}
 	var b bytes.Buffer
 	if err := z.Encode(&b, job); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil { // stopped while rendering: send nothing
 		return nil, err
 	}
 	if err := t.Open(ctx); err != nil {

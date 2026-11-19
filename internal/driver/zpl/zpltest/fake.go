@@ -4,6 +4,7 @@ package zpltest
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"net"
 	"strings"
@@ -12,8 +13,21 @@ import (
 	"time"
 )
 
-// Fake answers like a GK420d (the replies are the real ones, from a probe run). Change fields
-// with Set while it runs.
+// Real replies of a GK420d (V61.17.11Z, 102×102 mm labels, print width 799) from a probe run on
+// 2026-11-18, with its serial number, name, addresses and MACs replaced by made-up ones.
+var (
+	//go:embed testdata/hi
+	realHI string
+	//go:embed testdata/hqsn
+	realHQSN string
+	//go:embed testdata/hh
+	realHH string
+	//go:embed testdata/hza
+	realHZA string
+)
+
+// Fake answers like that GK420d: ~HI, ~HQSN, ^HH and ^HZA with its real replies, ~HS and ~HQES
+// in its format but from the fields below. Change fields with Set while it runs.
 type Fake struct {
 	Model      string        // ~HI model part; "" = GK420d-200dpi
 	DPM        int           // dots per mm in ~HI; 0 = 8
@@ -122,7 +136,7 @@ func (f *Fake) handle(c net.Conn, buf string) string {
 			f.reply(c, f.hqes())
 		case strings.HasPrefix(buf, "~HQSN"):
 			buf = buf[5:]
-			f.reply(c, "\x02\r\n\r\n  SERIAL NUMBER\r\n  28J124202270\r\n\x03\r\n")
+			f.reply(c, realHQSN)
 		case strings.HasPrefix(buf, "~HI"):
 			buf = buf[3:]
 			f.reply(c, f.hi())
@@ -146,15 +160,9 @@ func (f *Fake) handle(c net.Conn, buf string) string {
 func (f *Fake) format(c net.Conn, fm string) {
 	switch {
 	case strings.Contains(fm, "^HH"):
-		f.mu.Lock()
-		w := or(f.PrintWidth, 799)
-		f.mu.Unlock()
-		f.reply(c, fmt.Sprintf("\x02  15.0                DARKNESS          \r\n  %d                 PRINT WIDTH       \r\n  0812                LABEL LENGTH      \r\n  28J124202270        SERIAL NUMBER     \r\n\x03\r\n", w))
+		f.reply(c, "\x02"+f.withWidth(realHH, "%d                 PRINT WIDTH")+"\x03\r\n")
 	case strings.Contains(fm, "^HZA"):
-		f.mu.Lock()
-		w := or(f.PrintWidth, 799)
-		f.mu.Unlock()
-		f.reply(c, fmt.Sprintf("<?xml version='1.0'?><ZEBRA-ELTRON-PERSONALITY><PRINTER-NAME>ZBR4580776</PRINTER-NAME><IP-ADDRESS>192.168.105.33</IP-ADDRESS><PRINT-WIDTH><CURRENT>%d</CURRENT></PRINT-WIDTH><LABEL-LENGTH><CURRENT>812</CURRENT></LABEL-LENGTH><LABEL-SHIFT><CURRENT>0</CURRENT></LABEL-SHIFT><LABEL-HOME><X>0</X><Y>0</Y></LABEL-HOME></ZEBRA-ELTRON-PERSONALITY>", w))
+		f.reply(c, f.withWidth(realHZA, "<CURRENT>%d</CURRENT>"))
 	case strings.Contains(fm, "^GF"):
 		f.mu.Lock()
 		f.formats = append(f.formats, fm)
@@ -184,11 +192,22 @@ func (f *Fake) hi() string {
 	if f.SilentHI {
 		return ""
 	}
+	if f.Model == "" && f.DPM == 0 {
+		return realHI
+	}
 	model := f.Model
 	if model == "" {
 		model = "GK420d-200dpi"
 	}
 	return fmt.Sprintf("\x02%s,V61.17.11Z,%d,2104KB\x03\r\n", model, or(f.DPM, 8))
+}
+
+// withWidth puts the fake's print width into a real reply (the first match of the 799 pattern).
+func (f *Fake) withWidth(reply, pattern string) string {
+	f.mu.Lock()
+	w := or(f.PrintWidth, 799)
+	f.mu.Unlock()
+	return strings.Replace(reply, fmt.Sprintf(pattern, 799), fmt.Sprintf(pattern, w), 1)
 }
 
 func (f *Fake) hs() string {

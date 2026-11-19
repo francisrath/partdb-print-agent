@@ -513,7 +513,22 @@ func TestPrintZebra(t *testing.T) {
 	if err != nil || !res.Confirmed {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^PW816^LL816") {
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^PW816^LL812") {
 		t.Errorf("formats %.60q", f)
+	}
+}
+
+// Die-cut labels print at the length the printer measured (812 dots for "102 mm" on the GK420d),
+// so the last rows don't land on the gap.
+func TestPrintZebraUsesMeasuredLength(t *testing.T) {
+	fake := &zpltest.Fake{Hold: time.Second}
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	n, _ := strconv.Atoi(port)
+	p := &config.Printer{ID: "zebra", Model: "GK420d", Media: "label-102x102", Transport: config.Transport{Kind: "tcp", Host: host, Port: n}}
+	if _, err := service(t, nil).Print(context.Background(), p, "", TestCard("GK420d", "test")); err != nil {
+		t.Fatal(err)
+	}
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^PW816^LL812") {
+		t.Errorf("format %.60q, want ^LL812", f)
 	}
 }

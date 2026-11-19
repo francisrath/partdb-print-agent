@@ -391,6 +391,13 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 			}
 			switch {
 			case st.Media == nil:
+			case st.Media.ID == "unknown" && media.Kind == driver.DieCut && st.Media.PrintableLengthDots > 0:
+				// a printer that measures its labels but can't name them (Zebra): print at the measured
+				// length when it's within a millimetre of the configured one, so no row lands on the gap
+				// (the driver refuses anything further off as MEDIA_MISMATCH)
+				if d := st.Media.PrintableLengthDots - media.PrintableLengthDots; ok && max(d, -d)*254 <= media.DPI*10 {
+					media.PrintableLengthDots, media.LengthMM = st.Media.PrintableLengthDots, st.Media.LengthMM
+				}
 			case st.Media.ID == "unknown":
 				s.Log.Warn("printer reports media this agent doesn't know; using the configured media", "loaded", MediaName(st.Media))
 			case p.Media != "" && st.Media.ID != p.Media:

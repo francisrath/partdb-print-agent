@@ -134,7 +134,11 @@ func run(ctx context.Context, args []string) error {
 			}
 		}
 		for _, md := range order {
-			fmt.Printf("%-10s %-20s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
+			if raw, _ := db.Media(md.ID); raw.DPI == 0 { // a size in mm: dots depend on the printer
+				fmt.Printf("%-13s %-28s %-15s %s\n", md.ID, md.Name, "(printer's dpi)", strings.Join(takers[md.ID], " "))
+				continue
+			}
+			fmt.Printf("%-13s %-28s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
 		}
 		return nil
 	}

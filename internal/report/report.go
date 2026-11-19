@@ -72,6 +72,9 @@ type Options struct {
 var (
 	zplQueries = []struct{ name, data string }{
 		{"zpl ~HS", "~HS\r\n"},
+		{"sgd device.languages", "! U1 getvar \"device.languages\"\r\n"},
+		{"sgd media.printmode", "! U1 getvar \"media.printmode\"\r\n"},
+		{"sgd print.tone", "! U1 getvar \"print.tone\"\r\n"},
 		{"zpl ~HQES", "~HQES\r\n"},
 		{"zpl ~HQSN", "~HQSN\r\n"},
 		{"zpl ^HH", "^XA^HH^XZ\r\n"},
@@ -84,7 +87,7 @@ var (
 var zebraSecretRes = []*regexp.Regexp{
 	regexp.MustCompile(`([A-Z0-9]{6,})\s+SERIAL NUMBER`),                                     // ^HH
 	regexp.MustCompile(`SERIAL NUMBER(?:\\r|\\n|\s)+([A-Z0-9]{6,})`),                         // ~HQSN
-	regexp.MustCompile(`<PRINTER-NAME>([^<]+)</PRINTER-NAME>`),                               // ^HZA
+	regexp.MustCompile(`<(?:PRINTER-)?NAME>([^<]+)</(?:PRINTER-)?NAME>`),                     // ^HZA: the printer's network name (V61: <NAME>)                               // ^HZA
 	regexp.MustCompile(`<(?:SERIAL-NUMBER|HOST-NAME)>([^<]+)</(?:SERIAL-NUMBER|HOST-NAME)>`), // ^HZA, newer firmware
 }
 
@@ -95,6 +98,20 @@ func (r *Report) ZebraQueries(ctx context.Context, c discovery.Candidate, where 
 	for _, q := range zplQueries {
 		r.Secrets = append(r.Secrets, zebraSecrets(r.exchange(ctx, c, where, q.name, q.data))...)
 	}
+}
+
+// Mask applies JSON's masking (addresses, MACs, serials, secrets, this computer's name) to text.
+func (r *Report) Mask(text string) string {
+	tmp := &Report{Candidates: r.Candidates, Secrets: r.Secrets, Notes: []string{text}}
+	b, err := tmp.JSON(false)
+	if err != nil {
+		return ""
+	}
+	var out Report
+	if json.Unmarshal(b, &out) != nil || len(out.Notes) != 1 {
+		return ""
+	}
+	return out.Notes[0]
 }
 
 // Escape is how replies are recorded: non-ASCII as \xNN.
