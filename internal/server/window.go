@@ -361,8 +361,8 @@ func (s *Server) LANHandler() http.Handler {
 }
 
 // lanClient reports whether a request comes from the local network: a private, unique-local,
-// link-local or loopback address, or the same subnet as one of ours (a LAN on public addresses).
-// ponytail: "same subnet" is assumed to be the /24 or /64; reading the real prefix is the upgrade.
+// link-local or loopback address, or a subnet of one of our network interfaces (a LAN on public
+// addresses; a host on a public /32 has none).
 func (s *Server) lanClient(remote string) bool {
 	h, _, err := net.SplitHostPort(remote)
 	if err != nil {
@@ -376,16 +376,44 @@ func (s *Server) lanClient(remote string) bool {
 	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
 		return true
 	}
-	for _, a := range s.lanAddrs() {
-		bits := 64
-		if a.Is4() {
-			bits = 24
-		}
-		if p, err := a.Prefix(bits); err == nil && p.Contains(ip) {
+	for _, n := range s.lanNets() {
+		if n.Masked().Contains(ip) {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *Server) lanNets() []netip.Prefix {
+	if s.LANNets != nil {
+		return s.LANNets()
+	}
+	return LocalNets()
+}
+
+// LocalNets are the subnets of the host's up, non-loopback interfaces, with their real prefix length.
+func LocalNets() []netip.Prefix {
+	var out []netip.Prefix
+	ifs, _ := net.Interfaces()
+	for _, ifc := range ifs {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok {
+				ip, ok := netip.AddrFromSlice(n.IP)
+				bits, _ := n.Mask.Size()
+				if ok && ip.Unmap().IsGlobalUnicast() {
+					if ip.Unmap().Is4() && bits > 32 {
+						bits -= 96 // IPv4 in a 16-byte mask
+					}
+					out = append(out, netip.PrefixFrom(ip.Unmap(), bits))
+				}
+			}
+		}
+	}
+	return out
 }
 
 // lanHost reports whether host (host:port from the request) names this machine on the LAN.

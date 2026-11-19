@@ -75,8 +75,9 @@ type Server struct {
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
-	kick        chan struct{} // wakes SetupLoop
-	scanned     chan struct{} // SetupLoop finished a scan
+	LANNets     func() []netip.Prefix // overrides LocalNets in tests
+	kick        chan struct{}         // wakes SetupLoop
+	scanned     chan struct{}         // SetupLoop finished a scan
 	boundMu     sync.Mutex
 	bound       []netip.Addr // LAN addresses the setup server listens on
 	loopRunning atomic.Bool  // SetupLoop is running (OpenWindow waits for its scan)

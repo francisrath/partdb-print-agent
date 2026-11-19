@@ -375,3 +375,25 @@ func TestLANRejectsInternetClients(t *testing.T) {
 		}
 	}
 }
+
+// "Same network" is the interface's real subnet, not a guessed /24: a host on a public /32
+// trusts no neighbours, one on a public /64 trusts its link.
+func TestLANClientsUseRealSubnets(t *testing.T) {
+	h := newHarness(t)
+	h.srv.LANNets = func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("198.51.100.10/32"), netip.MustParsePrefix("2001:db8:1::10/64")}
+	}
+	h.srv.OpenWindow(time.Now())
+	lan := h.srv.LANHandler()
+	for remote, want := range map[string]int{
+		"198.51.100.20:4000":    http.StatusForbidden, // shares a /24, but the host is on a /32
+		"[2001:db8:1::20]:4000": http.StatusOK,        // same /64 link
+		"[2001:db8:2::20]:4000": http.StatusForbidden,
+	} {
+		r := lanReq("GET", "/setup/", nil, nil)
+		r.RemoteAddr = remote
+		if w := serveLAN(lan, r); w.Code != want {
+			t.Errorf("client %s: %d, want %d", remote, w.Code, want)
+		}
+	}
+}
