@@ -133,3 +133,11 @@ func TestListReportsInspectionErrors(t *testing.T) {
 		t.Errorf("err = %v, want the inspection error", err)
 	}
 }
+
+// Zebras use the long IEEE 1284 keys.
+func TestParseIEEE1284LongKeys(t *testing.T) {
+	f := ParseIEEE1284("MANUFACTURER:Zebra Technologies ;COMMAND SET:ZPL;MODEL:ZTC ZT220-200dpi ZPL;CLASS:PRINTER;")
+	if f["MFG"] != "Zebra Technologies" || f["CMD"] != "ZPL" || f["MDL"] != "ZTC ZT220-200dpi ZPL" {
+		t.Errorf("%v", f)
+	}
+}

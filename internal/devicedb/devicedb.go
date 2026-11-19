@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"math"
 	"path"
 	"regexp"
 	"slices"
@@ -52,6 +53,7 @@ type Match struct {
 	IEEE1284Model string   `yaml:"ieee1284_model"` // MDL: value of the IEEE 1284 device ID
 	StatusCode    *int     `yaml:"status_code"`    // model byte in the driver's status reply
 	SNMPDescr     string   `yaml:"snmp_descr"`     // regexp on sysDescr
+	HIModel       string   `yaml:"hi_model"`       // regexp on the model part of a Zebra ~HI reply
 }
 
 type Model struct {
@@ -66,6 +68,7 @@ type Model struct {
 	Media      []string          `yaml:"media"`
 	Quirks     map[string]any    `yaml:"quirks"`
 	snmpRe     *regexp.Regexp    // Match.SNMPDescr, compiled at load
+	hiRe       *regexp.Regexp    // Match.HIModel, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
 }
 
@@ -173,6 +176,13 @@ func Load(fsys fs.FS) (*DB, error) {
 				}
 				m.snmpRe = re
 			}
+			if m.Match.HIModel != "" {
+				re, err := regexp.Compile(m.Match.HIModel)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: model %s: bad hi_model pattern: %w", base, m.ID, err))
+				}
+				m.hiRe = re
+			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))
 			}
@@ -246,12 +256,46 @@ func (db *DB) Media(id string) (Media, bool) {
 }
 
 // MediaFor lists the media a model can print, in the model's order.
+// Media given in mm only (dpi 0, e.g. the die-cut label catalogue) get the model's dots.
 func (db *DB) MediaFor(m *Model) []Media {
 	out := make([]Media, 0, len(m.Media))
 	for _, id := range m.Media {
-		out = append(out, db.media[id])
+		md := db.media[id]
+		if md.DPI == 0 && m.DPI > 0 {
+			md.DPI = m.DPI
+			md.PrintableWidthDots = dots(md.WidthMM, m.DPI)
+			if m.HeadPins > 0 {
+				md.PrintableWidthDots = min(md.PrintableWidthDots, m.HeadPins)
+			}
+			md.PrintableLengthDots = dots(md.LengthMM, m.DPI)
+		}
+		out = append(out, md)
 	}
 	return out
+}
+
+// dots converts mm at whole dots per mm: printers sold as "203/300 dpi" in this catalogue (Zebra)
+// have 8 and 12 dots/mm heads (~HI reports dots/mm), i.e. 203.2 and 304.8 dpi.
+func dots(mm float64, dpi int) int {
+	return int(math.Round(mm * math.Round(float64(dpi)/25.4)))
+}
+
+// ModelByHI finds a model from a Zebra ~HI reply ("GK420d-200dpi,V61.17.11Z,8,2104KB"): the model
+// part matches hi_model, and the dots per mm (third field: 8, 12, 24) pick the dpi variant.
+func (db *DB) ModelByHI(hi string) (*Model, bool) {
+	hi = strings.Trim(strings.TrimSpace(hi), "\x02\x03\r\n ")
+	f := strings.Split(hi, ",")
+	if len(f) < 3 {
+		return nil, false
+	}
+	dpi := map[string]int{"6": 152, "8": 203, "12": 300, "24": 600}[strings.TrimSpace(f[2])]
+	for _, id := range db.ModelIDs() {
+		m := db.models[id]
+		if m.hiRe != nil && m.hiRe.MatchString(f[0]) && m.DPI == dpi {
+			return m, true
+		}
+	}
+	return nil, false
 }
 
 // ModelByStatusCode finds a family's model by the model byte its status reply carries.

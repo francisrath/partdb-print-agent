@@ -118,3 +118,53 @@ func TestQLUSBMatches(t *testing.T) {
 		t.Errorf("QL-800 has no network port: %v %q", m.Transports, m.Match.SNMPDescr)
 	}
 }
+
+func TestModelByHI(t *testing.T) {
+	db := devicedb.Default()
+	for _, tc := range []struct{ hi, want string }{
+		{"GK420d-200dpi,V61.17.11Z,8,2104KB", "GK420d"},
+		{"\x02GK420d-200dpi,V61.17.11Z,8,2104KB\x03", "GK420d"},
+		{"ZD420-300dpi,V84.20.18Z,12,8176KB", "ZD420-300"},
+		{"ZD420-203dpi,V84.20.18Z,8,8176KB", "ZD420-203"},
+		{"LP2844-Z,V45.11.7Z,8,512KB", "LP2844-Z"},
+		{"LaserJet 4,V1,8,1KB", ""},
+		{"garbage", ""},
+	} {
+		m, ok := db.ModelByHI(tc.hi)
+		if got := ""; ok {
+			got = m.ID
+			if got != tc.want {
+				t.Errorf("%q: %s, want %q", tc.hi, got, tc.want)
+			}
+		} else if tc.want != "" {
+			t.Errorf("%q: not found, want %s", tc.hi, tc.want)
+		}
+	}
+}
+
+// Catalogue sizes are in mm; a model gets them in its own dots.
+func TestMediaForFillsDots(t *testing.T) {
+	db := devicedb.Default()
+	gk, _ := db.Model("GK420d")
+	var got *devicedb.Media
+	for _, md := range db.MediaFor(gk) {
+		if md.ID == "label-102x102" {
+			got = &md
+		}
+	}
+	if got == nil || got.DPI != 203 || got.PrintableWidthDots != 816 || got.PrintableLengthDots != 816 || got.Kind != devicedb.DieCut {
+		t.Fatalf("label-102x102 on GK420d: %+v", got)
+	}
+	zd, _ := db.Model("ZD410")
+	for _, md := range db.MediaFor(zd) {
+		if md.WidthMM > 56 || md.PrintableWidthDots > zd.HeadPins {
+			t.Errorf("ZD410 lists %s (%v mm, %d dots)", md.ID, md.WidthMM, md.PrintableWidthDots)
+		}
+	}
+	z300, _ := db.Model("ZD420-300")
+	for _, md := range db.MediaFor(z300) {
+		if md.ID == "label-102x152" && (md.DPI != 300 || md.PrintableLengthDots != 1824) {
+			t.Errorf("label-102x152 at 300 dpi: %+v", md)
+		}
+	}
+}

@@ -72,11 +72,18 @@ func List(sysfs string) ([]Printer, error) {
 }
 
 // ParseIEEE1284 splits an IEEE 1284 device ID ("MFG:Brother;MDL:QL-810W;…") into fields.
+// longKeys are the spelled-out IEEE 1284 keys some printers (Zebra) use instead of MFG/MDL/CMD.
+var longKeys = map[string]string{"MANUFACTURER": "MFG", "MODEL": "MDL", "COMMAND SET": "CMD"}
+
 func ParseIEEE1284(s string) map[string]string {
 	m := map[string]string{}
 	for _, f := range strings.Split(s, ";") {
 		if k, v, ok := strings.Cut(f, ":"); ok {
-			m[strings.ToUpper(strings.TrimSpace(k))] = strings.TrimSpace(v)
+			k = strings.ToUpper(strings.TrimSpace(k))
+			if short, ok := longKeys[k]; ok {
+				k = short
+			}
+			m[k] = strings.TrimSpace(v)
 		}
 	}
 	return m

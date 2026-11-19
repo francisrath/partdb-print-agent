@@ -1,0 +1,216 @@
+# Zebra ZPL printers (driver zpl). Sources: Zebra spec sheets/user guides and the ZPL II Programming
+# Guide P1134473-11EN; USB product ids from linux-usb.org usb.ids (vendor 0a5f) – listed only where
+# usb.ids has them. Models are recognised by their ~HI reply ("GK420d-200dpi,V61.17.11Z,8,…"): hi_model
+# matches the model part, the dots/mm field picks 203 or 300 dpi. The label size is the loaded roll
+# (media-labels.yaml); see ~/Notes/claude/partdb-agent-zebra-models.md.
+models:
+  # GK420d user guide P1129574-01EN
+  - id: GK420d
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GK420d", usb: ["0a5f:0080", "0a5f:0062"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # GK420t user guide
+  - id: GK420t
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GK420t", usb: ["0a5f:0081"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # G-series spec sheet
+  - id: GX420d
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GX420d", usb: ["0a5f:0084"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZPL guide ~HQUI example (p.232)
+  - id: GX420t
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GX420t", usb: ["0a5f:0085"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # G-series spec sheet
+  - id: GX430t
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1280
+    transports: [tcp, usb]
+    match: {hi_model: "^GX430t"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # GC420 tech specs
+  - id: GC420d
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GC420d", usb: ["0a5f:00d1"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # GC420 tech specs
+  - id: GC420t
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^GC420t"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZP450 spec sheet (2008)
+  - id: ZP450
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZP ?450", usb: ["0a5f:008c"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZP500 user guide
+  - id: ZP500
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZP ?50[05]"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # TLP2844-Z user guide
+  - id: LP2844-Z
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^T?LP ?2844-?Z", usb: ["0a5f:0027"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD410 spec sheet (2.2\" head)
+  - id: ZD410
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 448
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD410", usb: ["0a5f:011c"]}
+    media: [label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD220/ZD230 spec sheet
+  - id: ZD220
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD220"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD220/ZD230 spec sheet
+  - id: ZD230
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD230"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD420 tech specs
+  - id: ZD420-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD420"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD420 tech specs
+  - id: ZD420-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1280
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD420"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD421 tech specs
+  - id: ZD421-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD421"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD421 tech specs
+  - id: ZD421-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1280
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD421"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD620 tech specs
+  - id: ZD620-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD620", usb: ["0a5f:0141"]}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD620 tech specs
+  - id: ZD620-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1280
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD620"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD621 tech specs
+  - id: ZD621-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD621"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZD621 tech specs
+  - id: ZD621-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1280
+    transports: [tcp, usb]
+    match: {hi_model: "^ZD621"}
+    media: [label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
