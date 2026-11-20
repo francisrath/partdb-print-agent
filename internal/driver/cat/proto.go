@@ -16,7 +16,9 @@ const (
 	cmdSpeed    = 0xBD // speed divider: higher = slower = darker
 	cmdMode     = 0xBE // 00 = image
 	cmdRowRLE   = 0xBF // one raster row as runs colour<<7|count
-	rowBytes    = 48
+	cmdDone     = 0xD3 // unsolicited after a job (payload 19): taken as "printed something"
+	headDots    = 384  // when the model doesn't say
+	maxFrame    = 512  // notifications are tiny; a longer length is junk
 	maxEnergy   = 0x8000
 	speedFinish = 0x19 // speed sent after the image
 )
@@ -51,7 +53,7 @@ func frame(cmd byte, payload ...byte) []byte {
 }
 
 // rleLine encodes a packed row as runs of one colour (colour<<7 | count, count 1–127), dots in
-// print order. ok is false when the runs are longer than the raw row.
+// print order. ok is false unless the runs are shorter than the raw row.
 func rleLine(row []byte) ([]byte, bool) {
 	var out []byte
 	colour, n := byte(0), byte(0)
@@ -63,19 +65,19 @@ func rleLine(row []byte) ([]byte, bool) {
 		}
 		colour = c
 		n++
-		if len(out) > len(row) {
+		if len(out) >= len(row) { // a run is still pending, so it can't get shorter
 			return nil, false
 		}
 	}
 	if n > 0 {
 		out = append(out, colour<<7|n)
 	}
-	return out, len(out) <= len(row)
+	return out, len(out) < len(row)
 }
 
 // encodePage writes one page: setup, the rows top first (runs where shorter), finish and feed.
-// Dots past the head's 384 are cut off; a narrower page is padded white on the right.
-func encodePage(w io.Writer, img *image.Gray, energy uint16, speed byte, feed uint16) error {
+// Dots past the head's width (dots; 0 = 384) are cut off; a narrower page is padded white.
+func encodePage(w io.Writer, img *image.Gray, dots int, energy uint16, speed byte, feed uint16) error {
 	energy = min(energy, maxEnergy)
 	var b []byte
 	b = append(b, frame(cmdQuality, 0x33)...)
@@ -84,10 +86,13 @@ func encodePage(w io.Writer, img *image.Gray, energy uint16, speed byte, feed ui
 	b = append(b, frame(cmdMode, 0x00)...)
 	b = append(b, frame(cmdLattice, latticeStart...)...)
 	r := img.Bounds()
-	row := make([]byte, rowBytes)
+	if dots <= 0 {
+		dots = headDots
+	}
+	row := make([]byte, (dots+7)/8)
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		clear(row)
-		for x := 0; x < min(r.Dx(), rowBytes*8); x++ {
+		for x := 0; x < min(r.Dx(), dots); x++ {
 			if img.GrayAt(r.Min.X+x, y).Y < 128 {
 				row[x/8] |= 1 << (x % 8)
 			}
@@ -111,7 +116,7 @@ type catFrame struct {
 }
 
 // nextFrame takes the first whole frame off a notification stream, skipping bytes before it and
-// frames with a bad checksum. ok is false until a whole frame is there; rest keeps the tail.
+// frames with a bad checksum or an impossible length. ok is false until a whole frame is there; rest keeps the tail.
 func nextFrame(b []byte) (f catFrame, rest []byte, ok bool) {
 	for {
 		for len(b) > 0 && b[0] != 0x51 {
@@ -125,6 +130,10 @@ func nextFrame(b []byte) (f catFrame, rest []byte, ok bool) {
 			continue
 		}
 		n := int(b[4]) | int(b[5])<<8
+		if n > maxFrame {
+			b = b[1:]
+			continue
+		}
 		if len(b) < 6+n+2 {
 			return f, b, false
 		}

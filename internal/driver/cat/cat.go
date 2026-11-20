@@ -36,6 +36,7 @@ var (
 	pollEvery      = 300 * time.Millisecond
 	confirmBase    = 30 * time.Second // then "sent (not confirmed)"
 	confirmPerPage = 2 * time.Second
+	idleWait       = 10 * time.Second // for a printer still busy with a previous job
 )
 
 // Status flags in the first byte of an A3 reply.
@@ -54,29 +55,41 @@ type cat struct {
 
 // reader parses frames off the notification stream, keeping partial frames between calls.
 type reader struct {
-	t   driver.Transport
-	buf []byte
+	t    driver.Transport
+	buf  []byte
+	done bool // a D3 frame came by
 }
 
-// status asks for the printer's state and waits for the A3 reply, skipping every other frame
-// (flow control AE, the D3 seen after a job). ErrNoReadback when none comes in time.
+// take consumes the buffered whole frames up to the first A3 reply (reply) or all of them,
+// noting D3 and skipping the rest (flow control AE).
+func (r *reader) take(reply bool) (flags byte, ok bool) {
+	for {
+		f, rest, ok := nextFrame(r.buf)
+		r.buf = rest
+		if !ok {
+			return 0, false
+		}
+		switch {
+		case f.cmd == cmdDone:
+			r.done = true
+		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
+			return f.payload[0], true
+		}
+	}
+}
+
+// status asks for the printer's state and waits for the A3 reply; replies already buffered before
+// the request are stale and dropped. ErrNoReadback when none comes in time.
 func (r *reader) status() (flags byte, err error) {
+	r.take(false)
 	if _, err := r.t.Write(frame(cmdStatus, 0x00)); err != nil {
 		return 0, err
 	}
 	deadline := time.Now().Add(replyWait)
 	p := make([]byte, 512)
 	for {
-		for {
-			f, rest, ok := nextFrame(r.buf)
-			if !ok {
-				r.buf = rest
-				break
-			}
-			r.buf = rest
-			if f.cmd == cmdStatus && len(f.payload) > 0 {
-				return f.payload[0], nil
-			}
+		if flags, ok := r.take(true); ok {
+			return flags, nil
 		}
 		if !time.Now().Before(deadline) {
 			return 0, driver.ErrNoReadback
@@ -117,7 +130,7 @@ func (c *cat) Status(ctx context.Context, t driver.Transport) (*driver.Status, e
 func (c *cat) Encode(w io.Writer, job *driver.Job) error {
 	feed := uint16(c.model.Quirk("feed_lines", 80))
 	for _, pg := range job.Pages {
-		if err := encodePage(w, pg, energy, c.speed, feed); err != nil {
+		if err := encodePage(w, pg, c.model.HeadPins, energy, c.speed, feed); err != nil {
 			return err
 		}
 	}
@@ -125,7 +138,8 @@ func (c *cat) Encode(w io.Writer, job *driver.Job) error {
 }
 
 // Print needs a good status first (a silent cat printer is off, out of paper or covered), sends
-// every page in one go and then polls until the printer is no longer busy.
+// every page in one go (after waiting for a previous job to finish) and then polls until the
+// printer has shown the job (a busy reply or D3) and is idle again.
 func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	switch {
 	case job.Status == nil:
@@ -140,17 +154,54 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	r := &reader{t: t}
+	if !job.Status.Idle {
+		st, err := c.poll(ctx, r, time.Now().Add(idleWait), func(st *driver.Status) bool { return st.Idle })
+		if err != nil {
+			return nil, err
+		}
+		if st == nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if st == nil {
+			return nil, &driver.Error{Code: driver.Busy, Detail: "still busy with a previous job"}
+		}
+	}
 	if _, err := t.Write(b.Bytes()); err != nil {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len()}
-	r := &reader{t: t}
-	deadline := time.Now().Add(confirmBase + confirmPerPage*time.Duration(len(job.Pages)))
+	r.done = false // a D3 from before this job doesn't count
+	seen := false
+	st, err := c.poll(ctx, r, time.Now().Add(confirmBase+confirmPerPage*time.Duration(len(job.Pages))), func(st *driver.Status) bool {
+		seen = seen || !st.Idle || r.done
+		return st.Idle && seen
+	})
+	switch {
+	case err != nil:
+		return nil, err
+	case st != nil:
+		if st.Detail != "" {
+			res.Warnings = append(res.Warnings, st.Detail)
+		}
+		res.Confirmed, res.Message = true, "printed"
+	case ctx.Err() != nil:
+		res.Message = "sent (not confirmed: stopped waiting)"
+	case seen || r.done:
+		res.Message = "sent (not confirmed: the printer never reported idle)"
+	default:
+		res.Message = "sent (not confirmed: printer never reported the job)"
+	}
+	return res, nil
+}
+
+// poll asks for the status every pollEvery until until(status) holds and returns that status;
+// nil when the deadline passes or ctx ends first. A fault flag or a broken link is an error.
+func (c *cat) poll(ctx context.Context, r *reader, deadline time.Time, until func(*driver.Status) bool) (*driver.Status, error) {
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			res.Message = "sent (not confirmed: stopped waiting)"
-			return res, nil
+			return nil, nil
 		case <-time.After(pollEvery):
 		}
 		flags, err := r.status()
@@ -164,14 +215,9 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		if st.Code != driver.OK {
 			return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 		}
-		if st.Idle {
-			if st.Detail != "" {
-				res.Warnings = append(res.Warnings, st.Detail)
-			}
-			res.Confirmed, res.Message = true, "printed"
-			return res, nil
+		if until(st) {
+			return st, nil
 		}
 	}
-	res.Message = "sent (not confirmed: the printer never reported idle)"
-	return res, nil
+	return nil, nil
 }

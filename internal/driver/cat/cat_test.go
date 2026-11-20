@@ -63,9 +63,11 @@ func (f *fake) Read(p []byte) (int, error) {
 func status(flags byte) []byte { return frame(0xA3, flags, 0x01, 0x95) }
 
 func fastTimings(t *testing.T) {
-	old := [...]time.Duration{replyWait, pollEvery, confirmBase, confirmPerPage}
-	replyWait, pollEvery, confirmBase, confirmPerPage = 50*time.Millisecond, time.Millisecond, 300*time.Millisecond, 0
-	t.Cleanup(func() { replyWait, pollEvery, confirmBase, confirmPerPage = old[0], old[1], old[2], old[3] })
+	old := [...]time.Duration{replyWait, pollEvery, confirmBase, confirmPerPage, idleWait}
+	replyWait, pollEvery, confirmBase, confirmPerPage, idleWait = 50*time.Millisecond, time.Millisecond, 300*time.Millisecond, 0, 200*time.Millisecond
+	t.Cleanup(func() {
+		replyWait, pollEvery, confirmBase, confirmPerPage, idleWait = old[0], old[1], old[2], old[3], old[4]
+	})
 }
 
 func mx10(t *testing.T, darkness string) (driver.Driver, *driver.Media) {
@@ -195,7 +197,7 @@ func TestPrintNeedsStatus(t *testing.T) {
 func TestPrintBatteryLowWarns(t *testing.T) {
 	fastTimings(t)
 	d, m := mx10(t, "")
-	res, err := d.Print(context.Background(), &fake{replies: [][]byte{status(0x08)}}, job(m, 1))
+	res, err := d.Print(context.Background(), &fake{replies: [][]byte{status(0x80), status(0x08)}}, job(m, 1))
 	if err != nil || len(res.Warnings) != 1 || res.Warnings[0] != "battery low" {
 		t.Errorf("res %+v, err %v", res, err)
 	}
@@ -217,5 +219,58 @@ func TestPrintPeerGone(t *testing.T) {
 		if !errors.As(err, &de) || de.Code != driver.CommsError || !strings.Contains(de.Detail, "peer disconnected") {
 			t.Errorf("%s: err = %v, want COMMS_ERROR", tc.name, err)
 		}
+	}
+}
+
+func TestPrintNeedsJobEvidence(t *testing.T) {
+	fastTimings(t)
+	d3 := frame(0xD3, 0x19)
+	for _, tc := range []struct {
+		name      string
+		replies   [][]byte
+		confirmed bool
+		message   string
+	}{
+		{"idle only", [][]byte{status(0x00), status(0x00)}, false, "sent (not confirmed: printer never reported the job)"},
+		{"idle, D3, idle", [][]byte{status(0x00), d3, status(0x00)}, true, "printed"},
+		{"busy, idle", [][]byte{status(0x80), status(0x00)}, true, "printed"},
+		// a stale idle reply already buffered behind the busy one must not answer the next request
+		{"stale idle", [][]byte{append(status(0x80), status(0x00)...)}, false, "sent (not confirmed: the printer never reported idle)"},
+	} {
+		d, m := mx10(t, "")
+		res, err := d.Print(context.Background(), &fake{replies: tc.replies}, job(m, 1))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if res.Confirmed != tc.confirmed || res.Message != tc.message {
+			t.Errorf("%s: result %+v", tc.name, res)
+		}
+	}
+}
+
+func TestPrintWaitsForIdle(t *testing.T) {
+	fastTimings(t)
+	busy := func(m *driver.Media) *driver.Job {
+		j := job(m, 1)
+		j.Status.Idle = false
+		return j
+	}
+	d, m := mx10(t, "")
+	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), status(0x00)}}
+	if res, err := d.Print(context.Background(), f, busy(m)); err != nil || !res.Confirmed {
+		t.Errorf("busy, then idle: %+v, %v", res, err)
+	}
+	var replies [][]byte
+	for range 1000 {
+		replies = append(replies, status(0x80))
+	}
+	f = &fake{replies: replies}
+	_, err := d.Print(context.Background(), f, busy(m))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.Busy {
+		t.Errorf("still busy: err = %v, want BUSY", err)
+	}
+	if n := bytes.Count(f.written.Bytes(), statusRequest); n*len(statusRequest) != f.written.Len() {
+		t.Errorf("job bytes sent to a busy printer")
 	}
 }

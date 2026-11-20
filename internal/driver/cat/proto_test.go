@@ -59,6 +59,24 @@ func TestNextFrame(t *testing.T) {
 	}
 }
 
+func TestNextFrameBogusLength(t *testing.T) {
+	stream := append([]byte{0x51, 0x78, 0xA3, 0x00, 0xFF, 0xFF}, frame(0xA3, 0x80, 0x01, 0x95)...)
+	f, _, ok := nextFrame(stream)
+	if !ok || f.cmd != 0xA3 || f.payload[0] != 0x80 {
+		t.Errorf("after a bogus header: %+v, %v", f, ok)
+	}
+}
+
+func TestEncodeHeadWidth(t *testing.T) {
+	var b bytes.Buffer
+	if err := encodePage(&b, page(384, "#"), 96, 0x6000, 0x80, 0); err != nil {
+		t.Fatal(err)
+	}
+	if want := frame(0xBF, 0x81, 0x5F); !bytes.Contains(b.Bytes(), want) { // 1 black + 95 white: a 12-byte row
+		t.Errorf("96-dot head: % x", b.Bytes())
+	}
+}
+
 func TestRLE(t *testing.T) {
 	half := make([]byte, 48) // left half black
 	for i := range 24 {
@@ -76,6 +94,7 @@ func TestRLE(t *testing.T) {
 		{"mixed", half, []byte{0xFF, 0xC1, 0x7F, 0x41}, true},
 		{"one dot at the left", append([]byte{0x01}, make([]byte, 47)...), []byte{0x81, 0x7F, 0x7F, 0x7F, 0x02}, true},
 		{"noisy", noisy, nil, false},
+		{"runs exactly as long as the row", bytes.Repeat([]byte{0xFF, 0x00}, 24), nil, false},
 	} {
 		got, ok := rleLine(tc.row)
 		if ok != tc.ok || (ok && !bytes.Equal(got, tc.want)) {
@@ -107,7 +126,7 @@ func TestEncodeGolden(t *testing.T) {
 	}
 	img := page(384, string(bytes.Repeat([]byte{'#'}, 192)), string(alt))
 	var b bytes.Buffer
-	if err := encodePage(&b, img, 0x6000, 0x80, 80); err != nil {
+	if err := encodePage(&b, img, 384, 0x6000, 0x80, 80); err != nil {
 		t.Fatal(err)
 	}
 	h := func(cmd byte, n int) []byte { return []byte{0x51, 0x78, cmd, 0x00, byte(n), 0x00} }
@@ -137,7 +156,7 @@ func TestEncodeGolden(t *testing.T) {
 
 func TestEncodeEnergyCapped(t *testing.T) {
 	var b bytes.Buffer
-	if err := encodePage(&b, page(384, ""), 0xC000, 0x80, 0); err != nil {
+	if err := encodePage(&b, page(384, ""), 384, 0xC000, 0x80, 0); err != nil {
 		t.Fatal(err)
 	}
 	if want := frame(0xAF, 0x00, 0x80); !bytes.Contains(b.Bytes(), want) {
@@ -148,7 +167,7 @@ func TestEncodeEnergyCapped(t *testing.T) {
 func TestEncodeNarrowAndWidePages(t *testing.T) {
 	for _, w := range []int{100, 384, 500} {
 		var b bytes.Buffer
-		if err := encodePage(&b, page(w, "#"), 0x6000, 0x80, 0); err != nil {
+		if err := encodePage(&b, page(w, "#"), 384, 0x6000, 0x80, 0); err != nil {
 			t.Fatalf("width %d: %v", w, err)
 		}
 		// one black dot at the left, the rest white
