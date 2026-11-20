@@ -121,7 +121,7 @@ func run(ctx context.Context, args []string) error {
 	if cmd == "media" { // needs no config: it's what config errors point to
 		// every medium once, with the models that take it
 		db := devicedb.Default()
-		var order []driver.Media
+		var order []devicedb.Media
 		takers := map[string][]string{}
 		for _, f := range driver.Families() {
 			for _, m := range db.Models(f) {

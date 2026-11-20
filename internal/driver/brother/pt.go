@@ -35,20 +35,20 @@ var ptMediaTypes = map[byte]string{0x01: "laminated", 0x02: "lettering", 0x03: "
 
 type pt struct {
 	model *devicedb.Model
-	media []driver.Media
+	media []devicedb.Media
 }
 
 func newPT(m *devicedb.Model) *pt {
 	return &pt{model: m, media: devicedb.Default().MediaFor(m)}
 }
 
-func (d *pt) mediaForWidth(mm int) (driver.Media, bool) {
+func (d *pt) mediaForWidth(mm int) (devicedb.Media, bool) {
 	for _, m := range d.media {
 		if int(m.WidthMM) == mm {
 			return m, true
 		}
 	}
-	return driver.Media{}, false
+	return devicedb.Media{}, false
 }
 
 var ptStatusRequest = append(make([]byte, ptInvalidateN), 0x1b, '@', 0x1b, 'i', 'S')
@@ -102,7 +102,7 @@ func (d *pt) parseStatus(b []byte) (*driver.Status, byte, error) {
 		if m, ok := d.mediaForWidth(w); ok {
 			s.Media = &m
 		} else {
-			s.Media = &driver.Media{ID: "unknown", Kind: driver.Continuous, WidthMM: float64(w)}
+			s.Media = &devicedb.Media{ID: "unknown", Kind: devicedb.Continuous, WidthMM: float64(w)}
 		}
 	}
 	typ := b[18]
@@ -246,7 +246,7 @@ func (d *pt) encodePages(job *driver.Job) ([]byte, [][]byte, error) {
 // ptPackLine maps image row y onto head pins from pin 0 (MSB of the first byte, p.10–11);
 // narrower pages are centred. With reversed pin order (PT-9500PC: x on pin offset+x printed
 // mirrored, 2026-11-18) the image's rightmost column lands on the first print-area pin.
-func ptPackLine(p *image.Gray, y int, m driver.Media, lineBytes int, reversed bool) ([]byte, bool) {
+func ptPackLine(p *image.Gray, y int, m devicedb.Media, lineBytes int, reversed bool) ([]byte, bool) {
 	line := make([]byte, lineBytes)
 	w := p.Bounds().Dx()
 	off := m.OffsetPins + (m.PrintableWidthDots-w)/2

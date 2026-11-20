@@ -81,7 +81,7 @@ func (d *ql) statusFromSNMP(ss *snmp.State) *driver.Status {
 		if m, ok := qlMediaBySize(d.model, kind, w, l); ok {
 			st.Media = &m
 		} else {
-			st.Media = &driver.Media{ID: "unknown", Kind: kind, WidthMM: float64(w), LengthMM: float64(l)}
+			st.Media = &devicedb.Media{ID: "unknown", Kind: kind, WidthMM: float64(w), LengthMM: float64(l)}
 		}
 	}
 	return st
@@ -89,7 +89,7 @@ func (d *ql) statusFromSNMP(ss *snmp.State) *driver.Status {
 
 // qlMediaBySize maps a reported roll to one the model takes; with no model known (status
 // from an unknown QL), to any QL's.
-func qlMediaBySize(model *devicedb.Model, kind driver.MediaKind, w, l int) (driver.Media, bool) {
+func qlMediaBySize(model *devicedb.Model, kind devicedb.MediaKind, w, l int) (devicedb.Media, bool) {
 	db := devicedb.Default()
 	models := db.Models("brother")
 	if model != nil {
@@ -105,7 +105,7 @@ func qlMediaBySize(model *devicedb.Model, kind driver.MediaKind, w, l int) (driv
 			}
 		}
 	}
-	return driver.Media{}, false
+	return devicedb.Media{}, false
 }
 
 func (d *ql) validate(job *driver.Job) error {
@@ -125,11 +125,11 @@ func (d *ql) validate(job *driver.Job) error {
 			return &driver.Error{Code: driver.MediaMismatch,
 				Detail: fmt.Sprintf("page %d is %d dots wide, %s prints %d", i+1, w, m.ID, m.PrintableWidthDots)}
 		}
-		if m.Kind == driver.Continuous && h > maxLines {
+		if m.Kind == devicedb.Continuous && h > maxLines {
 			return &driver.Error{Code: driver.Unsupported,
 				Detail: fmt.Sprintf("page %d is %d dots long; continuous tape allows at most %d (1 m)", i+1, h, maxLines)}
 		}
-		if h == 0 || (m.Kind == driver.DieCut && h > m.PrintableLengthDots) {
+		if h == 0 || (m.Kind == devicedb.DieCut && h > m.PrintableLengthDots) {
 			return &driver.Error{Code: driver.MediaMismatch,
 				Detail: fmt.Sprintf("page %d is %d dots long, %s allows %d", i+1, h, m.ID, m.PrintableLengthDots)}
 		}
@@ -159,14 +159,14 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 	}
 	// flags: recover | quality | kind, width, length valid (same as the known-good reference)
 	kind, flags, margin := byte(0x0a), byte(0xce), uint16(d.model.Quirk("feed_margin", 35))
-	if m.Kind == driver.DieCut {
+	if m.Kind == devicedb.DieCut {
 		kind, margin = 0x0b, 0
 	}
 
 	for i, p := range job.Pages {
 		lines := p.Bounds().Dy()
 		padTop, padBottom := 0, 0
-		if lines < minLines && m.Kind == driver.Continuous { // short continuous label: centre it in the minimum length
+		if lines < minLines && m.Kind == devicedb.Continuous { // short continuous label: centre it in the minimum length
 			padTop = (minLines - lines) / 2
 			padBottom = minLines - lines - padTop
 		}
@@ -212,7 +212,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 
 // packLine maps image row y onto the 720-pin head. Pins are numbered from the
 // spec's "right" edge, so the image's rightmost column lands on pin OffsetPins.
-func packLine(p *image.Gray, y int, m driver.Media) []byte {
+func packLine(p *image.Gray, y int, m devicedb.Media) []byte {
 	line := make([]byte, qlLineBytes)
 	w := p.Bounds().Dx()
 	off := m.OffsetPins + (m.PrintableWidthDots-w)/2 // centre narrower pages
@@ -376,18 +376,18 @@ func parseQLStatus(b []byte) (*driver.Status, error) {
 			break
 		}
 	}
-	var kind driver.MediaKind
+	var kind devicedb.MediaKind
 	switch b[11] {
 	case 0x0a:
-		kind = driver.Continuous
+		kind = devicedb.Continuous
 	case 0x0b:
-		kind = driver.DieCut
+		kind = devicedb.DieCut
 	}
 	if kind != "" {
 		if m, ok := qlMediaBySize(model, kind, int(b[10]), int(b[17])); ok {
 			s.Media = &m
 		} else {
-			s.Media = &driver.Media{ID: "unknown", Kind: kind, WidthMM: float64(b[10]), LengthMM: float64(b[17])}
+			s.Media = &devicedb.Media{ID: "unknown", Kind: kind, WidthMM: float64(b[10]), LengthMM: float64(b[17])}
 		}
 	}
 	s.Done = b[18] == 0x01

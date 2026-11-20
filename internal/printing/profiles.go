@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 )
@@ -21,7 +21,7 @@ type profileSize struct {
 // ProfilesFitting lists the Part-DB label profiles whose labels fit m. Part-DB's API doesn't
 // expose a profile's size, so each is measured from a sample label (one element of its type),
 // and remembered for 10 minutes. Profiles with nothing to label are left out.
-func (s *Service) ProfilesFitting(ctx context.Context, c *partdb.Client, m *driver.Media) ([]partdb.Profile, error) {
+func (s *Service) ProfilesFitting(ctx context.Context, c *partdb.Client, m *devicedb.Media) ([]partdb.Profile, error) {
 	profiles, err := c.Profiles(ctx)
 	if err != nil {
 		return nil, err

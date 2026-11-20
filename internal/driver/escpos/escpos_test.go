@@ -183,7 +183,7 @@ func TestStatus(t *testing.T) {
 func job(st *driver.Status) *driver.Job {
 	return &driver.Job{
 		Pages:  []*image.Gray{img(16, 2, func(int, int) bool { return true })},
-		Media:  &driver.Media{ID: "paper-80"},
+		Media:  &devicedb.Media{ID: "paper-80"},
 		Status: st,
 	}
 }

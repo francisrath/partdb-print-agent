@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/gosnmp/gosnmp"
 )
@@ -121,17 +122,17 @@ var mediaRe = regexp.MustCompile(`^\s*(\d+)\s*mm(?:\s*[x×]\s*(\d+)\s*mm)?`)
 // LoadedMedia parses the roll the printer reports into kind and size in mm.
 // Verified on hardware for DK-22210 and DK-11201; a name that doesn't parse falls back
 // to the configured media.
-func (s *State) LoadedMedia() (kind driver.MediaKind, widthMM, lengthMM int, ok bool) {
+func (s *State) LoadedMedia() (kind devicedb.MediaKind, widthMM, lengthMM int, ok bool) {
 	m := mediaRe.FindStringSubmatch(s.MediaName)
 	if m == nil {
 		return "", 0, 0, false
 	}
 	widthMM, _ = strconv.Atoi(m[1])
 	if m[2] == "" {
-		return driver.Continuous, widthMM, 0, true
+		return devicedb.Continuous, widthMM, 0, true
 	}
 	lengthMM, _ = strconv.Atoi(m[2])
-	return driver.DieCut, widthMM, lengthMM, true
+	return devicedb.DieCut, widthMM, lengthMM, true
 }
 
 const oidSysDescr = "1.3.6.1.2.1.1.1.0"

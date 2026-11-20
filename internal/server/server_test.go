@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
@@ -295,7 +296,7 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 }
 
 func TestStatusText(t *testing.T) {
-	loaded := &driver.Media{ID: "dk-11201"}
+	loaded := &devicedb.Media{ID: "dk-11201"}
 	ql := func(media string, allowed ...string) *config.Printer {
 		return &config.Printer{Model: "QL-810W", Media: media, MediaAllowed: allowed}
 	}
@@ -306,7 +307,7 @@ func TestStatusText(t *testing.T) {
 	if text, ok := statusText(&printing.Service{}, ready, ql("", "dk-22210")); ok || !strings.Contains(text, "not in media_allowed") {
 		t.Errorf("not allowed: %q %v", text, ok)
 	}
-	unknown := &driver.Status{Code: driver.OK, Model: "QL-810W", Media: &driver.Media{ID: "unknown"}}
+	unknown := &driver.Status{Code: driver.OK, Model: "QL-810W", Media: &devicedb.Media{ID: "unknown"}}
 	if text, ok := statusText(&printing.Service{}, unknown, ql("auto")); ok || !strings.Contains(text, "set media") {
 		t.Errorf("unknown roll, no configured media: %q %v", text, ok)
 	}

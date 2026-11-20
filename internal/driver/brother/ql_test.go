@@ -226,7 +226,7 @@ func TestWaitDoneHonoursDeadline(t *testing.T) {
 	}
 }
 
-func dk(t *testing.T, id string) driver.Media {
+func dk(t *testing.T, id string) devicedb.Media {
 	t.Helper()
 	m, ok := devicedb.Default().Media(id)
 	if !ok {

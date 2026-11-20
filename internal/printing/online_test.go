@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 )
 
@@ -308,7 +309,7 @@ func TestOnlineBLESightingDuringCheck(t *testing.T) {
 func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
 	s, p := catService(t, &fakeCat{})
 	s.SeenBluetooth(p)
-	noDoc := func(*driver.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
+	noDoc := func(*devicedb.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
 	if _, err := s.Print(context.Background(), p, "", noDoc); err == nil {
 		t.Fatal("job didn't fail")
 	}

@@ -388,7 +388,7 @@ func (s *Server) setupTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) testPage(w http.ResponseWriter, r *http.Request) {
-	var media []driver.Media
+	var media []devicedb.Media
 	if m, ok := devicedb.Default().Model(session(r).Draft.Printer.Model); ok {
 		media = devicedb.Default().MediaFor(m)
 	}

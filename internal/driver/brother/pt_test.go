@@ -109,7 +109,7 @@ func TestPTMediaForWidth(t *testing.T) {
 	}
 }
 
-func mediaID(m *driver.Media) string {
+func mediaID(m *devicedb.Media) string {
 	if m == nil {
 		return ""
 	}
@@ -133,7 +133,7 @@ func ptTestPage(w, h int) *image.Gray {
 	return img
 }
 
-func media(t *testing.T, id string) *driver.Media {
+func media(t *testing.T, id string) *devicedb.Media {
 	t.Helper()
 	m, ok := devicedb.Default().Media(id)
 	if !ok {
@@ -316,7 +316,7 @@ func TestPTValidate(t *testing.T) {
 	if err := d.validate(&driver.Job{Pages: []*image.Gray{white(320, 60)}, Cut: "last", Media: media(t, "tze-24")}); err == nil || !strings.Contains(err.Error(), "last") {
 		t.Errorf("cut: last accepted: %v", err)
 	}
-	if err := d.validate(&driver.Job{Pages: []*image.Gray{white(306, 60)}, Media: &driver.Media{ID: "dk-22210"}}); err == nil {
+	if err := d.validate(&driver.Job{Pages: []*image.Gray{white(306, 60)}, Media: &devicedb.Media{ID: "dk-22210"}}); err == nil {
 		t.Error("QL media accepted")
 	}
 }
