@@ -134,6 +134,10 @@ func TestTryHappyPath(t *testing.T) {
 	if !restored(fake) {
 		t.Errorf("the printer's settings weren't sent back")
 	}
+	// the GK420d doesn't report mirror or orientation: don't claim those were restored
+	if out := d.output(); strings.Contains(out, "back as they were") || !strings.Contains(out, "off and on") {
+		t.Errorf("restore message:\n%s", out[max(0, len(out)-600):])
+	}
 }
 
 func TestTryNothingBeforeConsent(t *testing.T) {
@@ -243,10 +247,13 @@ func TestTryNoPrintAfterInputEnds(t *testing.T) {
 // restored reports whether the printer got its own settings back: a format without a graphic.
 // (Not "the last thing received": the fake reads connections concurrently, so on a busy machine
 // a label's last bytes can be read after the restore was sent.)
+// It waits up to 2 s: the fake records what it reads in its own goroutine.
 func restored(fake *zpltest.Fake) bool {
-	for _, f := range fake.AllFormats() {
-		if strings.Contains(f, "^PW799^LL812^LH0,0^LS0^LT0^XZ") && !strings.Contains(f, "^GF") {
-			return true
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		for _, f := range fake.AllFormats() {
+			if strings.Contains(f, "^PW799^LL812^LH0,0^LS0^LT0^XZ") && !strings.Contains(f, "^GF") {
+				return true
+			}
 		}
 	}
 	return false

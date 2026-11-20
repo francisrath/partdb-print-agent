@@ -288,7 +288,8 @@ func (db *DB) ModelByZebraMDL(mdl string) (*Model, bool) {
 	if !ok {
 		return nil, false
 	}
-	name = strings.Fields(name + " ")[0]
+	// the whole name ("ZP 450" has a space), without a trailing language token
+	name = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(name), " ZPL"))
 	dpi := 0
 	if i := strings.LastIndex(name, "-"); i > 0 && strings.HasSuffix(name, "dpi") {
 		dpi, _ = strconv.Atoi(strings.TrimSuffix(name[i+1:], "dpi"))

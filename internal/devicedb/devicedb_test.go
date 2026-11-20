@@ -173,7 +173,8 @@ func TestMediaForFillsDots(t *testing.T) {
 func TestModelByZebraMDL(t *testing.T) {
 	db := devicedb.Default()
 	for mdl, want := range map[string]string{"ZTC GK420d": "GK420d", "ZTC GX430t": "", "ZTC GC420t": "GC420t",
-		"ZTC ZD420-300dpi ZPL": "ZD420-300", "ZTC ZD420-203dpi ZPL": "ZD420-203", "QL-810W": ""} {
+		"ZTC ZD420-300dpi ZPL": "ZD420-300", "ZTC ZD420-203dpi ZPL": "ZD420-203", "QL-810W": "",
+		"ZTC ZP 450": "ZP450", " ZTC  GK420d ": "GK420d"} {
 		m, ok := db.ModelByZebraMDL(mdl)
 		got := ""
 		if ok {

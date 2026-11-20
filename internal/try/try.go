@@ -591,7 +591,11 @@ func (s *session) restore() {
 		s.say("\nCouldn't put the printer's settings back (%v): switch it off and on once.\n", err)
 		return
 	}
-	s.say("\nThe printer's own settings are back as they were.\n")
+	// ^PM (mirror) and ^PO (upside down) also stay until power-off, and a GK420d doesn't report
+	// them: they were left at normal, which is what nearly all software expects
+	s.say("\nThe printer's own width, length and position settings are restored. Mirror and upside-down\n" +
+		"printing were left off (normal); switching the printer off and on brings back whatever it had saved.\n")
+	s.note("Restored: print width, label length, position. Mirror/orientation left normal (not reported by the printer).")
 }
 
 // restoreCmd is a format without fields that sets the printer's own page settings again.
