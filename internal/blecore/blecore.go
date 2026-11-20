@@ -1,0 +1,126 @@
+// Package blecore is the Bluetooth-library-free part of the BLE transport: the advert type, picking the
+// configured printer from a scan, and the chunker that splits writes and obeys the printer's flow control.
+// The in-process transport (Linux, Windows) and the macOS helper both use it.
+package blecore
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ErrNoBluetooth wraps every "no usable Bluetooth adapter" error (none present, BlueZ not running, powered off).
+var ErrNoBluetooth = errors.New("no Bluetooth adapter")
+
+// ErrNotFound: no advert matched the configured name or address (yet).
+var ErrNotFound = errors.New("BLE printer not found")
+
+// Advert is one device seen in a scan.
+type Advert struct {
+	Name    string
+	Address string // a MAC ("AA:BB:CC:DD:EE:FF") on Linux/Windows, a CoreBluetooth UUID on macOS
+	RSSI    int
+	// Services are the advertised service UUIDs in the library's canonical lowercase 128-bit form
+	// ("0000ae30-0000-1000-8000-00805f9b34fb").
+	Services []string
+}
+
+// Pick finds the configured printer among the adverts. With both set, the address wins (the name is
+// ignored); a name matching several devices is an error naming their addresses.
+func Pick(found []Advert, name, address string) (Advert, error) {
+	if address != "" {
+		for _, a := range found {
+			if strings.EqualFold(a.Address, address) {
+				return a, nil
+			}
+		}
+		return Advert{}, fmt.Errorf("%w: no device with address %s", ErrNotFound, address)
+	}
+	if name == "" {
+		return Advert{}, errors.New("ble: set the printer's address or name")
+	}
+	var match []Advert
+	for _, a := range found {
+		if a.Name == name {
+			match = append(match, a)
+		}
+	}
+	switch len(match) {
+	case 0:
+		return Advert{}, fmt.Errorf("%w: no device named %q", ErrNotFound, name)
+	case 1:
+		return match[0], nil
+	}
+	addrs := make([]string, len(match))
+	for i, a := range match {
+		addrs[i] = a.Address
+	}
+	return Advert{}, fmt.Errorf("ble: %d devices are named %q (%s); set the address instead",
+		len(match), name, strings.Join(addrs, ", "))
+}
+
+// maxPause bounds how long Send waits for the printer to lift a pause.
+const maxPause = 30 * time.Second
+
+// Chunker splits a write into pieces of at most Max bytes, waits Gap between pieces, and holds back while
+// the printer has asked for a pause (fed in through OnNotify from the notification callback).
+type Chunker struct {
+	Max   int // bytes per write; below 20 counts as 20 (the smallest ATT payload)
+	Gap   time.Duration
+	Write func([]byte) error
+
+	mu     sync.Mutex
+	paused bool
+}
+
+// Send returns once the last piece has been handed to Write.
+func (c *Chunker) Send(b []byte) error {
+	n := max(c.Max, 20)
+	for i := 0; i < len(b); i += n {
+		if i > 0 && c.Gap > 0 {
+			time.Sleep(c.Gap)
+		}
+		if err := c.waitResume(); err != nil {
+			return err
+		}
+		if err := c.Write(b[i:min(i+n, len(b))]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Chunker) waitResume() error {
+	deadline := time.Now().Add(maxPause)
+	for c.isPaused() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ble: printer paused the transfer for over %v", maxPause)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return nil
+}
+
+func (c *Chunker) isPaused() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.paused
+}
+
+// OnNotify recognises the cat printers' flow-control notification 51 78 AE 01 01 00 10 (pause) / 00
+// (resume). It reports the pause state and whether this notification changed it; other notifications
+// leave it alone (changed false).
+func (c *Chunker) OnNotify(b []byte) (pause, changed bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(b) < 7 || b[0] != 0x51 || b[1] != 0x78 || b[2] != 0xAE || b[3] != 0x01 || b[4] != 0x01 || b[5] != 0x00 ||
+		(b[6] != 0x10 && b[6] != 0x00) {
+		return c.paused, false
+	}
+	p := b[6] == 0x10
+	changed = p != c.paused
+	c.paused = p
+	return p, changed
+}

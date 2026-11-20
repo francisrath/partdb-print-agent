@@ -26,6 +26,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (Linux, Windows)
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
