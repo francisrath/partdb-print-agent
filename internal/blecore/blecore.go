@@ -4,6 +4,7 @@
 package blecore
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -140,4 +141,21 @@ func (c *Chunker) OnNotify(b []byte) (pause, changed bool) {
 	changed = p != c.paused
 	c.paused = p
 	return p, changed
+}
+
+// ConnectRetry runs connect, and once more when it fails with an error retry accepts and ctx is still
+// live: first reset (drop a stale link), then a pause. BlueZ sometimes aborts a connect at once
+// (le-connection-abort-by-local), more so right after a printer error.
+func ConnectRetry(ctx context.Context, pause time.Duration, connect func() error, retry func(error) bool, reset func()) error {
+	err := connect()
+	if err == nil || !retry(err) || ctx.Err() != nil {
+		return err
+	}
+	reset()
+	select {
+	case <-ctx.Done():
+		return err
+	case <-time.After(pause):
+	}
+	return connect()
 }

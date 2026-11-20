@@ -24,6 +24,7 @@ const (
 	connectTimeout = 10 * time.Second // Linux Connect ignores ConnectionParams.ConnectionTimeout
 	readTimeout    = 2 * time.Second
 	minMTU         = 23 // the ATT default; Windows reports it until the MTU exchange is done
+	retryPause     = 2 * time.Second // before the one connect retry (500 ms failed right after a paper jam)
 )
 
 func init() {
@@ -208,14 +209,14 @@ func (t *Transport) Open(ctx context.Context) error {
 	}
 	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 
-	dev, err := connect(ctx, addr)
-	// BlueZ sometimes aborts the first attempt at once (le-connection-abort-by-local): retry once. Not after
-	// a timeout – the first Connect may still be running on the same device, and its late Disconnect would
-	// drop the retry's link.
-	if err != nil && !errors.Is(err, errConnectTimeout) && ctx.Err() == nil {
-		time.Sleep(500 * time.Millisecond)
+	// BlueZ sometimes aborts the first attempt at once (le-connection-abort-by-local): drop any stale link
+	// BlueZ still holds, wait and retry once. Not after a timeout – the first Connect may still be running on
+	// the same device, and its late Disconnect would drop the retry's link.
+	var dev bluetooth.Device
+	err = blecore.ConnectRetry(ctx, retryPause, func() (err error) {
 		dev, err = connect(ctx, addr)
-	}
+		return err
+	}, func(err error) bool { return !errors.Is(err, errConnectTimeout) }, func() { dropStale(addr) })
 	if err != nil {
 		return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
 	}

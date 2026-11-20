@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	github.com/boombuler/barcode v1.1.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gosnmp/gosnmp v1.47.0
 	github.com/klippa-app/go-pdfium v1.21.4
 	github.com/tetratelabs/wazero v1.12.0
@@ -15,7 +16,6 @@ require (
 require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jolestar/go-commons-pool/v2 v2.1.2 // indirect
 	github.com/saltosystems/winrt-go v0.0.0-20261015065339-8ef619c103a3 // indirect
