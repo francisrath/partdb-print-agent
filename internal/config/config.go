@@ -100,6 +100,9 @@ type Printer struct {
 	NoSNMP        bool   `yaml:"no_snmp,omitempty"`
 	// Darkness is the print density of models with quirk darkness (cat printers): light | normal | dark; "" = normal.
 	Darkness string `yaml:"darkness,omitempty"`
+	// BlackMarkMM is the thickness of the black marks on the back of die-cut media, for models with quirk
+	// black_mark; 0 (the default) = the printer finds labels by their gaps.
+	BlackMarkMM float64 `yaml:"black_mark_mm,omitempty"`
 	// AllowScaling prints labels whose size doesn't match the media by scaling them,
 	// instead of refusing with MEDIA_MISMATCH.
 	AllowScaling bool `yaml:"allow_scaling,omitempty"`
@@ -367,6 +370,12 @@ func (p *Printer) validate() error {
 		}
 	default:
 		return fmt.Errorf("darkness %q must be light, normal or dark", p.Darkness)
+	}
+	switch {
+	case p.BlackMarkMM < 0:
+		return fmt.Errorf("black_mark_mm %v must be 0 (gap sensing) or more", p.BlackMarkMM)
+	case p.BlackMarkMM > 0 && !m.QuirkBool("black_mark"):
+		return fmt.Errorf("%s has no black mark setting", m.ID)
 	}
 	t := &p.Transport
 	switch t.Kind {

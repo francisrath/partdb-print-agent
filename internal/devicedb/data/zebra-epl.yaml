@@ -1,0 +1,118 @@
+# Zebra/Eltron printers that speak only EPL2 (driver epl). ZPL-capable models (-Z, "Plus") are in zebra.yaml.
+# All untested (no EPL printer on hand), researched 2026-11-20. Protocol: Zebra EPL Programming Guide
+# 14245L-003 Rev. A; density defaults from its D command (2844: 10, others 7). Head pins = print width at
+# 8 or 12 dots/mm. USB ids from linux-usb.org usb.ids (vendor 0a5f), only where it lists one.
+# Not here: serial/parallel-only models (LP/TLP 2622, LP 2443 Orion, LP/TLP 2684 Strata at 8.5") need a serial
+# transport; LP 2442, LP 2348 and TLP 2746 have no spec sheet found. See ~/Notes/claude/partdb-agent-epl2-design.md.
+models:
+  # untested; LP 2824 / TLP 2824 spec sheet (Zebra, 2003): 203 dpi, 2.2" (56 mm) print width, serial, parallel, USB 1.1, internal or external ZebraNet print server; units from before 2002 may lack USB and Ethernet
+  - id: LP2824
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 448
+    transports: [usb, tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; same spec sheet as LP2824 (thermal transfer version)
+  - id: TLP2824
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 448
+    transports: [usb, tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; LP 2844 user guide 980483-001A, 2844 spec page: 203 dpi, 4.09" (104 mm), USB + parallel + serial or USB + internal Ethernet + serial; USB id from usb.ids ("LP2844 Printer")
+  - id: LP2844
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 832
+    transports: [usb, tcp]
+    match: {usb: ["0a5f:0009"]}
+    quirks: {density: 10, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; 2844 spec page / LP 2844 spec sheet (thermal transfer version); usb.ids has no separate id
+  - id: TLP2844
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 832
+    transports: [usb, tcp]
+    quirks: {density: 10, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; TLP 3842 spec sheet (Zebra, 2003): 300 dpi, 4.09", serial, parallel, USB 1.1, optional internal print server
+  - id: TLP3842
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 300
+    head_pins: 1248
+    transports: [usb, tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; 2746e spec page: 203 dpi, 4.09", RS-232, parallel, USB 1.1, internal or external print server
+  - id: TLP2746e
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 832
+    transports: [usb, tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; LP/TLP 2722/2742/3742 brochure 11798L: 203 dpi, 4.09"; serial and parallel only, so network via a ZebraNet PrintServer II
+  - id: LP2742
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 832
+    transports: [tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; same brochure as LP2742 (thermal transfer version)
+  - id: TLP2742
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 832
+    transports: [tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; same brochure: 300 dpi, 4.09"; serial, parallel, network via a PrintServer II
+  - id: TLP3742
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; same brochure: 203 dpi, 2.12" (54 mm); serial, parallel, network via a PrintServer II
+  - id: LP2722
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 432
+    transports: [tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-51x25, label-38x25, label-32x25, label-25x13]
+  # untested; same brochure as LP2722 (thermal transfer version)
+  - id: TLP2722
+    vendor: Zebra
+    driver: epl
+    dialect: epl2
+    dpi: 203
+    head_pins: 432
+    transports: [tcp]
+    quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
+    media: [label-51x25, label-38x25, label-32x25, label-25x13]
