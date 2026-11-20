@@ -117,7 +117,7 @@ func TestTryHappyPath(t *testing.T) {
 	d.answer("Close the lid again", "", func() { fake.Set(func(f *zpltest.Fake) { f.HeadUp, f.Errors, f.SilentHS = false, 0, false }) })
 	got := d.finish()
 
-	for _, want := range []string{"Zebra GK420d", "Labels: 102×102 mm", "Label 1/5: printed", "Label 2/5: printed", "Label 3a+3b/5: printed",
+	for _, want := range []string{"stays until the printer is switched off and on", "Zebra GK420d", "Labels: 102×102 mm", "Label 1/5: printed", "Label 2/5: printed", "Label 3a+3b/5: printed",
 		"Label 4/5: skipped (square labels)", "Status head open: COVER_OPEN", "Status head closed: OK", "restore settings"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)

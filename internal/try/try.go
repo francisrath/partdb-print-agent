@@ -596,7 +596,7 @@ func (s *session) restore() {
 	names := s.restoredNames()
 	s.say("\nThe printer's own %s are restored. Anything else this test set (mirror and upside-down printing\n"+
 		"left off, i.e. normal) stays until the printer is switched off and on, which brings back what it had saved.\n", names)
-	s.note("Restored: %s. Mirror/orientation left normal (not reported by the printer).", names)
+	s.note("Restored: %s. Anything else this test set (mirror and upside-down left normal) stays until the printer is switched off and on.", names)
 }
 
 // restoredNames lists, in words, the settings restoreCmd sends back.
