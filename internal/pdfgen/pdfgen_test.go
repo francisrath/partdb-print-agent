@@ -22,7 +22,7 @@ func TestTestCardLinesFit(t *testing.T) {
 	if shrunk >= short {
 		t.Errorf("long line not shrunk: %v vs %v", shrunk, short)
 	}
-	if w := shrunk * textWidthEm(long); w > 29-4.5 {
+	if w := shrunk * textWidthEm(long); w > 29-5.5 {
 		t.Errorf("long line %.1f mm wide", w)
 	}
 }
@@ -117,5 +117,14 @@ func TestTestCardsTagged(t *testing.T) {
 	pdf := string(TestCardsTagged(102, 102, []string{"batch"}, "3a/5", "3b/5"))
 	if strings.Count(pdf, "/Type /Page ") != 2 || !strings.Contains(pdf, "(3a/5) Tj") || !strings.Contains(pdf, "(3b/5) Tj") {
 		t.Errorf("want two pages tagged 3a and 3b")
+	}
+}
+
+// The border sits 1 mm inside the card, so a label a little smaller than its nominal size
+// (a 4" roll is 101.6 mm, the card 102 mm) or ±1 mm of feed tolerance doesn't cut it off.
+func TestTestCardBorderInset(t *testing.T) {
+	pdf := string(TestCard(102, 102, []string{"pdb-print test"}))
+	if !strings.Contains(pdf, "1.00 1.00 100.00 100.00 re S") {
+		t.Errorf("border not 1 mm inside:\n%.300s", pdf[strings.Index(pdf, "re S")-60:])
 	}
 }

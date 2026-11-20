@@ -189,13 +189,14 @@ func (s *session) run() {
 		s.note("Stopped before printing.")
 		return
 	}
-	s.card1()
-	for _, step := range []func(){s.card2, s.card3, s.card4, s.card5} {
-		if s.stopped || s.ctx.Err() != nil {
-			return
-		}
-		step()
+	if !s.printAll() || s.stopped || s.ctx.Err() != nil {
+		return
 	}
+	s.questions()
+	if s.stopped || s.ctx.Err() != nil {
+		return
+	}
+	s.card5()
 }
 
 // find picks the printer: the given address, else what discovery finds, else asks for an address.
@@ -343,7 +344,8 @@ func (s *session) pickMedia() bool {
 	if pw, ll := float64(s.setup["pw"]), float64(s.setup["ll"]); pw > 0 && ll > 0 {
 		d := math.Inf(1)
 		for i, m := range media {
-			if v := math.Abs(m.WidthMM-pw/s.dpm()) + math.Abs(m.LengthMM-ll/s.dpm()); v < d {
+			// the label length is measured (calibration), the print width only a setting: length decides
+			if v := 10*math.Abs(m.LengthMM-ll/s.dpm()) + math.Abs(m.WidthMM-pw/s.dpm()); v < d {
 				best, d = i, v
 			}
 		}
@@ -403,43 +405,81 @@ func (s *session) print(tag string, src printing.Source) bool {
 	return err == nil
 }
 
-// card1 is the test card, with the fixes for what can go wrong with it.
-func (s *session) card1() {
-	s.say("\n— Label 1/5: test card —\n")
-	src := func(tag string) printing.Source {
-		return printing.TestCardTagged(s.printer.Model, s.o.Version, tag)
-	}
-	if !s.print("1/5", src("1/5")) {
+// printAll sends every test label in one go, so the tester can collect them all at once and answer
+// the questions with the labels in front of them (they may not be sitting next to the printer).
+func (s *session) printAll() bool {
+	s.say("\nPrinting all test labels now. Collect them when they're done, then answer the questions below.\n")
+	if !s.print("1/5", s.card("1/5")) {
 		s.status("after label 1")
-		return
+		return false
 	}
-	retried := false
-	if !s.ask("Did label 1/5 come out of the printer?", true) {
-		s.status("nothing came out")
-		s.rep.ZebraQueries(s.ctx, s.candidate, where(s.candidate)) // buffer counters, errors, setup
-		s.ask("Is a light on the printer flashing red or orange?", false)
-		if !s.ask("Try printing it once more?", false) || !s.print("1b/5", src("1b/5")) || !s.ask("Did label 1b/5 come out?", false) {
+	s.print("2/5", printing.PartLabel("2/5"))
+	s.print("3a+3b/5", func(m *driver.Media) ([]byte, error) {
+		return pdfgen.TestCardsTagged(m.WidthMM, m.LengthMM, []string{"batch of two", s.printer.Model}, "3a/5", "3b/5"), nil
+	})
+	if s.square() {
+		s.note("Label 4/5: skipped (square labels)")
+	} else {
+		s.print("4/5", func(m *driver.Media) ([]byte, error) {
+			return pdfgen.TestCardTagged(m.LengthMM, m.WidthMM, []string{"turned", s.printer.Model}, "4/5"), nil
+		})
+	}
+	if s.ask("Did the labels come out of the printer?", true) {
+		return true
+	}
+	s.status("nothing came out")
+	s.rep.ZebraQueries(s.ctx, s.candidate, where(s.candidate)) // buffer counters, errors, setup
+	s.ask("Is a light on the printer flashing red or orange?", false)
+	return false
+}
+
+func (s *session) card(tag string) printing.Source {
+	return printing.TestCardTagged(s.printer.Model, s.o.Version, tag)
+}
+
+// questions asks about each label of the first batch, then reprints the test card with the fixes
+// (all of them in one label) until it's right or three tries are used.
+func (s *session) questions() {
+	s.say("\n— Label 1/5: test card —\n")
+	fixed := s.check("1/5")
+	s.ask("Is the print dark enough to read easily?", true)
+	s.ask("Is the checkerboard even (no white lines across it)?", true)
+
+	s.say("\n— Label 2/5: part label with QR code and barcode —\n")
+	s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
+	s.ask("Point your phone's camera at the QR code. Does it show a link (partdb.example.org)? You don't need to open it.", true)
+	s.choose("If you have a barcode scanner: does it read the barcode? y = yes, n = no, Enter = no scanner:", "y", "n")
+
+	s.say("\n— Labels 3a/5 and 3b/5: two labels in one job —\n")
+	s.ask("Are 3a/5 and 3b/5 each on its own label (nothing across the gap)?", true)
+
+	if s.square() {
+		s.say("\n(There is no label 4/5: it checks turning a label sideways, which can't show on square labels.)\n")
+	} else {
+		s.say("\n— Label 4/5: a label made the other way round (pdb-print turns it) —\n")
+		s.ask("Is the whole frame of label 4/5 visible, and the text readable?", true)
+	}
+
+	for retry := 'b'; fixed && retry <= 'd'; retry++ {
+		if s.stopped || s.ctx.Err() != nil {
 			return
 		}
-		retried = true
-	}
-	retry := 'b'
-	if retried {
-		retry = 'c'
-	}
-	again := func() bool {
-		retry++
-		tag := fmt.Sprintf("1%c/5", retry-1)
-		return s.print(tag, src(tag))
-	}
-	for range 3 {
-		if s.stopped || s.ask("Is the whole frame (the border line) visible on all four sides?", true) {
-			break
+		tag := fmt.Sprintf("1%c/5", retry)
+		s.say("\nPrinting the test card again with the fixes, as label %s.\n", tag)
+		if !s.print(tag, s.card(tag)) {
+			return
 		}
-		side := s.choose("Which side is cut off or missing? t = top, b = bottom, l = left, r = right (Enter = skip):", "t", "b", "l", "r")
-		if side == "" {
-			break
-		}
+		fixed = s.check(tag)
+	}
+}
+
+// check asks about the test card labelled tag and applies fixes; true when something was changed.
+func (s *session) check(tag string) bool {
+	changed := false
+	if s.stopped || s.ask(fmt.Sprintf("Is the whole frame of label %s (the border line) visible on all four sides?", tag), true) {
+		goto top
+	}
+	if side := s.choose("Which side is cut off or missing? t = top, b = bottom, l = left, r = right (Enter = skip):", "t", "b", "l", "r"); side != "" {
 		q := "About how many mm are missing there? (Enter if you can't tell)"
 		if side == "t" || side == "l" {
 			q = "About how many mm are missing there? The ruler along that edge shows it: 1 tick = 1 mm (Enter if you can't tell)"
@@ -470,65 +510,28 @@ func (s *session) card1() {
 				what += "to the left"
 			}
 		}
-		s.say("Printing it again, %s.\n", what)
-		s.note("  fix: %s (%+v)", what, *a)
-		if !again() {
-			return
-		}
+		s.note("  fix after %s: %s (%+v)", tag, what, *a)
+		changed = true
+	}
+top:
+	if s.stopped {
+		return false
 	}
 	if !s.ask("Is ▲ TOP at the top edge, as the label comes out of the printer?", true) {
 		if s.ask("Is the whole label upside down?", true) {
-			s.printer.UpsideDown = true
-			if again() {
-				s.ask("Is ▲ TOP at the top edge now?", true)
-			}
+			s.printer.UpsideDown = !s.printer.UpsideDown
+			s.note("  fix after %s: upside down = %v", tag, s.printer.UpsideDown)
+			changed = true
+		} else {
+			s.ask("Is ▲ TOP on the left or right edge instead (the label printed sideways)?", true)
 		}
 	}
 	if s.ask("Is the text mirrored (does it read backwards, like in a mirror)?", false) {
-		s.printer.Mirror = true
-		if again() {
-			s.ask("Does the text read normally now?", true)
-		}
+		s.printer.Mirror = !s.printer.Mirror
+		s.note("  fix after %s: mirror = %v", tag, s.printer.Mirror)
+		changed = true
 	}
-	s.ask("Is the print dark enough to read easily?", true)
-	s.ask("Is the checkerboard even (no white lines across it)?", true)
-}
-
-func (s *session) card2() {
-	s.say("\n— Label 2/5: part label with QR code and barcode —\n")
-	if !s.print("2/5", printing.PartLabel("2/5")) {
-		return
-	}
-	s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
-	s.ask("Point your phone's camera at the QR code. Does it show a link (partdb.example.org)? You don't need to open it.", true)
-	s.choose("If you have a barcode scanner: does it read the barcode? y = yes, n = no, Enter = no scanner:", "y", "n")
-}
-
-func (s *session) card3() {
-	s.say("\n— Labels 3a/5 and 3b/5: two labels in one job —\n")
-	src := func(m *driver.Media) ([]byte, error) {
-		return pdfgen.TestCardsTagged(m.WidthMM, m.LengthMM, []string{"batch of two", s.printer.Model}, "3a/5", "3b/5"), nil
-	}
-	if !s.print("3a+3b/5", src) {
-		return
-	}
-	s.ask("Did two labels come out, 3a/5 and 3b/5, each on its own label (nothing across the gap)?", true)
-}
-
-func (s *session) card4() {
-	if s.square() {
-		s.say("\n— Label 4/5 is skipped: it checks turning a label sideways, which can't show on square labels —\n")
-		s.note("Label 4/5: skipped (square labels)")
-		return
-	}
-	s.say("\n— Label 4/5: a label made the other way round (pdb-print turns it) —\n")
-	src := func(m *driver.Media) ([]byte, error) {
-		return pdfgen.TestCardTagged(m.LengthMM, m.WidthMM, []string{"turned", s.printer.Model}, "4/5"), nil
-	}
-	if !s.print("4/5", src) {
-		return
-	}
-	s.ask("Is the whole frame of label 4/5 visible, and the text readable?", true)
+	return changed && !s.stopped
 }
 
 func (s *session) card5() {

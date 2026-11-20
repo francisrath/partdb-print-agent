@@ -1,6 +1,9 @@
 # Common die-cut label sizes (width × length, mm) for printers that take any roll, e.g. Zebra. No dots
 # here: a model gets them at its own dpi (devicedb.MediaFor), the width limited to its head.
 media:
+  - {id: label-100x150, name: 100×150 mm die-cut, kind: die_cut, width_mm: 100, length_mm: 150}
+  - {id: label-100x100, name: 100×100 mm die-cut, kind: die_cut, width_mm: 100, length_mm: 100}
+  - {id: label-100x50, name: 100×50 mm die-cut, kind: die_cut, width_mm: 100, length_mm: 50}
   - {id: label-102x152, name: 102×152 mm (4×6") die-cut, kind: die_cut, width_mm: 102, length_mm: 152}
   - {id: label-102x102, name: 102×102 mm (4×4") die-cut, kind: die_cut, width_mm: 102, length_mm: 102}
   - {id: label-102x76, name: 102×76 mm (4×3") die-cut, kind: die_cut, width_mm: 102, length_mm: 76}

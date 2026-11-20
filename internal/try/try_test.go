@@ -109,8 +109,14 @@ func TestTryHappyPath(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	for _, q := range []string{"Did label 1/5 come out", "whole frame", "TOP at the top edge", "mirrored", "dark enough", "checkerboard",
-		"sharp", "phone", "barcode scanner", "Did two labels come out"} {
+	d.answer("Did the labels come out", "", func() {
+		// all labels are sent before the first question: the tester may not be at the printer
+		if n := waitFormats(fake, 4); n != 4 {
+			t.Errorf("%d labels sent before the questions, want 4", n)
+		}
+	})
+	for _, q := range []string{"whole frame", "TOP at the top edge", "mirrored", "dark enough", "checkerboard",
+		"sharp", "phone", "barcode scanner", "each on its own label"} {
 		d.answer(q, "")
 	}
 	d.answer("Open the printer's lid", "", func() { fake.Set(func(f *zpltest.Fake) { f.HeadUp, f.Errors, f.SilentHS = true, 0x4, true }) })
@@ -171,14 +177,18 @@ func TestTryUpsideDownRetry(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	d.answer("Did label 1/5 come out", "")
+	d.answer("Did the labels come out", "")
 	d.answer("whole frame", "")
 	d.answer("TOP at the top edge", "n")
 	d.answer("upside down", "y")
-	d.answer("TOP at the top edge now", "y")
+	for _, q := range []string{"mirrored", "dark enough", "checkerboard", "sharp", "phone", "barcode scanner", "each on its own label"} {
+		d.answer(q, "")
+	}
+	d.answer("whole frame of label 1b/5", "y")
+	d.answer("TOP at the top edge", "y")
 	got := d.finish()
 	f := fake.Formats()
-	if len(f) < 2 || f[0] == f[1] || !strings.Contains(got, "Label 1b/5: printed") || !strings.Contains(got, "upside_down=true") {
+	if len(f) != 5 || f[0] == f[4] || !strings.Contains(got, "Label 1b/5: printed") || !strings.Contains(got, "upside_down=true") {
 		t.Errorf("%d formats; report:\n%s", len(f), got)
 	}
 }
@@ -189,13 +199,16 @@ func TestTryShiftRetry(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	d.answer("Did label 1/5 come out", "")
+	d.answer("Did the labels come out", "")
 	d.answer("whole frame", "n")
 	d.answer("Which side", "l")
 	d.answer("how many mm", "3")
-	d.answer("whole frame", "y")
+	for _, q := range []string{"TOP at the top edge", "mirrored", "dark enough", "checkerboard", "sharp", "phone", "barcode scanner", "each on its own label"} {
+		d.answer(q, "")
+	}
+	d.answer("whole frame of label 1b/5", "y")
 	d.finish()
-	if f := fake.Formats(); len(f) < 2 || !strings.Contains(f[1], "^LH24,0") {
+	if f := fake.Formats(); len(f) != 5 || !strings.Contains(f[4], "^LH24,0") {
 		t.Errorf("retry format %.80q", f)
 	}
 }
@@ -207,7 +220,7 @@ func TestTryEOFWritesReport(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	d.answer("Did label 1/5 come out", "y")
+	d.answer("Did the labels come out", "y")
 	got := d.finish()
 	if !strings.Contains(got, "Label 1/5: printed") || !restored(fake) {
 		t.Errorf("report:\n%s\nrestored %v", got, restored(fake))
@@ -221,7 +234,7 @@ func TestTrySkipSideContinues(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	d.answer("Did label 1/5 come out", "")
+	d.answer("Did the labels come out", "")
 	d.answer("whole frame", "n")
 	d.answer("Which side", "")
 	d.answer("TOP at the top edge", "")
@@ -235,13 +248,21 @@ func TestTryNoPrintAfterInputEnds(t *testing.T) {
 	d.answer("Ask this printer what it is?", "y")
 	d.answer("Number, or Enter for", "")
 	d.answer("Print the test labels now?", "y")
-	d.answer("Did label 1/5 come out", "")
+	d.answer("Did the labels come out", "")
 	d.answer("whole frame", "n")
 	d.answer("Which side", "b")
 	d.finish() // closed at the mm question
-	if n := len(fake.Formats()); n != 1 {
-		t.Errorf("%d labels sent, want only 1/5", n)
+	if n := waitFormats(fake, 5); n != 4 {
+		t.Errorf("%d labels sent, want only the first batch (4)", n)
 	}
+}
+
+// waitFormats waits up to 2 s for at least n labels (the fake records them in its own goroutine)
+// and returns how many arrived.
+func waitFormats(fake *zpltest.Fake, n int) int {
+	for end := time.Now().Add(2 * time.Second); len(fake.Formats()) < n && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+	}
+	return len(fake.Formats())
 }
 
 // restored reports whether the printer got its own settings back: a format without a graphic.

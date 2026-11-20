@@ -91,20 +91,21 @@ func TestCardOn(pageMM, cardMM, hMM float64, lines []string) []byte {
 
 func testCard(wMM, hMM float64, lines []string, tag string) string {
 	var c strings.Builder
-	fmt.Fprintf(&c, "0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n0.15 w\n", wMM-1, hMM-1)
+	// the border sits 1 mm in: a 4" roll is 101.6 mm, and feeds vary by about a millimetre
+	fmt.Fprintf(&c, "0 g 0.3 w 1.00 1.00 %.2f %.2f re S\n0.15 w\n", wMM-2, hMM-2)
 	for x := 1.0; x < wMM-0.5; x++ { // top ruler, longer tick every 5 mm
 		l := 1.0
 		if int(x)%5 == 0 {
 			l = 2
 		}
-		fmt.Fprintf(&c, "%.2f %.2f m %.2f %.2f l S\n", x, hMM-0.5, x, hMM-0.5-l)
+		fmt.Fprintf(&c, "%.2f %.2f m %.2f %.2f l S\n", x, hMM-1, x, hMM-1-l)
 	}
 	for y := 1.0; y < hMM-0.5; y++ { // left ruler
 		l := 1.0
 		if int(y)%5 == 0 {
 			l = 2
 		}
-		fmt.Fprintf(&c, "0.5 %.2f m %.2f %.2f l S\n", y, 0.5+l, y)
+		fmt.Fprintf(&c, "1 %.2f m %.2f %.2f l S\n", y, 1+l, y)
 	}
 	size := min(max(wMM/10, 1.2), 3.2)
 	y := hMM - 3 - size
@@ -117,7 +118,7 @@ func testCard(wMM, hMM float64, lines []string, tag string) string {
 	y -= size * 1.3
 	for _, s := range lines {
 		// shrink long lines to fit the width; rounded down because Tf is written with 2 decimals
-		fs := math.Floor(min(size, (wMM-4.5)/max(textWidthEm(s), 0.001))*100) / 100
+		fs := math.Floor(min(size, (wMM-5.5)/max(textWidthEm(s), 0.001))*100) / 100
 		fmt.Fprintf(&c, "BT /F1 %.2f Tf 3 %.2f Td (%s) Tj ET\n", fs, y, Text(s))
 		y -= size * 1.3
 	}
