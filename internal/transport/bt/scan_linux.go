@@ -65,8 +65,8 @@ func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
 	return classicDevices(objs), nil
 }
 
-// classicDevices are the Device1 objects with a class of device (BR/EDR), by address; a device known to
-// two adapters is one row (the first adapter's, with SPP if either saw it).
+// classicDevices are the Device1 objects with a class of device or the SPP UUID (BR/EDR), by address; a device known to
+// two adapters is one row (the first adapter's, with SPP and the class if either has them).
 func classicDevices(objs bluezObjects) []Device {
 	paths := slices.Sorted(maps.Keys(objs))
 	var devs []Device
@@ -76,18 +76,19 @@ func classicDevices(objs bluezObjects) []Device {
 			continue
 		}
 		addr, _ := props["Address"].Value().(string)
-		class, ok := props["Class"].Value().(uint32)
-		if addr == "" || !ok {
-			continue // LE only
+		class, hasClass := props["Class"].Value().(uint32)
+		uuids, _ := props["UUIDs"].Value().([]string)
+		spp := slices.ContainsFunc(uuids, func(u string) bool { return strings.EqualFold(u, sppUUIDString) })
+		if addr == "" || !hasClass && !spp {
+			continue // LE only (BlueZ's Class is optional: the serial port alone also says Classic)
 		}
 		name, _ := props["Name"].Value().(string)
 		if name == "" {
 			name, _ = props["Alias"].Value().(string)
 		}
-		uuids, _ := props["UUIDs"].Value().([]string)
-		spp := slices.ContainsFunc(uuids, func(u string) bool { return strings.EqualFold(u, sppUUIDString) })
 		if i := slices.IndexFunc(devs, func(d Device) bool { return strings.EqualFold(d.Address, addr) }); i >= 0 {
 			devs[i].SPP = devs[i].SPP || spp
+			devs[i].Class = cmp.Or(devs[i].Class, class)
 			continue
 		}
 		devs = append(devs, Device{Name: name, Address: addr, Class: class, SPP: spp})
