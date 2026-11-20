@@ -98,7 +98,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
 		}
-		if msg := lastLine(stderr.String()); msg != "" {
+		if msg := fatalLine(stderr.String()); msg != "" {
 			return nil, helperError(msg)
 		}
 		return nil, fmt.Errorf("ble: %s scan: %w", helperName, err)
@@ -115,9 +115,17 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	return ads, nil
 }
 
-func lastLine(s string) string {
+// fatalMark starts the helper's fatal stderr line (its other lines are log output).
+const fatalMark = "error: "
+
+// fatalLine returns the helper's fatal message without the mark, when it is the last line of stderr.
+func fatalLine(s string) string {
 	s = strings.TrimSpace(s)
-	return s[strings.LastIndexByte(s, '\n')+1:]
+	msg, ok := strings.CutPrefix(s[strings.LastIndexByte(s, '\n')+1:], fatalMark)
+	if !ok {
+		return ""
+	}
+	return msg
 }
 
 // Transport is one BLE connection to a cat printer, through a pdb-print-ble process.
@@ -152,8 +160,8 @@ func (t *Transport) Open(ctx context.Context) error {
 		return err
 	}
 	cmd := exec.Command(helper)
-	tail := new(lastLineWriter)
-	cmd.Stderr = io.MultiWriter(os.Stderr, tail) // the helper logs there; its last line explains an exit
+	tail := new(stderrTail)
+	cmd.Stderr = io.MultiWriter(os.Stderr, tail) // the helper logs there; a fatal last line explains an exit
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -182,7 +190,7 @@ func (t *Transport) Open(ctx context.Context) error {
 }
 
 // readLoop delivers the helper's frames until it exits, then reaps it.
-func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *lastLineWriter, done chan struct{}) {
+func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, done chan struct{}) {
 	var err error
 	for {
 		var typ byte
@@ -206,15 +214,17 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *lastLineWrit
 		}
 		t.mu.Unlock()
 	}
-	if !errors.Is(err, io.EOF) {
+	// stdout ended (cleanly or mid-frame): the helper is exiting, and its exit says why.
+	exiting := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	if !exiting {
 		_ = cmd.Process.Kill() // garbage on stdout (version skew?): the helper can't be trusted any more
 	}
 	_, _ = io.Copy(io.Discard, stdout) // let Wait finish
 	werr := cmd.Wait()
-	msg := strings.TrimPrefix(tail.String(), helperName+": ")
+	msg := fatalLine(string(tail.b))
 	t.mu.Lock()
 	switch {
-	case !errors.Is(err, io.EOF):
+	case !exiting:
 		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
 	case msg != "" && werr != nil:
 		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
@@ -345,15 +355,13 @@ func (t *Transport) stop(kill bool) {
 	t.mu.Unlock()
 }
 
-// lastLineWriter keeps the last line written to it (exec copies stderr from one goroutine; read it after Wait).
-type lastLineWriter struct{ b []byte }
+// stderrTail keeps the end of the helper's stderr (exec copies it from one goroutine; read it after Wait).
+type stderrTail struct{ b []byte }
 
-func (w *lastLineWriter) Write(p []byte) (int, error) {
+func (w *stderrTail) Write(p []byte) (int, error) {
 	w.b = append(w.b, p...)
 	if len(w.b) > 4096 {
 		w.b = w.b[len(w.b)-1024:]
 	}
 	return len(p), nil
 }
-
-func (w *lastLineWriter) String() string { return lastLine(string(w.b)) }

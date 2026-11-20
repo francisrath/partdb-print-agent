@@ -33,6 +33,9 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/blecore"
 )
 
+// fatalMark starts the last stderr line when the helper exits on an error (internal/transport/ble reads it).
+const fatalMark = "error: "
+
 const (
 	openScan       = 10 * time.Second
 	connectTimeout = 10 * time.Second
@@ -54,8 +57,8 @@ func main() {
 		err = serve(os.Stdin, &frames{w: os.Stdout})
 	}
 	if err != nil {
-		// The last stderr line is the error itself: pdb-print recognises ErrNoBluetooth by its text.
-		fmt.Fprintln(os.Stderr, err)
+		// The marked last stderr line is the cause pdb-print reports (and how it recognises ErrNoBluetooth).
+		fmt.Fprintln(os.Stderr, fatalMark+err.Error())
 		os.Exit(1)
 	}
 }
@@ -261,7 +264,7 @@ func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Ch
 		if ch := live.Load(); ch != nil {
 			ch.Close()
 		}
-		log.Printf("printer %s disconnected", ad.Address)
+		fmt.Fprintf(os.Stderr, "%sprinter %s disconnected\n", fatalMark, ad.Address)
 		os.Exit(1)
 	})
 	dev, err := adapter.Connect(bluetooth.Address{UUID: id},

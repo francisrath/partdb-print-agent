@@ -29,7 +29,7 @@ const fakeEnv = "PDB_PRINT_BLE_FAKE"
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeEnv); mode != "" {
 		if err := fakeHelper(mode, os.Args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, "error: "+err.Error()) // marked like the real helper's fatal line
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -38,7 +38,8 @@ func TestMain(m *testing.M) {
 }
 
 // fakeHelper modes: "ok" echoes the open request and every write back as notifications; on the first
-// write "die" exits silently, "drop" exits after logging a lost link, "junk" sends a bad frame and hangs;
+// write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
+// and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
 // "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
@@ -94,7 +95,15 @@ func fakeHelper(mode string, args []string) error {
 				os.Exit(3)
 			case "drop":
 				fmt.Fprintln(os.Stderr, "pdb-print-ble: connected to 5E3F0A6B")
-				fmt.Fprintln(os.Stderr, "pdb-print-ble: printer 5E3F0A6B disconnected")
+				fmt.Fprintln(os.Stderr, "error: printer 5E3F0A6B disconnected")
+				os.Exit(1)
+			case "half":
+				fmt.Fprintln(os.Stderr, "error: printer 5E3F0A6B disconnected")
+				_, _ = os.Stdout.Write([]byte{'N', 0, 0, 0, 10, 'a', 'b'})
+				os.Exit(1)
+			case "unmarked":
+				fmt.Fprintln(os.Stderr, "error: an earlier hiccup")
+				fmt.Fprintln(os.Stderr, "pdb-print-ble: connected to 5E3F0A6B")
 				os.Exit(1)
 			case "junk":
 				_, _ = os.Stdout.Write([]byte{'N', 0xff, 0xff, 0xff, 0xff})
@@ -303,7 +312,10 @@ func within(t *testing.T, d time.Duration, what string, f func() error) error {
 func TestBridgeHelperBreaks(t *testing.T) {
 	tests := []struct{ mode, want string }{
 		{"junk", "frame exceeds"},
-		{"drop", "ble: pdb-print-ble: printer 5E3F0A6B disconnected"},
+		{"drop", "ble: pdb-print-ble: printer 5E3F0A6B disconnected (exit status 1)"},
+		{"half", "ble: pdb-print-ble: printer 5E3F0A6B disconnected (exit status 1)"},
+		// Only a marked fatal line that is the last line names the cause.
+		{"unmarked", "ble: pdb-print-ble exited: exit status 1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
