@@ -559,12 +559,13 @@ func TestLazyTransportUnwrap(t *testing.T) {
 // fakeCat is a cat-printer driver that records its jobs: Print answers from results in turn (an
 // unconfirmed send, a confirmed one, an error) and, with gate set, waits for it first.
 type fakeCat struct {
-	mu       sync.Mutex
-	jobs     []driver.Job
-	statuses int
-	results  []error // nil = confirmed; errUnconfirmed = sent, not confirmed; else the error
-	gate     chan struct{}
-	printing chan struct{}
+	mu        sync.Mutex
+	jobs      []driver.Job
+	statuses  int
+	statusErr error   // Status fails with it
+	results   []error // nil = confirmed; errUnconfirmed = sent, not confirmed; else the error
+	gate      chan struct{}
+	printing  chan struct{}
 }
 
 var errUnconfirmed = errors.New("unconfirmed")
@@ -573,6 +574,9 @@ func (f *fakeCat) Status(context.Context, driver.Transport) (*driver.Status, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statuses++
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
 	return &driver.Status{Code: driver.OK, Model: "MX10"}, nil
 }
 
@@ -640,7 +644,11 @@ func TestStatusDuringBluetoothJobIsBusy(t *testing.T) {
 				_, err := s.Print(context.Background(), p, "", labels(1))
 				printed <- err
 			}()
-			<-f.printing
+			select {
+			case <-f.printing:
+			case err := <-printed:
+				t.Fatalf("the job ended before it reached the printer: %v", err)
+			}
 			st, err := s.Status(context.Background(), p)
 			if err != nil || st.Code != driver.Busy {
 				t.Errorf("status during a job: %+v %v, want BUSY", st, err)
