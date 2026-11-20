@@ -66,7 +66,7 @@ func (s *Service) Online(p *config.Printer) bool {
 	if s.online == nil {
 		s.online = map[string]onlineState{}
 	}
-	if at, ok := s.seen[key]; ok && at.After(start) {
+	if at, ok := s.seen[key]; ok && !at.Before(start) { // not After: Windows' clock can give both the same instant
 		up = true // SeenBLE during the check: newer than what the check found
 	}
 	s.online[key] = onlineState{time.Now(), up} // published before the lock is released
