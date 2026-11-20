@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -147,9 +148,16 @@ func lookupDevices(inquiry int) ([]Device, error) {
 	}
 }
 
+// inquiry is held while an inquiry runs: it can outlive the Scan that started it.
+var inquiry sync.Mutex
+
 // Scan runs an inquiry of about timeout (whole seconds, 1–48) and lists the devices it found and those
-// Windows remembers. The inquiry can't be cancelled: on ctx's end Scan returns and it finishes alone.
+// Windows remembers. The inquiry can't be cancelled: on ctx's end Scan returns and it finishes alone; a
+// Scan meanwhile fails at once rather than queue a second inquiry.
 func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
+	if !inquiry.TryLock() {
+		return nil, errors.New("bt: a Bluetooth search is already running")
+	}
 	secs := min(max(int((timeout+time.Second-1)/time.Second), 1), 48)
 	type result struct {
 		devs []Device
@@ -157,6 +165,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
 	}
 	done := make(chan result, 1)
 	go func() {
+		defer inquiry.Unlock()
 		devs, err := lookupDevices(secs)
 		done <- result{devs, err}
 	}()

@@ -492,6 +492,10 @@ func TestWizardBTRow(t *testing.T) {
 	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
 		t.Errorf("the picked Bluetooth printer isn't marked current")
 	}
+	h.srv.local.Draft.Printer.Transport.Address = "aa:bb:cc:dd:ee:01" // config doesn't normalise the case
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
+		t.Errorf("the picked Bluetooth printer (lower-case address) isn't marked current")
+	}
 }
 
 // A configured bt printer is recognised by its address (any case) or, configured by name only, by its

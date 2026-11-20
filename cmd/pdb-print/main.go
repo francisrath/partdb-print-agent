@@ -695,10 +695,10 @@ func printCandidates(w io.Writer, found []discovery.Candidate) {
 			fmt.Fprintln(w)
 		}
 		addr := c.Device
-		switch c.Kind {
-		case "tcp":
+		switch {
+		case c.Kind == "tcp":
 			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-		case "ble", "bt":
+		case config.Bluetooth(c.Kind):
 			addr = c.Address
 		}
 		fmt.Fprintf(w, "%-4s %-22s %-28s %s\n", c.Kind, addr, c.Name(), c.Status)
@@ -706,9 +706,7 @@ func printCandidates(w io.Writer, found []discovery.Candidate) {
 			fmt.Fprintf(w, "     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
 		}
 	}
-	if slices.ContainsFunc(found, func(c discovery.Candidate) bool {
-		return c.Status == discovery.Unknown && c.Kind != "ble" && c.Kind != "bt"
-	}) {
+	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown && !config.Bluetooth(c.Kind) }) {
 		fmt.Fprintln(w, "\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
 }

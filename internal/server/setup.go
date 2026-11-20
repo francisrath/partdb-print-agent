@@ -214,7 +214,7 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	var rows []row
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
-			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (isBluetooth(c.Kind) && d.Printer.Transport.Kind == c.Kind && d.Printer.Transport.Address == c.Address) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
+			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (d.Printer.Transport.Address != "" && btSame(d.Printer.Transport, c)) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
 		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr, "BLENote": bleNote})
@@ -232,10 +232,10 @@ func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
 }
 
 func where(c discovery.Candidate) string {
-	switch c.Kind {
-	case "usb":
+	switch {
+	case c.Kind == "usb":
 		return "USB"
-	case "ble", "bt":
+	case config.Bluetooth(c.Kind):
 		return "Bluetooth " + c.Address
 	}
 	return "network " + c.Host
@@ -267,12 +267,10 @@ func (s *Server) seenBLE(cs []discovery.Candidate) {
 	}
 }
 
-func isBluetooth(kind string) bool { return kind == "ble" || kind == "bt" }
-
 // btSame: a Bluetooth printer of c's kind where the address wins (any case: config doesn't normalise it);
 // a printer configured by name only matches by the advertised or device name.
 func btSame(t config.Transport, c discovery.Candidate) bool {
-	if !isBluetooth(c.Kind) || t.Kind != c.Kind {
+	if !config.Bluetooth(c.Kind) || t.Kind != c.Kind {
 		return false
 	}
 	if t.Address != "" {
@@ -322,7 +320,7 @@ func (s *Server) setupPrinterPost(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case c.Kind == "tcp":
 		p.Transport = config.Transport{Kind: "tcp", Host: c.Host, Port: c.Port}
-	case isBluetooth(c.Kind):
+	case config.Bluetooth(c.Kind):
 		p.Transport = config.Transport{Kind: c.Kind, Address: c.Address, Name: cmp.Or(c.BLEName, c.BTName)}
 	case c.USBID != "":
 		p.Transport = config.Transport{Kind: "usb", USBID: c.USBID, Serial: c.Serial}

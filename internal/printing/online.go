@@ -122,9 +122,6 @@ func onlineKey(p *config.Printer) string {
 // would take its only connection (and drop a phone's or a job's), so it is never connected just to ask.
 const bleSeenFor = 10 * time.Minute
 
-// oneConnection: printers on a transport that takes one connection at a time (Bluetooth LE and Classic).
-func oneConnection(kind string) bool { return kind == "ble" || kind == "bt" }
-
 // SeenBLE records that a Bluetooth printer was found working (a status, a job, a BLE discovery scan).
 func (s *Service) SeenBLE(p *config.Printer) {
 	key := onlineKey(p)
@@ -140,7 +137,7 @@ func (s *Service) SeenBLE(p *config.Printer) {
 // noteBLE records how a status or job on a Bluetooth printer went: an answer means it's there; failing to
 // reach it means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach.
 func (s *Service) noteBLE(p *config.Printer, err error) {
-	if !oneConnection(p.Transport.Kind) {
+	if !config.Bluetooth(p.Transport.Kind) {
 		return
 	}
 	var de *driver.Error
@@ -188,7 +185,7 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		case <-time.After(timeout):
 			return false, done
 		}
-	case "ble", "bt": // see oneConnection
+	case "ble", "bt": // config.Bluetooth
 		close(done)
 		s.mu.Lock()
 		defer s.mu.Unlock()

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -52,7 +53,9 @@ func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
 	case <-timer.C:
 	case <-ctx.Done():
 	}
-	_ = a.Call("org.bluez.Adapter1.StopDiscovery", 0).Err
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // bus.Close covers the rest
+	_ = a.CallWithContext(stopCtx, "org.bluez.Adapter1.StopDiscovery", 0).Err
+	cancel()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -62,11 +65,13 @@ func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
 	return classicDevices(objs), nil
 }
 
-// classicDevices are the Device1 objects with a class of device (BR/EDR), by address.
+// classicDevices are the Device1 objects with a class of device (BR/EDR), by address; a device known to
+// two adapters is one row (the first adapter's, with SPP if either saw it).
 func classicDevices(objs bluezObjects) []Device {
+	paths := slices.Sorted(maps.Keys(objs))
 	var devs []Device
-	for _, ifaces := range objs {
-		props, ok := ifaces["org.bluez.Device1"]
+	for _, path := range paths {
+		props, ok := objs[path]["org.bluez.Device1"]
 		if !ok {
 			continue
 		}
@@ -81,6 +86,10 @@ func classicDevices(objs bluezObjects) []Device {
 		}
 		uuids, _ := props["UUIDs"].Value().([]string)
 		spp := slices.ContainsFunc(uuids, func(u string) bool { return strings.EqualFold(u, sppUUIDString) })
+		if i := slices.IndexFunc(devs, func(d Device) bool { return strings.EqualFold(d.Address, addr) }); i >= 0 {
+			devs[i].SPP = devs[i].SPP || spp
+			continue
+		}
 		devs = append(devs, Device{Name: name, Address: addr, Class: class, SPP: spp})
 	}
 	slices.SortFunc(devs, func(x, y Device) int { return cmp.Compare(x.Address, y.Address) })

@@ -351,7 +351,7 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Sta
 	}
 	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a Bluetooth
 	// printer takes one connection, so a second one would drop the job's link
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || oneConnection(p.Transport.Kind) {
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || config.Bluetooth(p.Transport.Kind) {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil

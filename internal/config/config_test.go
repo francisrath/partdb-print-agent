@@ -266,3 +266,11 @@ func TestValidateModelTransport(t *testing.T) {
 		}
 	}
 }
+
+func TestBluetooth(t *testing.T) {
+	for kind, want := range map[string]bool{"ble": true, "bt": true, "tcp": false, "usb": false, "": false} {
+		if got := Bluetooth(kind); got != want {
+			t.Errorf("Bluetooth(%q) = %v", kind, got)
+		}
+	}
+}

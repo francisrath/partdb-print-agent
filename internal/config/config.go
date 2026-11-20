@@ -335,6 +335,10 @@ func (p *Printer) DeviceModel() (*devicedb.Model, error) {
 	return m, nil
 }
 
+// Bluetooth: transport kinds ble and bt, whose printers take one connection at a time and are found by
+// a Bluetooth scan.
+func Bluetooth(kind string) bool { return kind == "ble" || kind == "bt" }
+
 var btAddrRe = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 
 var usbIDRe = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{4}$`)
