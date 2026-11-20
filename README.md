@@ -179,6 +179,22 @@ darkness changes little).
 
 A printer holds one connection at a time: disconnect it from phones and other apps first.
 
+Bluetooth LE printers, per OS:
+
+- **Linux:** through BlueZ over D-Bus. The `.deb` service runs with the groups `lp` and `bluetooth` (the
+  package creates `bluetooth` if missing). The adapter must be on: `rfkill unblock bluetooth`,
+  `bluetoothctl power on`. If BlueZ still holds the printer, `bluetoothctl disconnect <address>`.
+- **Windows:** in-process, needs a Bluetooth 4.0+ (LE) adapter; older Bluetooth 3.0 radios (e.g. Dell
+  Wireless 375) can't do BLE.
+- **macOS:** Bluetooth goes through the helper `pdb-print-ble`, shipped next to `pdb-print` in the macOS
+  archive and the Homebrew cask (if it's missing, the error says to install it). Only the helper asks for
+  Bluetooth permission, once, the first time pdb-print uses Bluetooth; the prompt names the app that ran
+  it (e.g. Terminal). An app that can't ask for Bluetooth (e.g. an editor or chat app running pdb-print for
+  you) gets the helper stopped by macOS; the error says so: run it from a terminal app instead. Only commands
+  that use Bluetooth start the helper: `discover`, `try`, the setup wizard and printing to a Bluetooth
+  printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
+- **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
+
 #### Bluetooth Classic receipt printers (`kind: bt`)
 
 `model:` RG-MLP80B (REGO, 80 mm paper, 576 dots; recognised by its Bluetooth name), ESCPOS-80 or ESCPOS-58
@@ -210,24 +226,18 @@ Many cheap printers don't answer; that is not an error. Like BLE printers, a `bt
 connection at a time (a status check waits while a job runs) and shows online after it has been used
 recently: scans don't count, because the OS lists paired printers even when they are off.
 
-`discover`, the setup wizard and `try` list Classic printers too: the same ~8 s search, run alongside the
-BLE search (`--no-ble` skips both). A device is listed when its name matches a model or its Bluetooth
-class says printer; phones, headphones and the like are not shown. On macOS the same helper
-`pdb-print-ble` and the same Bluetooth permission apply as for BLE. Docker: no Bluetooth, as for BLE.
+`discover` and the setup wizard list Classic printers too (`try` names them but can't test ESC/POS
+printers yet): the same ~8 s search, run alongside the BLE search (`--no-ble` skips both). A device is listed when its name matches a model or its Bluetooth
+class says printer (on Linux also an imaging device offering the serial port); phones, headphones and the
+like are not shown.
 
-- **Linux:** through BlueZ over D-Bus. The `.deb` service runs with the groups `lp` and `bluetooth` (the
-  package creates `bluetooth` if missing). The adapter must be on: `rfkill unblock bluetooth`,
-  `bluetoothctl power on`. If BlueZ still holds the printer, `bluetoothctl disconnect <address>`.
-- **Windows:** in-process, needs a Bluetooth 4.0+ (LE) adapter; older Bluetooth 3.0 radios (e.g. Dell
-  Wireless 375) can't.
-- **macOS:** Bluetooth goes through the helper `pdb-print-ble`, shipped next to `pdb-print` in the macOS
-  archive and the Homebrew cask (if it's missing, the error says to install it). Only the helper asks for
-  Bluetooth permission, once, the first time pdb-print uses Bluetooth; the prompt names the app that ran
-  it (e.g. Terminal). An app that can't ask for Bluetooth (e.g. an editor or chat app running pdb-print for
-  you) gets the helper stopped by macOS; the error says so: run it from a terminal app instead. Only commands
-  that use Bluetooth start the helper: `discover`, `try`, the setup wizard and printing to a Bluetooth
-  printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
-- **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
+Bluetooth Classic, per OS:
+
+- **Linux:** an RFCOMM socket; printing needs no group. Name lookup and scan use BlueZ over D-Bus
+  (the `.deb` service's `bluetooth` group covers that).
+- **Windows:** in-process; any Bluetooth radio works for Classic, Bluetooth 3.0 included.
+- **macOS:** the same helper `pdb-print-ble` and the same Bluetooth permission rule as for BLE (see above).
+- **Docker:** no Bluetooth.
 
 ### Testing a printer: `pdb-print try`
 
