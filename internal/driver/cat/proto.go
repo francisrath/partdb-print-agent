@@ -16,7 +16,7 @@ const (
 	cmdSpeed    = 0xBD // speed divider: higher = slower = darker
 	cmdMode     = 0xBE // 00 = image
 	cmdRowRLE   = 0xBF // one raster row as runs colour<<7|count
-	cmdDone     = 0xD3 // unsolicited after a job (payload 19): taken as "printed something"
+	cmdFlow     = 0xAE // flow control: 10 = pause, 00 = go on / buffer empty (also unsolicited when the paper stops)
 	headDots    = 384  // when the model doesn't say
 	maxFrame    = 512  // notifications are tiny; a longer length is junk
 	maxEnergy   = 0x8000

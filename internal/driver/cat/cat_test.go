@@ -24,6 +24,14 @@ type fake struct {
 	writeErr error // returned by the first Write longer than a status request
 	readErr  error // returned by Read once the replies are used up
 	perRead  int   // most bytes one Read returns (0 = any)
+	onJob    []byte // notifications the job write brings (flow control during the write)
+	// late arrives unsolicited lateDelay after status request number lateAfter (1-based) was written.
+	late       []byte
+	lateAfter  int
+	lateDelay  time.Duration
+	lateAt     time.Time
+	requests   int
+	lateBefore bool // late had arrived when the job was written
 }
 
 var statusRequest = frame(0xA3, 0x00)
@@ -39,6 +47,16 @@ func (f *fake) Write(p []byte) (int, error) {
 		return 0, f.writeErr
 	}
 	f.written.Write(p)
+	if !bytes.Equal(p, statusRequest) {
+		f.lateBefore = f.late == nil && f.lateAfter > 0
+		f.in = append(f.in, f.onJob...)
+	}
+	if bytes.Equal(p, statusRequest) {
+		f.requests++
+		if f.requests == f.lateAfter {
+			f.lateAt = time.Now().Add(f.lateDelay)
+		}
+	}
 	if bytes.Equal(p, statusRequest) && len(f.replies) > 0 {
 		f.in = append(f.in, f.replies[0]...)
 		f.replies = f.replies[1:]
@@ -49,6 +67,9 @@ func (f *fake) Write(p []byte) (int, error) {
 func (f *fake) Read(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.late != nil && !f.lateAt.IsZero() && time.Now().After(f.lateAt) {
+		f.in, f.late = append(f.in, f.late...), nil
+	}
 	if len(f.in) == 0 {
 		if f.readErr != nil && len(f.replies) == 0 {
 			return 0, f.readErr
@@ -65,6 +86,9 @@ func (f *fake) Read(p []byte) (int, error) {
 }
 
 func status(flags byte) []byte { return frame(0xA3, flags, 0x01, 0x95) }
+
+// emptied is the MX10's unsolicited "buffer empty" notification, as captured (note the 01 in byte 3).
+var emptied = []byte{0x51, 0x78, 0xAE, 0x01, 0x01, 0x00, 0x00, 0x00, 0xFF}
 
 func fastTimings(t *testing.T) {
 	vars := []*time.Duration{&replyWait, &pollEvery, &confirmBase, &confirmPerPage, &idleWait, &drainWait}
@@ -143,7 +167,7 @@ func job(m *driver.Media, pages int) *driver.Job {
 func TestPrintConfirms(t *testing.T) {
 	fastTimings(t)
 	d, m := mx10(t, "dark")
-	f := &fake{replies: [][]byte{nil, status(0x80), append(frame(0xAE, 0x00), status(0x80)...), status(0x00)}}
+	f := &fake{replies: [][]byte{nil, status(0x80), status(0x00), append(append([]byte{}, emptied...), status(0x00)...)}}
 	res, err := d.Print(context.Background(), f, job(m, 2))
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +227,7 @@ func TestPrintNeedsStatus(t *testing.T) {
 func TestPrintBatteryLowWarns(t *testing.T) {
 	fastTimings(t)
 	d, m := mx10(t, "")
-	res, err := d.Print(context.Background(), &fake{replies: [][]byte{status(0x80), status(0x08)}}, job(m, 1))
+	res, err := d.Print(context.Background(), &fake{replies: [][]byte{status(0x80), append(append([]byte{}, emptied...), status(0x08)...)}}, job(m, 1))
 	if err != nil || len(res.Warnings) != 1 || res.Warnings[0] != "battery low" {
 		t.Errorf("res %+v, err %v", res, err)
 	}
@@ -231,25 +255,41 @@ func TestPrintPeerGone(t *testing.T) {
 func TestPrintNeedsJobEvidence(t *testing.T) {
 	fastTimings(t)
 	d3 := frame(0xD3, 0x19)
+	then := func(a, b []byte) []byte { return append(append([]byte{}, a...), b...) }
+	const (
+		never   = "sent (not confirmed: printer never reported the job)"
+		notDone = "sent (not confirmed: the printer never reported the end of the job)"
+	)
 	for _, tc := range []struct {
 		name      string
 		replies   [][]byte
+		onJob     []byte
 		confirmed bool
 		message   string
+		left      int // replies not asked for: confirmation came at the AE 00, not later
 	}{
-		{"idle only", [][]byte{status(0x00), status(0x00)}, false, "sent (not confirmed: printer never reported the job)"},
-		{"idle, D3, idle", [][]byte{status(0x00), d3, status(0x00)}, true, "printed"},
-		{"busy, idle", [][]byte{status(0x80), status(0x00)}, true, "printed"},
+		{"idle only", [][]byte{status(0x00), status(0x00)}, nil, false, never, 0},
+		// measured on an MX10: busy … idle … then AE 00 ("buffer empty") when the paper stops
+		{"busy, idle, AE 00", [][]byte{status(0x80), status(0x80), status(0x00), status(0x00), then(emptied, status(0x00)), status(0x00)}, nil, true, "printed", 1},
+		{"busy, idle", [][]byte{status(0x80), status(0x00), status(0x00)}, nil, false, notDone, 0},
+		{"D3 no longer counts", [][]byte{status(0x80), then(d3, status(0x00)), status(0x00)}, nil, false, notDone, 0},
+		{"AE 00 during the write", [][]byte{status(0x80), status(0x00)}, then(frame(0xAE, 0x10), emptied), false, notDone, 0},
+		{"AE 00 before busy", [][]byte{then(emptied, status(0x80)), status(0x00)}, nil, false, notDone, 0},
+		{"AE 10 after busy", [][]byte{status(0x80), then(frame(0xAE, 0x10), status(0x00))}, nil, false, notDone, 0},
 		// a stale idle reply already buffered behind the busy one must not answer the next request
-		{"stale idle", [][]byte{append(status(0x80), status(0x00)...)}, false, "sent (not confirmed: the printer never reported idle)"},
+		{"stale idle", [][]byte{append(status(0x80), status(0x00)...)}, nil, false, notDone, 0},
 	} {
 		d, m := mx10(t, "")
-		res, err := d.Print(context.Background(), &fake{replies: tc.replies}, job(m, 1))
+		f := &fake{replies: tc.replies, onJob: tc.onJob}
+		res, err := d.Print(context.Background(), f, job(m, 1))
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if res.Confirmed != tc.confirmed || res.Message != tc.message {
 			t.Errorf("%s: result %+v", tc.name, res)
+		}
+		if tc.confirmed && len(f.replies) != tc.left {
+			t.Errorf("%s: %d replies left, want %d", tc.name, len(f.replies), tc.left)
 		}
 	}
 }
@@ -262,7 +302,7 @@ func TestPrintWaitsForIdle(t *testing.T) {
 		return j
 	}
 	d, m := mx10(t, "")
-	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), status(0x00)}}
+	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), append(append([]byte{}, emptied...), status(0x00)...)}}
 	if res, err := d.Print(context.Background(), f, busy(m)); err != nil || !res.Confirmed {
 		t.Errorf("busy, then idle: %+v, %v", res, err)
 	}
@@ -284,10 +324,17 @@ func TestPrintWaitsForIdle(t *testing.T) {
 	if !errors.As(err, &de) || de.Code != driver.CommsError || f.written.Len() != bytes.Count(f.written.Bytes(), statusRequest)*len(statusRequest) {
 		t.Errorf("silent while waiting: err = %v, want COMMS_ERROR and no job sent", err)
 	}
-	// the previous job's D3 arrives just after its idle reply, before our Write: no evidence for ours
-	f = &fake{replies: [][]byte{append(status(0x00), frame(0xD3, 0x19)...), status(0x00), status(0x00)}, perRead: len(status(0x00))}
+	// the previous job's AE 00 comes a while after its idle reply: wait for it before writing ours, so it
+	// can't land after our busy reply and confirm our job
+	drainWait = time.Second
+	f = &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), status(0x00), status(0x00)},
+		late: emptied, lateAfter: 2, lateDelay: 100 * time.Millisecond}
+	start := time.Now()
 	res, err := d.Print(context.Background(), f, busy(m))
-	if err != nil || res.Confirmed || res.Message != "sent (not confirmed: printer never reported the job)" {
-		t.Errorf("late D3 of the previous job: %+v, %v", res, err)
+	if err != nil || res.Confirmed || !f.lateBefore {
+		t.Errorf("late AE 00 of the previous job: %+v, %v, arrived before our write: %v", res, err, f.lateBefore)
+	}
+	if time.Since(start) >= drainWait {
+		t.Errorf("waited the whole drain although the AE 00 came")
 	}
 }

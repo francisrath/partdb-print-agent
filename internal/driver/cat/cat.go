@@ -36,8 +36,9 @@ var (
 	pollEvery      = 300 * time.Millisecond
 	confirmBase    = 30 * time.Second // then "sent (not confirmed)"
 	confirmPerPage = 2 * time.Second
-	idleWait       = 10 * time.Second       // for a printer still busy with a previous job
-	drainWait      = 300 * time.Millisecond // notifications of the previous job dropped before ours
+	idleWait       = 10 * time.Second // for a printer still busy with a previous job
+	// then for that job's AE 00, which an MX10 sends ~3.7 s after its idle reply, when the paper stops
+	drainWait = 5 * time.Second
 )
 
 // Status flags in the first byte of an A3 reply.
@@ -58,12 +59,13 @@ type cat struct {
 type reader struct {
 	t       driver.Transport
 	buf     []byte
-	done    bool // a D3 frame came by
 	replies int  // A3 replies taken
+	busy    bool // an A3 reply said busy
+	emptied bool // an AE 00 ("buffer empty") came after busy
 }
 
-// take consumes the buffered whole frames up to the first A3 reply (reply) or all of them,
-// noting D3 and skipping the rest (flow control AE).
+// take consumes the buffered whole frames up to the first A3 reply (reply) or all of them, noting
+// busy and AE 00 after it and skipping the rest.
 func (r *reader) take(reply bool) (flags byte, ok bool) {
 	for {
 		f, rest, ok := nextFrame(r.buf)
@@ -72,10 +74,11 @@ func (r *reader) take(reply bool) (flags byte, ok bool) {
 			return 0, false
 		}
 		switch {
-		case f.cmd == cmdDone:
-			r.done = true
+		case f.cmd == cmdFlow && len(f.payload) == 1 && f.payload[0] == 0x00:
+			r.emptied = r.emptied || r.busy
 		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
 			r.replies++
+			r.busy = r.busy || f.payload[0]&flagBusy != 0
 			return f.payload[0], true
 		}
 	}
@@ -113,15 +116,15 @@ func (r *reader) read() error {
 	return nil
 }
 
-// drain reads for d and drops everything, D3 included (it belongs to the job before).
+// drain reads until the previous job's AE 00 came or d passed, and drops everything.
 func (r *reader) drain(d time.Duration) error {
-	for end := time.Now().Add(d); time.Now().Before(end); {
+	for end := time.Now().Add(d); !r.emptied && time.Now().Before(end); {
 		if err := r.read(); err != nil {
 			return err
 		}
+		r.take(false)
 	}
 	r.take(false)
-	r.done = false
 	return nil
 }
 
@@ -161,8 +164,9 @@ func (c *cat) Encode(w io.Writer, job *driver.Job) error {
 }
 
 // Print needs a good status first (a silent cat printer is off, out of paper or covered), sends
-// every page in one go (after waiting for a previous job to finish) and then polls until the
-// printer has shown the job (a busy reply or D3) and is idle again.
+// every page in one go (after waiting for a previous job to finish) and then polls the status until
+// the printer, having said busy, sends AE 00 ("buffer empty": the paper stopped). Idle alone comes
+// seconds before the label is out; D3 doesn't always come.
 func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	switch {
 	case job.Status == nil:
@@ -177,7 +181,7 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r := &reader{t: t}
+	r := &reader{t: t, busy: !job.Status.Idle}
 	if !job.Status.Idle {
 		st, err := c.poll(ctx, r, time.Now().Add(idleWait), func(st *driver.Status) bool { return st.Idle })
 		if err != nil {
@@ -200,11 +204,9 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len()}
-	r.done = false // a D3 from before this job doesn't count
-	seen := false
-	st, err := c.poll(ctx, r, time.Now().Add(confirmBase+confirmPerPage*time.Duration(len(job.Pages))), func(st *driver.Status) bool {
-		seen = seen || !st.Idle || r.done
-		return st.Idle && seen
+	r.busy, r.emptied = false, false // only what comes after our Write counts
+	st, err := c.poll(ctx, r, time.Now().Add(confirmBase+confirmPerPage*time.Duration(len(job.Pages))), func(*driver.Status) bool {
+		return r.emptied
 	})
 	switch {
 	case err != nil:
@@ -216,8 +218,8 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		res.Confirmed, res.Message = true, "printed"
 	case ctx.Err() != nil:
 		res.Message = "sent (not confirmed: stopped waiting)"
-	case seen || r.done:
-		res.Message = "sent (not confirmed: the printer never reported idle)"
+	case r.busy:
+		res.Message = "sent (not confirmed: the printer never reported the end of the job)"
 	default:
 		res.Message = "sent (not confirmed: printer never reported the job)"
 	}
