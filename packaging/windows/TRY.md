@@ -15,5 +15,7 @@ Thanks for helping! This takes about 10 minutes and uses about 5–6 labels.
 To stop early, press Ctrl+C. If Windows then asks "Terminate batch job (Y/N)?", answer **N** so the
 window stays open and you can see where the file was saved.
 
-Nothing is changed on the printer: the program puts its settings back when it's done (if it
-can't, it tells you to switch the printer off and on once). It doesn't install anything.
+The program never saves anything on the printer. While it runs it changes a few page settings
+(print width, label length, position, mirror, upside-down) that only last until the printer is
+switched off; at the end it puts back the ones the printer reported and tells you which. To be sure
+everything is as before, switch the printer off and on once afterwards. It doesn't install anything.

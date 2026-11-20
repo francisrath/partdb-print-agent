@@ -593,9 +593,26 @@ func (s *session) restore() {
 	}
 	// ^PM (mirror) and ^PO (upside down) also stay until power-off, and a GK420d doesn't report
 	// them: they were left at normal, which is what nearly all software expects
-	s.say("\nThe printer's own width, length and position settings are restored. Mirror and upside-down\n" +
-		"printing were left off (normal); switching the printer off and on brings back whatever it had saved.\n")
-	s.note("Restored: print width, label length, position. Mirror/orientation left normal (not reported by the printer).")
+	names := s.restoredNames()
+	s.say("\nThe printer's own %s are restored. Anything else this test set (mirror and upside-down printing\n"+
+		"left off, i.e. normal) stays until the printer is switched off and on, which brings back what it had saved.\n", names)
+	s.note("Restored: %s. Mirror/orientation left normal (not reported by the printer).", names)
+}
+
+// restoredNames lists, in words, the settings restoreCmd sends back.
+func (s *session) restoredNames() string {
+	names := []string{"print width", "label length"}
+	_, x := s.setup["lhx"]
+	_, y := s.setup["lhy"]
+	if x && y {
+		names = append(names, "label home")
+	}
+	for _, k := range []struct{ key, name string }{{"ls", "label shift"}, {"lt", "label top"}} {
+		if _, ok := s.setup[k.key]; ok {
+			names = append(names, k.name)
+		}
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // restoreCmd is a format without fields that sets the printer's own page settings again.

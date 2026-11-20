@@ -61,3 +61,15 @@ func TestReportNamesUnique(t *testing.T) {
 		t.Errorf("same file twice: %s", paths[0])
 	}
 }
+
+// The closing message names only the settings that were put back.
+func TestRestoredNames(t *testing.T) {
+	s := &session{setup: map[string]int{"pw": 799, "ll": 812}}
+	if got := s.restoredNames(); got != "print width and label length" {
+		t.Errorf("%q", got)
+	}
+	s.setup["lhx"], s.setup["lhy"], s.setup["ls"], s.setup["lt"] = 0, 0, 0, 0
+	if got := s.restoredNames(); got != "print width, label length, label home, label shift and label top" {
+		t.Errorf("%q", got)
+	}
+}
