@@ -21,9 +21,9 @@ type fake struct {
 	replies  [][]byte
 	in       []byte
 	written  bytes.Buffer
-	writeErr error // returned by the first Write longer than a status request
-	readErr  error // returned by Read once the replies are used up
-	perRead  int   // most bytes one Read returns (0 = any)
+	writeErr error  // returned by the first Write longer than a status request
+	readErr  error  // returned by Read once the replies are used up
+	perRead  int    // most bytes one Read returns (0 = any)
 	onJob    []byte // notifications the job write brings (flow control during the write)
 	// late arrives unsolicited lateDelay after status request number lateAfter (1-based) was written.
 	late       []byte

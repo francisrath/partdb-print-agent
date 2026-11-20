@@ -23,7 +23,7 @@ const (
 	openScan       = 10 * time.Second // BlueZ forgets unpaired LE devices, so every Open scans first
 	connectTimeout = 10 * time.Second // Linux Connect ignores ConnectionParams.ConnectionTimeout
 	readTimeout    = 2 * time.Second
-	minMTU         = 23 // the ATT default; Windows reports it until the MTU exchange is done
+	minMTU         = 23              // the ATT default; Windows reports it until the MTU exchange is done
 	retryPause     = 2 * time.Second // before the one connect retry (500 ms failed right after a paper jam)
 )
 
