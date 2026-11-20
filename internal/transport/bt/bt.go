@@ -96,6 +96,9 @@ func (t *Transport) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// SetReadTimeout sets ReadTimeout (driver.ReadTimeoutSetter); call it from the goroutine that reads.
+func (t *Transport) SetReadTimeout(d time.Duration) { t.ReadTimeout = d }
+
 func (t *Transport) Close() error {
 	t.mu.Lock()
 	c := t.conn

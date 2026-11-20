@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 )
@@ -91,6 +92,12 @@ type Transport interface {
 	Read(p []byte) (int, error) // ErrNoReadback (or a timeout) if nothing comes back
 	Close() error
 	Kind() string
+}
+
+// ReadTimeoutSetter is a Transport whose per-Read timeout can be changed (0 = its default again), e.g. to drop
+// stale bytes quickly without shortening the wait for a real answer.
+type ReadTimeoutSetter interface {
+	SetReadTimeout(time.Duration)
 }
 
 var ErrNoReadback = errors.New("transport has no read-back")

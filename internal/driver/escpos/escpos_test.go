@@ -22,15 +22,22 @@ type fake struct {
 	replies [][]byte
 	in      []byte
 	written [][]byte
-	readErr error // returned by Read instead of a timeout once the stream is empty
-	zero    bool  // Read returns (0, nil) when empty
+	readErr error           // returned by Read instead of a timeout once the stream is empty
+	zero    bool            // Read returns (0, nil) when empty
+	onGSR   func()          // called when GS r is written
+	timeout []time.Duration // SetReadTimeout calls
 }
+
+func (f *fake) SetReadTimeout(d time.Duration) { f.timeout = append(f.timeout, d) }
 
 func (f *fake) Open(context.Context) error { return nil }
 func (f *fake) Close() error               { return nil }
 func (f *fake) Kind() string               { return "bt" }
 func (f *fake) Write(p []byte) (int, error) {
 	f.written = append(f.written, append([]byte(nil), p...))
+	if f.onGSR != nil && bytes.Equal(p, []byte{0x1D, 0x72, 0x01}) {
+		f.onGSR()
+	}
 	if req := len(p) == 3 && (p[0] == 0x10 || p[0] == 0x1D && p[1] == 0x72); req && len(f.replies) > 0 {
 		f.in = append(f.in, f.replies[0]...)
 		f.replies = f.replies[1:]
@@ -149,10 +156,12 @@ func TestStatus(t *testing.T) {
 		det   string
 	}{
 		{"ok", [][]byte{{0x12}, {0x12}, {0x12}}, driver.OK, ""},
-		{"cover open", [][]byte{{0x12}, {0x04}, {0x00}}, driver.CoverOpen, "cover open"},
-		{"paper end", [][]byte{{0x12}, {0x00}, {0x60}}, driver.NoMedia, "out of paper"},
-		{"error", [][]byte{{0x12}, {0x40}, {0x00}}, driver.Unknown, "printer error"},
-		{"near end is only a warning", [][]byte{{0x12}, {0x00}, {0x0C}}, driver.OK, "paper near end"},
+		{"cover open", [][]byte{{0x12}, {0x16}, {0x12}}, driver.CoverOpen, "cover open"},
+		{"paper end", [][]byte{{0x12}, {0x12}, {0x72}}, driver.NoMedia, "out of paper"},
+		{"error", [][]byte{{0x12}, {0x52}, {0x12}}, driver.Unknown, "printer error"},
+		{"near end is only a warning", [][]byte{{0x12}, {0x12}, {0x1E}}, driver.OK, "paper near end"},
+		// an unsolicited ASB frame (cover open, offline) ahead of the reply is not the reply
+		{"ASB frame skipped", [][]byte{{0x38, 0x00, 0x00, 0x00, 0x12}, {0x12}, {0x12}}, driver.OK, ""},
 	} {
 		f := &fake{replies: tc.reads}
 		st, err := newDriver(t, false).Status(context.Background(), f)
@@ -233,7 +242,7 @@ func TestPrintWithoutStatusDoesNotWait(t *testing.T) {
 }
 
 func TestStatusDropsStaleBytes(t *testing.T) {
-	f := &fake{in: []byte{0x00, 0x00}, replies: [][]byte{{0x12}, {0x04}, {0x00}}}
+	f := &fake{in: []byte{0x12, 0x12}, replies: [][]byte{{0x12}, {0x16}, {0x12}}}
 	st, err := newDriver(t, false).Status(context.Background(), f)
 	if err != nil || st.Code != driver.CoverOpen {
 		t.Errorf("%+v %v", st, err)
@@ -257,11 +266,11 @@ func TestStatusCtx(t *testing.T) {
 }
 
 func TestPrintCtxEndsAfterSend(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	d := newDriver(t, false)
 	d.confirm = time.Minute
-	res, err := d.Print(ctx, &fake{}, job(okStatus))
+	res, err := d.Print(ctx, &fake{onGSR: cancel}, job(okStatus)) // the label is sent by then
 	if err != nil || res.Confirmed || !strings.HasPrefix(res.Message, "sent (unconfirmed: stopped waiting: ") {
 		t.Errorf("%+v %v", res, err)
 	}
@@ -289,7 +298,7 @@ func TestEncodeClampsToHead(t *testing.T) {
 }
 
 func TestStatusPartialAnswersNoReadback(t *testing.T) {
-	for _, r := range [][][]byte{{{0x12}, nil, {0x00}}, {{0x12}, {0x00}, nil}} {
+	for _, r := range [][][]byte{{{0x12}, nil, {0x12}}, {{0x12}, {0x12}, nil}, {{0x12}, {0x00}, {0x12}}} { // 0x00 isn't a DLE EOT reply
 		if _, err := newDriver(t, false).Status(context.Background(), &fake{replies: r}); !errors.Is(err, driver.ErrNoReadback) {
 			t.Errorf("err = %v", err)
 		}
@@ -326,5 +335,29 @@ func TestPrintNearEndWarnsOnce(t *testing.T) {
 	res, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x03}}}, job(st))
 	if err != nil || len(res.Warnings) != 1 {
 		t.Errorf("%+v %v", res, err)
+	}
+}
+
+// Unsolicited ASB frames (the printer may have automatic status back on) are not the GS r answer: a
+// cover-open frame neither confirms the job nor reads as paper end, and the real answer still counts.
+func TestPrintASBFrameIsNotTheAnswer(t *testing.T) {
+	res, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x38, 0x0C, 0x0C, 0x00, 0x00}}}, job(okStatus))
+	if err != nil || !res.Confirmed {
+		t.Errorf("frame, then answer: %+v %v", res, err)
+	}
+	res, err = newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x30, 0x00, 0x00, 0x00}}}, job(okStatus))
+	if err != nil || res.Confirmed {
+		t.Errorf("frame only: %+v %v", res, err)
+	}
+}
+
+// Dropping stale bytes doesn't wait a whole read timeout: the driver shortens it while draining.
+func TestDrainShortensReadTimeout(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x12}, {0x12}, {0x12}}}
+	if _, err := newDriver(t, false).Status(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.timeout) != 2 || f.timeout[0] != drainWait || f.timeout[1] != 0 {
+		t.Errorf("SetReadTimeout calls %v, want [%v 0]", f.timeout, drainWait)
 	}
 }

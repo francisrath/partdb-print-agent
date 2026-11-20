@@ -25,6 +25,10 @@ func init() {
 
 const nearEnd = "paper near end"
 
+// drainWait is the read timeout while dropping stale bytes, on transports that can shorten it: a late
+// answer is already waiting, so a quiet link needn't cost a whole read timeout.
+const drainWait = 200 * time.Millisecond
+
 const maxBand = 256 // raster lines per GS v 0 (some printers choke on more)
 
 // Status bits (Epson DLE EOT): n=1 printer, n=2 offline cause, n=4 paper sensor.
@@ -90,6 +94,10 @@ func isTimeout(err error) bool {
 // drain drops what the printer sent late (an answer that came after its read timed out), reading
 // until a read brings nothing; it would otherwise be taken for the next answer.
 func drain(t driver.Transport) error {
+	if s, ok := t.(driver.ReadTimeoutSetter); ok {
+		s.SetReadTimeout(drainWait)
+		defer s.SetReadTimeout(0)
+	}
 	p := make([]byte, 64)
 	for range 64 {
 		n, err := t.Read(p)
@@ -103,18 +111,48 @@ func drain(t driver.Transport) error {
 	return nil
 }
 
+// Reply bytes are told apart by their fixed bits (Epson ESC/POS reference): a DLE EOT reply is 0xx1xx10, a
+// GS r 1 reply 0xx0xxxx, and an automatic status back (ASB) frame, which a printer may send unasked when its
+// state changes (pdb-print never enables it, but it can be on by default), is 4 bytes, the first 0xx1xx00
+// and the others 0xx0xxxx. So ASB frames are skipped whole and anything else that isn't the reply too.
+func dleEOTReply(b byte) bool { return b&0x93 == 0x12 }
+func gsrReply(b byte) bool    { return b&0x90 == 0 }
+
+// replies filters the bytes read for one request.
+type replies struct{ skip int } // ASB frame bytes still to drop
+
+// take reports whether b is the reply that ok accepts.
+func (r *replies) take(b byte, ok func(byte) bool) bool {
+	switch {
+	case r.skip > 0:
+		r.skip--
+		return false
+	case b&0x93 == 0x10: // an ASB frame's first byte
+		r.skip = 3
+		return false
+	}
+	return ok(b)
+}
+
 // query sends DLE EOT n and reads the one-byte answer; ok is false when none came.
 func query(t driver.Transport, n byte) (b byte, ok bool, err error) {
 	if _, err := t.Write([]byte{0x10, 0x04, n}); err != nil {
 		return 0, false, err
 	}
 	p := make([]byte, 1)
-	got, err := t.Read(p)
-	if got > 0 {
-		return p[0], true, nil
-	}
-	if err != nil && !isTimeout(err) {
-		return 0, false, err
+	var rs replies
+	for range 64 { // a printer that keeps talking gets no more than this
+		got, err := t.Read(p)
+		if got > 0 {
+			if rs.take(p[0], dleEOTReply) {
+				return p[0], true, nil
+			}
+			continue
+		}
+		if err != nil && !isTimeout(err) {
+			return 0, false, err
+		}
+		return 0, false, nil
 	}
 	return 0, false, nil
 }
@@ -191,12 +229,16 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 		return nil, dropped(err)
 	}
 	p := make([]byte, 1)
+	var rs replies
 	for end := time.Now().Add(d.confirm); time.Now().Before(end); {
 		if err := ctx.Err(); err != nil {
 			res.Message = "sent (unconfirmed: stopped waiting: " + err.Error() + ")"
 			return res, nil
 		}
 		n, err := t.Read(p)
+		if n > 0 && !rs.take(p[0], gsrReply) {
+			continue
+		}
 		if n > 0 {
 			switch {
 			case p[0]&gsrPaperEnd != 0:

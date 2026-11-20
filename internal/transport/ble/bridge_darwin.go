@@ -178,8 +178,9 @@ func fatalLine(s string) string {
 // Transport is one BLE connection to a cat printer (or, kind bt, one RFCOMM link), through a
 // pdb-print-ble process.
 type Transport struct {
-	kind string // "" = ble
-	req  blebridge.OpenRequest
+	kind   string // "" = ble
+	req    blebridge.OpenRequest
+	readTO time.Duration // per Read; 0 = readTimeout (SetReadTimeout)
 
 	reqMu sync.Mutex // one request (Open, Write, Close) at a time
 
@@ -343,9 +344,14 @@ func (t *Transport) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Read returns buffered notification bytes; with nothing for 2 s, an error wrapping os.ErrDeadlineExceeded.
+// SetReadTimeout changes Read's wait (driver.ReadTimeoutSetter); 0 = 2 s. Call it from the goroutine that reads.
+func (t *Transport) SetReadTimeout(d time.Duration) { t.readTO = d }
+
+// Read returns buffered notification bytes; with nothing for 2 s (see SetReadTimeout), an error wrapping
+// os.ErrDeadlineExceeded.
 func (t *Transport) Read(p []byte) (int, error) {
-	timer := time.NewTimer(readTimeout)
+	to := cmp.Or(t.readTO, readTimeout)
+	timer := time.NewTimer(to)
 	defer timer.Stop()
 	for {
 		t.mu.Lock()
@@ -375,7 +381,7 @@ func (t *Transport) Read(p []byte) (int, error) {
 			if t.Kind() == "bt" {
 				what = "answer"
 			}
-			return 0, fmt.Errorf("%s: no %s within %v: %w", t.Kind(), what, readTimeout, os.ErrDeadlineExceeded)
+			return 0, fmt.Errorf("%s: no %s within %v: %w", t.Kind(), what, to, os.ErrDeadlineExceeded)
 		}
 	}
 }

@@ -283,6 +283,13 @@ func (l *lazyTransport) Kind() string               { return l.t.Kind() }
 // Unwrap returns the underlying transport, for driver-specific code.
 func (l *lazyTransport) Unwrap() driver.Transport { return l.t }
 
+// SetReadTimeout passes a driver's read timeout on when the transport takes one (driver.ReadTimeoutSetter).
+func (l *lazyTransport) SetReadTimeout(d time.Duration) {
+	if s, ok := l.t.(driver.ReadTimeoutSetter); ok {
+		s.SetReadTimeout(d)
+	}
+}
+
 func (l *lazyTransport) Write(p []byte) (int, error) {
 	if err := l.open(); err != nil {
 		return 0, err

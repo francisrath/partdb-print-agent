@@ -516,6 +516,12 @@ func TestBridgeRFCOMM(t *testing.T) {
 	if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, os.ErrDeadlineExceeded) || !strings.HasPrefix(err.Error(), "bt: ") {
 		t.Errorf("Read with nothing sent: %v, want bt: … os.ErrDeadlineExceeded", err)
 	}
+	tr.SetReadTimeout(20 * time.Millisecond) // the escpos driver's drain
+	start := time.Now()
+	if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, os.ErrDeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("short Read: %v after %v", err, time.Since(start))
+	}
+	tr.SetReadTimeout(0)
 	if err := tr.Close(); err != nil {
 		t.Error(err)
 	}

@@ -663,3 +663,20 @@ func TestStatusDuringBluetoothJobIsBusy(t *testing.T) {
 		})
 	}
 }
+
+type timeoutT struct {
+	fakePT
+	got []time.Duration
+}
+
+func (t *timeoutT) SetReadTimeout(d time.Duration) { t.got = append(t.got, d) }
+
+// The lazy wrapper passes a driver's read timeout on to a transport that takes one, and ignores it otherwise.
+func TestLazyTransportSetReadTimeout(t *testing.T) {
+	inner := &timeoutT{}
+	(&lazyTransport{t: inner}).SetReadTimeout(time.Millisecond)
+	if len(inner.got) != 1 || inner.got[0] != time.Millisecond {
+		t.Errorf("got %v", inner.got)
+	}
+	(&lazyTransport{t: &fakePT{}}).SetReadTimeout(time.Millisecond)
+}

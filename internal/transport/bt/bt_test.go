@@ -215,3 +215,18 @@ func TestCloseDuringRead(t *testing.T) {
 		t.Fatalf("Read during Close: %v, want a closed-link error", err)
 	}
 }
+
+// SetReadTimeout shortens Read's wait (a driver dropping stale bytes); 0 is the default again.
+func TestSetReadTimeout(t *testing.T) {
+	tr, _ := pipeTransport(t)
+	tr.ReadTimeout = 0
+	tr.SetReadTimeout(20 * time.Millisecond)
+	start := time.Now()
+	if _, err := tr.Read(make([]byte, 1)); !errors.Is(err, os.ErrDeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("Read = %v after %v", err, time.Since(start))
+	}
+	tr.SetReadTimeout(0)
+	if tr.ReadTimeout != 0 {
+		t.Errorf("ReadTimeout = %v after SetReadTimeout(0)", tr.ReadTimeout)
+	}
+}
