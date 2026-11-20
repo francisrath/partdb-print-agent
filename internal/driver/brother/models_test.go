@@ -2,6 +2,7 @@ package brother
 
 import (
 	"bytes"
+	"encoding/binary"
 	"image"
 	"os"
 	"path/filepath"
@@ -54,6 +55,9 @@ func TestModelsEncodeGolden(t *testing.T) {
 		{"ql1100_103mm", "QL-1100", "dk-22246", []*image.Gray{testPage(1200, 320)}, ""},
 		{"ql1100_102x51_two", "QL-1100", "dk-11240", []*image.Gray{testPage(1164, 526), testPage(1164, 526)}, "last"},
 		{"ql700_62mm", "QL-700", "dk-22205", []*image.Gray{testPage(696, 160)}, ""},
+		{"ptp750w_24mm_two_half", "PT-P750W", "tze-24", []*image.Gray{testPage(128, 90), testPage(128, 20)}, "half"},
+		{"ptp710bt_12mm", "PT-P710BT", "tze-12", []*image.Gray{testPage(70, 80)}, ""},
+		{"ptp900_36mm", "PT-P900", "tze-36", []*image.Gray{testPage(454, 120)}, "per_label"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := encodeFor(t, tc.model, tc.media, tc.pages, tc.cut)
@@ -135,5 +139,120 @@ func TestQL700Legacy(t *testing.T) {
 	lines := qlLines(t, b, false)
 	if len(lines) != 200 || len(lines[0]) != 90 {
 		t.Fatalf("%d lines of %d bytes", len(lines), len(lines[0]))
+	}
+}
+
+// ptRasterPage reads one page of a pt-raster stream from its ESC i z: the print information,
+// the mode bytes and the raster lines unpacked to head width.
+func ptRasterPage(t *testing.T, b []byte, lineBytes int) (z, mode []byte, lines [][]byte, end byte, rest []byte) {
+	t.Helper()
+	i := bytes.Index(b, []byte{0x1b, 'i', 'z'})
+	if i < 0 {
+		t.Fatal("no ESC i z")
+	}
+	z = b[i+3 : i+13]
+	j := bytes.Index(b[i:], []byte{'M', 2})
+	mode = b[i+13 : i+j]
+	k := i + j + 2
+	for b[k] == 'G' || b[k] == 'Z' {
+		if b[k] == 'Z' {
+			lines = append(lines, make([]byte, lineBytes))
+			k++
+			continue
+		}
+		n := int(binary.LittleEndian.Uint16(b[k+1:]))
+		lines = append(lines, unpackbits(b[k+3:k+3+n]))
+		k += 3 + n
+	}
+	return z, mode, lines, b[k], b[k+1:]
+}
+
+func TestPTRasterEncode(t *testing.T) {
+	// PT-P750W, 24 mm: 128 pins, the tape's 128 dots on pins 0–127; half cut between labels
+	img := white(128, 40)
+	img.Pix[127] = 0 // rightmost column → pin 0
+	img.Pix[0] = 0   // leftmost → pin 127
+	b := encodeFor(t, "PT-P750W", "tze-24", []*image.Gray{img, white(128, 40)}, "half")
+	if !bytes.HasPrefix(b, append(make([]byte, 200), 0x1b, '@', 0x1b, 'i', 'a', 1, 0x1b, 'i', 'z')) {
+		t.Fatalf("start % x", b[190:215])
+	}
+	z, mode, lines, end, rest := ptRasterPage(t, b, 16)
+	if !bytes.Equal(z, []byte{0x84, 0, 24, 0, 40, 0, 0, 0, 0, 0}) {
+		t.Errorf("print information % x", z)
+	}
+	wantMode := []byte{0x1b, 'i', 'M', 0x40, 0x1b, 'i', 'A', 1, 0x1b, 'i', 'K', 0x04, 0x1b, 'i', 'd', 14, 0}
+	if !bytes.Equal(mode, wantMode) {
+		t.Errorf("modes % x, want % x", mode, wantMode)
+	}
+	if len(lines) != 40 || len(lines[0]) != 16 || lines[0][0] != 0x80 || lines[0][15] != 0x01 || end != 0x0c {
+		t.Errorf("%d lines, first % x, end %02x", len(lines), lines[0], end)
+	}
+	z, _, _, end, _ = ptRasterPage(t, rest, 16)
+	if z[8] != 1 || end != 0x1a {
+		t.Errorf("second page: page byte %d, end %02x", z[8], end)
+	}
+
+	// PT-P710BT: status notification on, no ESC i A; a short label padded to 31 lines
+	b = encodeFor(t, "PT-P710BT", "tze-12", []*image.Gray{white(70, 10)}, "")
+	if !bytes.Contains(b, []byte{0x1b, 'i', 'a', 1, 0x1b, 'i', '!', 0}) || bytes.Contains(b, []byte{0x1b, 'i', 'A'}) {
+		t.Error("PT-P710BT: want ESC i ! 0, no ESC i A")
+	}
+	if z, _, lines, _, _ := ptRasterPage(t, b, 16); len(lines) != 31 || z[4] != 31 || z[8] != 0 {
+		t.Errorf("PT-P710BT: %d lines, print information % x", len(lines), z)
+	}
+
+	// PT-P900, 12 mm: 560 pins, print area on pins 213–362 (p.20); the only page is marked last
+	img = white(150, 60)
+	img.Pix[149] = 0
+	img.Pix[0] = 0
+	b = encodeFor(t, "PT-P900", "tze-12", []*image.Gray{img}, "")
+	z, mode, lines, _, _ = ptRasterPage(t, b, 70)
+	if z[2] != 12 || z[8] != 2 || !bytes.Contains(mode, []byte{0x1b, 'i', 'K', 0x00}) {
+		t.Errorf("PT-P900: print information % x, modes % x", z, mode)
+	}
+	if l := lines[0]; len(l) != 70 || l[213/8] != 0x80>>(213%8) || l[362/8] != 0x80>>(362%8) {
+		t.Errorf("PT-P900 line % x", l)
+	}
+}
+
+func TestPTRasterStatus(t *testing.T) {
+	m, _ := devicedb.Default().Model("PT-P710BT")
+	d := newPTRaster(m, driver.Options{NoSNMP: true})
+	reply := func(edit func(b []byte)) []byte {
+		b := make([]byte, 32)
+		b[0], b[1], b[2], b[3], b[4] = 0x80, 0x20, 'B', '0', 0x68
+		b[10], b[11] = 24, 0x01
+		edit(b)
+		return b
+	}
+	for _, tc := range []struct {
+		name         string
+		edit         func(b []byte)
+		code         driver.Code
+		model, media string
+		typ          string
+		done         bool
+	}{
+		{"ok", func([]byte) {}, driver.OK, "PT-P750W", "tze-24", "laminated", false},
+		{"own model when code unknown", func(b []byte) { b[4] = 0x7f }, driver.OK, "PT-P710BT", "tze-24", "laminated", false},
+		{"no tape", func(b []byte) { b[8], b[10], b[11] = 0x01, 0, 0 }, driver.NoMedia, "PT-P750W", "", "", false},
+		{"cover", func(b []byte) { b[9] = 0x10 }, driver.CoverOpen, "PT-P750W", "tze-24", "laminated", false},
+		{"overheat", func(b []byte) { b[9] = 0x20 }, driver.Overheat, "PT-P750W", "tze-24", "laminated", false},
+		{"batteries", func(b []byte) { b[8] = 0x08 }, driver.Unknown, "PT-P750W", "tze-24", "laminated", false},
+		{"heat-shrink is no TZe", func(b []byte) { b[11] = 0x11 }, driver.OK, "PT-P750W", "unknown", "heat-shrink 2:1", false},
+		{"unsupported width", func(b []byte) { b[10] = 36 }, driver.OK, "PT-P750W", "unknown", "laminated", false},
+		{"completed", func(b []byte) { b[18] = 0x01 }, driver.OK, "PT-P750W", "tze-24", "laminated", true},
+		{"error status", func(b []byte) { b[18] = 0x02 }, driver.Unknown, "PT-P750W", "tze-24", "laminated", false},
+	} {
+		s, err := d.parse(reply(tc.edit))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if s.Code != tc.code || s.Model != tc.model || mediaID(s.Media) != tc.media || s.MediaType != tc.typ || s.Done != tc.done {
+			t.Errorf("%s: %+v media %s", tc.name, s, mediaID(s.Media))
+		}
+	}
+	if _, err := d.parse(make([]byte, 32)); err == nil {
+		t.Error("garbage parsed")
 	}
 }
