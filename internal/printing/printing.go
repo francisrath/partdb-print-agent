@@ -333,15 +333,17 @@ func commsError(err error) error {
 	return &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 }
 
-// Status queries the printer. Models that must not be asked while printing (PT) answer BUSY
-// during a job without being asked. driver.ErrNoReadback if the printer doesn't answer.
+// Status queries the printer. Models that must not be asked while printing (PT) and printers on a
+// single connection (USB, BLE) answer BUSY during a job without being asked. driver.ErrNoReadback
+// if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
 	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
-	// a printing PT must not be asked; a USB device opens only once at a time (usblp)
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a BLE printer
+	// takes one connection, so a second one would drop the job's link
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || p.Transport.Kind == "ble" {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil

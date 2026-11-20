@@ -625,3 +625,27 @@ func TestPrintPassesPrevUnconfirmed(t *testing.T) {
 		t.Fatalf("%d jobs printed, want %d", len(f.jobs), len(want))
 	}
 }
+
+// A BLE printer takes one connection: a status check during a job answers BUSY instead of
+// connecting (which would drop the job's link).
+func TestStatusDuringBLEJobIsBusy(t *testing.T) {
+	f := &fakeCat{gate: make(chan struct{}), printing: make(chan struct{})}
+	s, p := catService(t, f)
+	printed := make(chan error, 1)
+	go func() {
+		_, err := s.Print(context.Background(), p, "", labels(1))
+		printed <- err
+	}()
+	<-f.printing
+	st, err := s.Status(context.Background(), p)
+	if err != nil || st.Code != driver.Busy {
+		t.Errorf("status during a job: %+v %v, want BUSY", st, err)
+	}
+	close(f.gate)
+	if err := <-printed; err != nil {
+		t.Fatal(err)
+	}
+	if f.statuses != 1 {
+		t.Errorf("%d status requests; only the job's own may be", f.statuses)
+	}
+}
