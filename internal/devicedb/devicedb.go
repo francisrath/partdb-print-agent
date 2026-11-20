@@ -116,6 +116,20 @@ func (m *Model) QuirkBool(key string) bool {
 	return b
 }
 
+// QuirkUUID returns a GATT UUID quirk (ble_service, ble_write, ble_notify) as 128-bit text: a number is a
+// 16-bit Bluetooth SIG UUID, a string a whole UUID (Load checks its form); def when unset or m is nil.
+func (m *Model) QuirkUUID(key string, def uint16) string {
+	if m != nil {
+		if s, ok := m.Quirks[key].(string); ok {
+			return strings.ToLower(s)
+		}
+		def = uint16(m.Quirk(key, int(def)))
+	}
+	return fmt.Sprintf("0000%04x-0000-1000-8000-00805f9b34fb", def)
+}
+
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // QuirkString returns a string quirk, or "".
 func (m *Model) QuirkString(key string) string {
 	s, _ := m.Quirks[key].(string)
@@ -230,6 +244,21 @@ func Load(fsys fs.FS) (*DB, error) {
 					errs = append(errs, fmt.Errorf("%s: model %s: bad bt_name pattern: %w", base, m.ID, err))
 				}
 				m.btRe = re
+			}
+			for _, k := range []string{"ble_service", "ble_write", "ble_notify"} {
+				switch v := m.Quirks[k].(type) {
+				case nil:
+				case int:
+					if v < 0 || v > 0xffff {
+						errs = append(errs, fmt.Errorf("%s: model %s: %s %#x isn't a 16-bit UUID", base, m.ID, k, v))
+					}
+				case string:
+					if !uuidRe.MatchString(v) {
+						errs = append(errs, fmt.Errorf("%s: model %s: %s %q isn't a UUID", base, m.ID, k, v))
+					}
+				default:
+					errs = append(errs, fmt.Errorf("%s: model %s: %s must be a 16-bit number or a UUID string", base, m.ID, k))
+				}
 			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))

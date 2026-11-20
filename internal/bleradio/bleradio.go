@@ -31,22 +31,26 @@ func Scan(ctx context.Context, a *bluetooth.Adapter, timeout time.Duration, targ
 	}.Run(ctx, timeout, target)
 }
 
-// Characteristics finds the write and notify characteristics of service on a connected device. The
-// errors carry no package prefix; callers add their own.
+// Characteristics finds the write and notify characteristics of service on a connected device; they may
+// be one characteristic (Niimbot). The errors carry no package prefix; callers add their own.
 func Characteristics(dev bluetooth.Device, service, write, notify bluetooth.UUID) (tx, rx *bluetooth.DeviceCharacteristic, err error) {
 	svcs, err := dev.DiscoverServices([]bluetooth.UUID{service})
 	if err != nil || len(svcs) == 0 {
 		return nil, nil, fmt.Errorf("printer has no service %s: %v", service, err)
 	}
-	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{write, notify})
+	want := []bluetooth.UUID{write, notify}
+	if write == notify {
+		want = want[:1] // the library looks for one characteristic per entry
+	}
+	chars, err := svcs[0].DiscoverCharacteristics(want)
 	if err != nil {
 		return nil, nil, fmt.Errorf("characteristics: %w", err)
 	}
 	for i := range chars {
-		switch chars[i].UUID() {
-		case write:
+		if chars[i].UUID() == write {
 			tx = &chars[i]
-		case notify:
+		}
+		if chars[i].UUID() == notify {
 			rx = &chars[i]
 		}
 	}

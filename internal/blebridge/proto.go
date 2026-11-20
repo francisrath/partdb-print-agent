@@ -33,9 +33,9 @@ type OpenRequest struct {
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address,omitempty"`
 	Channel int    `json:"channel,omitempty"` // rfcomm only
-	Service uint16 `json:"service"`           // BLE only: 16-bit UUIDs
-	Write   uint16 `json:"write"`
-	Notify  uint16 `json:"notify"`
+	Service string `json:"service,omitempty"` // BLE only: UUIDs as 128-bit text
+	Write   string `json:"write,omitempty"`
+	Notify  string `json:"notify,omitempty"`
 	GapMS   int    `json:"gap_ms"` // BLE only: pause between chunks
 }
 

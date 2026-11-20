@@ -30,19 +30,28 @@ const (
 
 func init() {
 	transport.Register("ble", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
-		q := func(key string, def int) int {
-			if m == nil {
-				return def
+		var uuids [3]bluetooth.UUID
+		for i, q := range []struct {
+			key string
+			def uint16
+		}{{"ble_service", 0xae30}, {"ble_write", 0xae01}, {"ble_notify", 0xae02}} {
+			u, err := bluetooth.ParseUUID(m.QuirkUUID(q.key, q.def))
+			if err != nil {
+				return nil, fmt.Errorf("ble: %s: %w", q.key, err)
 			}
-			return m.Quirk(key, def)
+			uuids[i] = u
+		}
+		gap := 10
+		if m != nil {
+			gap = m.Quirk("ble_gap_ms", gap)
 		}
 		return &Transport{
 			Address: c.Address,
 			Name:    c.Name,
-			service: bluetooth.New16BitUUID(uint16(q("ble_service", 0xae30))),
-			write:   bluetooth.New16BitUUID(uint16(q("ble_write", 0xae01))),
-			notify:  bluetooth.New16BitUUID(uint16(q("ble_notify", 0xae02))),
-			gap:     time.Duration(q("ble_gap_ms", 10)) * time.Millisecond,
+			service: uuids[0],
+			write:   uuids[1],
+			notify:  uuids[2],
+			gap:     time.Duration(gap) * time.Millisecond,
 		}, nil
 	})
 }
@@ -110,7 +119,7 @@ func scan(ctx context.Context, timeout time.Duration, target *blecore.Target) ([
 	return ads, nil
 }
 
-// Transport is one BLE connection to a cat printer.
+// Transport is one BLE connection to a printer.
 type Transport struct {
 	Address, Name          string // the address wins (see config.Transport)
 	service, write, notify bluetooth.UUID

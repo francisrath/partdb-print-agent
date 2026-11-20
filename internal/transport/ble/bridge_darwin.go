@@ -53,19 +53,17 @@ func killedByPrivacy(ps *os.ProcessState) bool {
 
 func init() {
 	transport.Register("ble", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
-		q := func(key string, def int) int {
-			if m == nil {
-				return def
-			}
-			return m.Quirk(key, def)
+		gap := 10
+		if m != nil {
+			gap = m.Quirk("ble_gap_ms", gap)
 		}
 		return &Transport{req: blebridge.OpenRequest{
 			Name:    c.Name,
 			Address: c.Address,
-			Service: uint16(q("ble_service", 0xae30)),
-			Write:   uint16(q("ble_write", 0xae01)),
-			Notify:  uint16(q("ble_notify", 0xae02)),
-			GapMS:   q("ble_gap_ms", 10),
+			Service: m.QuirkUUID("ble_service", 0xae30),
+			Write:   m.QuirkUUID("ble_write", 0xae01),
+			Notify:  m.QuirkUUID("ble_notify", 0xae02),
+			GapMS:   gap,
 		}}, nil
 	})
 	// Bluetooth Classic (Serial Port Profile) goes through the same helper on macOS: IOBluetooth also asks
