@@ -58,6 +58,14 @@ printers:
   #                             # the last label waits in the printer until the next print or the
   #                             # cut button, so no blank leader is wasted. per_label: feed and cut
   #                             # at once (wastes ~25 mm per job); none: no cuts
+  # DYMO LabelWriter 400/450/4XL (and 330) over USB (Linux usblp, group `lp`). Untested on hardware.
+  # DYMOs don't report the loaded labels: set media to the roll's part number (`pdb-print media`).
+  # - id: dymo
+  #   name: LabelWriter 450
+  #   model: LabelWriter-450
+  #   transport: {kind: usb, usb_id: "0922:0020"}   # 450 Duo: device: /dev/usb/lpN (label side) instead
+  #   media: dymo-99012         # 36×89 mm large address; dymo-11354 57×32 mm, dymo-30252 1⅛×3½" …
+  #   darkness: normal          # light | normal | dark
 
 # Print label PDFs downloaded from Part-DB automatically (runs inside `pdb-print serve`).
 # Only files younger than 60 s are printed; afterwards they move to printed/ or failed/.
