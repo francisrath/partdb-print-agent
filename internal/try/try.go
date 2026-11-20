@@ -344,8 +344,14 @@ func (s *session) pickMedia() bool {
 	if pw, ll := float64(s.setup["pw"]), float64(s.setup["ll"]); pw > 0 && ll > 0 {
 		d := math.Inf(1)
 		for i, m := range media {
-			// the label length is measured (calibration), the print width only a setting: length decides
-			if v := 10*math.Abs(m.LengthMM-ll/s.dpm()) + math.Abs(m.WidthMM-pw/s.dpm()); v < d {
+			// the label length is measured (calibration) and includes the gap, the print width is only a
+			// setting: the longest label at least 1 mm shorter than the measured length wins
+			gap := ll/s.dpm() - m.LengthMM
+			v := 10*gap + math.Abs(m.WidthMM-pw/s.dpm())
+			if gap < 1 {
+				v += 10000
+			}
+			if v < d {
 				best, d = i, v
 			}
 		}

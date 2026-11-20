@@ -137,7 +137,9 @@ func (z *zpl) Encode(w io.Writer, job *driver.Job) error {
 // watches the print buffer: confirmed once the job was seen in it and it has emptied.
 func (z *zpl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	if st := job.Status; st != nil && st.Media != nil && st.Media.PrintableLengthDots > 0 && job.Media.Kind == driver.DieCut {
-		if diff := job.Media.PrintableLengthDots - st.Media.PrintableLengthDots; math.Abs(float64(diff)) > z.dpm() {
+		// the printer measures label + gap (a 100 mm roll: 101.5 mm on a GK420d), so the measured
+		// length may be up to 4 mm longer than the label, or 1 mm shorter
+		if diff := st.Media.PrintableLengthDots - job.Media.PrintableLengthDots; float64(diff) < -z.dpm() || float64(diff) > 4*z.dpm() {
 			return nil, &driver.Error{Code: driver.MediaMismatch, Detail: fmt.Sprintf("config says %s, the printer measured %.0f mm long labels",
 				job.Media.Name, st.Media.LengthMM)}
 		}

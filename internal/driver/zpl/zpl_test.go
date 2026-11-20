@@ -133,6 +133,19 @@ func TestPrintLengthMismatch(t *testing.T) {
 	}
 }
 
+// The printer's label length includes the gap: a 100 mm roll measures 812 dots (101.5 mm) on the
+// GK420d, and that's the right roll.
+func TestPrintLengthIncludesGap(t *testing.T) {
+	d, m := gk420d(t)
+	fake := &zpltest.Fake{Hold: 100 * time.Millisecond} // 812 dots loaded
+	tr := tcp.New(fake.Start(t))
+	st, _ := d.Status(context.Background(), tr)
+	md := media(t, m, "label-100x100")
+	if _, err := d.Print(context.Background(), tr, &driver.Job{Pages: []*image.Gray{page(md)}, Media: md, Status: st}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // An error while the label is being printed is reported, not "sent".
 func TestPrintErrorWhilePrinting(t *testing.T) {
 	defer zpl.SetTiming(20*time.Millisecond, 2*time.Second)()
