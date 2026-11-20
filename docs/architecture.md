@@ -762,6 +762,8 @@ gantt
 
 **Phase 3**: PR3 Mercure push (+ long-poll opt-in), PR4 print hints/default printer, device-code pairing, SNMP, DYMO LabelManager, BlueZ SPP profile, printer sharing by groups, per-user per-profile defaults, devices-DB OTA updates, TrueNAS/Unraid/HA add-on packaging.
 
+**Phase 6 (Bluetooth LE cat printers)**: driver `cat` (dialect `gb`: GB01/02/03, GT01, YT01, MX05/06/08/10, 57 mm, 384 dots at 203 dpi, GATT service 0xae30) and transport `ble`, matched by exact advertised name; `address` is the platform device id and wins over `name`; two printers with one name are refused. Linux talks to BlueZ over D-Bus, Windows uses WinRT in-process (BLE adapter needed). macOS needs cgo for CoreBluetooth, so it lives in a separate helper `pdb-print-ble` that `pdb-print` runs and talks to over pipes: `pdb-print` stays cgo-free and only the helper asks for Bluetooth permission. Docker has no Bluetooth. The macOS release is built on a macOS runner after the Linux job's draft release (see `docs/releasing.md`).
+
 **Later**: agent as **IPP Everywhere printer** (LPrint style, so any app/OS dialog can print through the agent's correct rasteriser) · printer-native barcodes (ZPL `^BQ`/TSPL `QRCODE` from element data, for 203 dpi purists) · live job status in the Part-DB UI via Turbo Streams over the same Mercure hub · agentless WebBluetooth/WebUSB print for Niimbot from the Part-DB page (browser-only, Chrome) · Android agent (phone as BLE bridge) · printer groups with media-aware fail-over · media usage counters/low-stock alerts (tie-in: labels are inventory too) · Home Assistant add-on.
 
 ---

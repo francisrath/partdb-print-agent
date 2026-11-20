@@ -141,6 +141,42 @@ setup wizard can ask them what they are (a few bytes a non-Zebra might print).
 
 EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
 
+### Bluetooth label printers ("cat printers")
+
+`model:` GB01, GB02, GB03, GT01, YT01, MX05, MX06, MX08 or MX10: small Bluetooth LE thermal printers
+with 57 mm paper (384 dots at 203 dpi), continuous (sticker rolls without gaps). A printer is matched by
+its advertised Bluetooth name, which must be exactly the model name.
+
+```yaml
+- id: cat
+  name: Bench MX10
+  model: MX10
+  transport: {kind: ble, name: MX10, address: "AA:BB:CC:DD:EE:FF"}
+  media: paper-57
+  darkness: normal            # light | normal | dark; darker prints slower
+```
+
+`pdb-print discover` lists nearby Bluetooth printers with their address and the exact `transport:` line
+(the Bluetooth scan adds about 8 s; `--no-ble` skips it), and the setup wizard lists them too. The address
+is the platform's device id: a MAC address on Linux and Windows, a CoreBluetooth UUID on macOS. With only
+`name`, the agent listens about 2 s longer after the first match and refuses to guess if two printers
+share the name ("set address"); with `address`, the address wins. `pdb-print try` supports cat printers
+(status, test card, part label, and a "too pale?" question that reprints darker).
+
+A printer holds one connection at a time: disconnect it from phones and other apps first.
+
+- **Linux:** through BlueZ over D-Bus. The `.deb` service runs with the groups `lp` and `bluetooth` (the
+  package creates `bluetooth` if missing). The adapter must be on: `rfkill unblock bluetooth`,
+  `bluetoothctl power on`. If BlueZ still holds the printer, `bluetoothctl disconnect <address>`.
+- **Windows:** in-process, needs a Bluetooth 4.0+ (LE) adapter; older Bluetooth 3.0 radios (e.g. Dell
+  Wireless 375) can't.
+- **macOS:** Bluetooth goes through the helper `pdb-print-ble`, shipped next to `pdb-print` in the macOS
+  archive and the Homebrew cask (if it's missing, the error says to install it). Only the helper asks for
+  Bluetooth permission, once, the first time a Bluetooth printer is used; the prompt names the app that ran
+  it (e.g. Terminal). Other commands never trigger it. The helper isn't Developer-ID signed yet, so macOS
+  may ask again after an update.
+- **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
+
 ### Testing a printer: `pdb-print try`
 
 `pdb-print try [HOST]` is a guided test for someone standing at the printer (Zebra for now): it finds the
@@ -192,7 +228,7 @@ Icons: edit the SVGs in `assets/icon/` (or `docs/logo.svg`) and run `scripts/gen
 Status-only hardware checks: `PDB_PRINT_QL_ADDR=host:9100 go test -tags hardware -count=1 ./internal/driver/brother`,
 `PDB_PRINT_PT_DEVICE=/dev/usb/lp0 go test -tags hardware -count=1 ./internal/driver/brother`.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full design.
+See [`docs/architecture.md`](docs/architecture.md) for the full design and [`docs/releasing.md`](docs/releasing.md) for how releases are made.
 
 ## Adding a printer
 
