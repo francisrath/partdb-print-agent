@@ -9,3 +9,7 @@
 
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# real printer replies: byte-exact
+internal/driver/zpl/zpltest/testdata/* binary

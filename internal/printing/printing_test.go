@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 	"image"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -495,5 +498,52 @@ func TestRenderFixes(t *testing.T) {
 				t.Errorf("ink in quadrants %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A Zebra prints the test card through the whole path: status (fresh connections), render at the
+// configured label size, send, completion.
+func TestPrintZebra(t *testing.T) {
+	fake := &zpltest.Fake{Hold: time.Second} // a 4" label at 5 ips takes about 0.8 s
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	n, _ := strconv.Atoi(port)
+	p := &config.Printer{ID: "zebra", Model: "GK420d", Media: "label-102x102", Transport: config.Transport{Kind: "tcp", Host: host, Port: n}}
+	s := service(t, nil)
+	res, err := s.Print(context.Background(), p, "", TestCard("GK420d", "test"))
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^PW816^LL812") {
+		t.Errorf("formats %.60q", f)
+	}
+}
+
+// Die-cut labels print at the length the printer measured (812 dots for "102 mm" on the GK420d),
+// so the last rows don't land on the gap.
+func TestPrintZebraUsesMeasuredLength(t *testing.T) {
+	fake := &zpltest.Fake{Hold: time.Second}
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	n, _ := strconv.Atoi(port)
+	p := &config.Printer{ID: "zebra", Model: "GK420d", Media: "label-102x102", Transport: config.Transport{Kind: "tcp", Host: host, Port: n}}
+	if _, err := service(t, nil).Print(context.Background(), p, "", TestCard("GK420d", "test")); err != nil {
+		t.Fatal(err)
+	}
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^PW816^LL812") {
+		t.Errorf("format %.60q, want ^LL812", f)
+	}
+}
+
+// A measurement exactly 1 mm (8 dots on a GK420d) shorter than the label still shortens the job:
+// the tolerance is whole dots per mm, as in the driver's own check.
+func TestPrintZebraShortensByOneMM(t *testing.T) {
+	fake := &zpltest.Fake{Hold: time.Second, LabelDots: 792}
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	n, _ := strconv.Atoi(port)
+	p := &config.Printer{ID: "zebra", Model: "GK420d", Media: "label-100x100", Transport: config.Transport{Kind: "tcp", Host: host, Port: n}}
+	if _, err := service(t, nil).Print(context.Background(), p, "", TestCard("GK420d", "test")); err != nil {
+		t.Fatal(err)
+	}
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^LL792") {
+		t.Errorf("format %.60q, want ^LL792", f)
 	}
 }

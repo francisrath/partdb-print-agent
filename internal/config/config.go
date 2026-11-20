@@ -100,7 +100,12 @@ type Printer struct {
 	// Fixes picked from the setup wizard's test print, applied after rendering.
 	Mirror     bool `yaml:"mirror,omitempty"`      // flip left and right
 	UpsideDown bool `yaml:"upside_down,omitempty"` // turn 180° (on top of rotate)
+	// Adjust is set only by `pdb-print try` while it tries fixes for a cut-off label; never saved.
+	Adjust Adjust `yaml:"-"`
 }
+
+// Adjust moves the print (dots; x > 0 right, y > 0 down) or sets the print width (0 = the media's).
+type Adjust struct{ XDots, YDots, PrintWidthDots int }
 
 type Transport struct {
 	Kind   string `yaml:"kind"` // tcp | usb (allowed kinds come from the model)

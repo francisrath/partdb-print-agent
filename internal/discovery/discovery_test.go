@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"
+	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 )
 
 func sysfs(t *testing.T, printers map[string][4]string) string {
@@ -178,5 +182,77 @@ func TestNetworkStops(t *testing.T) {
 	_, _ = Network(context.Background(), devicedb.Default(), Options{Subnets: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/22")}, Workers: 4, Dial: block, Timeout: 300 * time.Millisecond})
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("timeout: still scanning after %v", d)
+	}
+}
+
+// silentPrinter accepts connections, records what it gets and never answers (a non-Zebra on 9100).
+func silentPrinter(t *testing.T) (addr string, got func() string) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var mu sync.Mutex
+	var buf []byte
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				b := make([]byte, 4096)
+				for {
+					n, err := c.Read(b)
+					mu.Lock()
+					buf = append(buf, b[:n]...)
+					mu.Unlock()
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String(), func() string { mu.Lock(); defer mu.Unlock(); return string(buf) }
+}
+
+func candidateAt(t *testing.T, addr string) Candidate {
+	host, port, _ := net.SplitHostPort(addr)
+	p, _ := strconv.Atoi(port)
+	return Candidate{Kind: "tcp", Host: host, Port: p, Status: Unknown}
+}
+
+func TestIdentifyZebra(t *testing.T) {
+	fake := &zpltest.Fake{}
+	c, reply, err := Identify(context.Background(), devicedb.Default(), candidateAt(t, fake.Start(t)))
+	if err != nil || c.ModelID != "GK420d" || c.Status != Supported || !strings.Contains(reply, "GK420d-200dpi") {
+		t.Errorf("%+v %q %v", c, reply, err)
+	}
+}
+
+func TestIdentifyNonZebra(t *testing.T) {
+	addr, got := silentPrinter(t)
+	c, _, err := Identify(context.Background(), devicedb.Default(), candidateAt(t, addr))
+	if err == nil || c.Status != Unknown || !strings.Contains(err.Error(), "EPL") {
+		t.Errorf("%+v %v", c, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if g := got(); g != "~HI\r\n" {
+		t.Errorf("sent %q, want only ~HI", g)
+	}
+}
+
+func TestCandidateName(t *testing.T) {
+	for c, want := range map[*Candidate]string{
+		{ModelID: "QL-810W", SNMPDescr: "Brother QL-810W"}:                                        "QL-810W",
+		{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z  ,MID 84E-755"}: "Brother HL-L3270CDW series",
+		{IEEE1284: map[string]string{"MFG": "Zebra Technologies", "MDL": "ZTC GK420d"}}:           "Zebra Technologies ZTC GK420d",
+		{}: "?",
+	} {
+		if got := c.Name(); got != want {
+			t.Errorf("%+v → %q, want %q", *c, got, want)
+		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/report"
+	"github.com/francisrath/partdb-print-agent/internal/try"
 	"image/png"
 	"io"
 	"log/slog"
@@ -50,6 +51,8 @@ commands:
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
+  try [HOST] [--port N]            guided test of a printer (Zebra for now) by someone next to it:
+                                   numbered test labels, questions, fixes; writes a report file
   pair [--addr 127.0.0.1:8631]     open the setup wizard to the LAN for a while (prints a code)
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
                                    rasterise to PNGs at printhead dots (no printing)
@@ -109,6 +112,9 @@ func run(ctx context.Context, args []string) error {
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
 	}
+	if cmd == "try" { // a guided test of a printer; needs no config
+		return tryCmd(ctx, rest)
+	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)
 	}
@@ -128,7 +134,11 @@ func run(ctx context.Context, args []string) error {
 			}
 		}
 		for _, md := range order {
-			fmt.Printf("%-10s %-20s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
+			if raw, _ := db.Media(md.ID); raw.DPI == 0 { // a size in mm: dots depend on the printer
+				fmt.Printf("%-13s %-28s %-15s %s\n", md.ID, md.Name, "(printer's dpi)", strings.Join(takers[md.ID], " "))
+				continue
+			}
+			fmt.Printf("%-13s %-28s %4d×%-4d dots  %s\n", md.ID, md.Name, md.PrintableWidthDots, md.PrintableLengthDots, strings.Join(takers[md.ID], " "))
 		}
 		return nil
 	}
@@ -640,28 +650,50 @@ func discover(ctx context.Context, args []string) error {
 		fmt.Println("no printers found")
 		return nil
 	}
-	for _, c := range found {
-		addr, what := c.Device, c.ModelID
+	printCandidates(os.Stdout, found)
+	return nil
+}
+
+// printCandidates writes one block per printer, a blank line between them.
+func printCandidates(w io.Writer, found []discovery.Candidate) {
+	for i, c := range found {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		addr := c.Device
 		if c.Kind == "tcp" {
 			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 		}
-		switch {
-		case what == "" && c.IEEE1284["MDL"] != "":
-			what = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
-		case what == "" && c.SNMPDescr != "":
-			what = c.SNMPDescr
-		case what == "":
-			what = "?"
-		}
-		fmt.Printf("%-4s %-22s %-28s %s\n", c.Kind, addr, what, c.Status)
+		fmt.Fprintf(w, "%-4s %-22s %-28s %s\n", c.Kind, addr, c.Name(), c.Status)
 		if c.Status != discovery.Unknown {
-			fmt.Printf("     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
+			fmt.Fprintf(w, "     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
 		}
 	}
 	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
-		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
+		fmt.Fprintln(w, "\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
-	return nil
+}
+
+func tryCmd(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("try", flag.ContinueOnError)
+	port := fs.Int("port", 9100, "print port of a network printer")
+	hosts, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(hosts) > 1 {
+		return errors.New("try takes at most one printer address")
+	}
+	host := ""
+	if len(hosts) == 1 {
+		host = hosts[0]
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	svc := &printing.Service{Log: log}
+	defer svc.Close()
+	_, err = try.Run(ctx, try.Options{In: os.Stdin, Out: os.Stdout, Host: host, Port: *port, Svc: svc,
+		DB: devicedb.Default(), Version: appVersion()})
+	return err
 }
 
 func reportCmd(ctx context.Context, args []string) error {

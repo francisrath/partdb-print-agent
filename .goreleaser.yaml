@@ -12,11 +12,18 @@ builds:
     main: ./cmd/pdb-print
     binary: pdb-print
     env: [CGO_ENABLED=0]
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
-    ignore:
-      - goos: windows
-        goarch: arm64
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  # its own build id so the Windows zip can carry the printer-test files (archives below)
+  - id: pdb-print-windows
+    main: ./cmd/pdb-print
+    binary: pdb-print
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64]
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -36,13 +43,25 @@ universal_binaries:
   - replace: true
 
 archives:
-  - formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
-    name_template: >-
+  - id: default
+    ids: [pdb-print, pdb-print-arm]
+    formats: [tar.gz]
+    name_template: &archive_name >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}{{ with .Arm }}v{{ . }}{{ end }}
     files: [LICENSE, README.md, config.example.yaml]
+  # Windows: a zip with the guided printer test (double-click try-printer.cmd, see TRY.md)
+  - id: windows
+    ids: [pdb-print-windows]
+    formats: [zip]
+    name_template: *archive_name
+    files:
+      - LICENSE
+      - README.md
+      - config.example.yaml
+      - src: packaging/windows/try-printer.cmd
+        strip_parent: true
+      - src: packaging/windows/TRY.md
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt

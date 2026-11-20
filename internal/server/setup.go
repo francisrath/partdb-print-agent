@@ -64,6 +64,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /setup/printer", s.setupPrinter)
 	mux.HandleFunc("POST /setup/printer", s.setupPrinterPost)
 	mux.HandleFunc("POST /setup/printer/probe", s.setupProbe)
+	mux.HandleFunc("POST /setup/printer/identify", s.setupIdentify)
 	mux.HandleFunc("GET /setup/test", s.setupTest)
 	mux.HandleFunc("POST /setup/test", s.setupTestPost)
 	mux.HandleFunc("GET /setup/name", s.setupName)
@@ -212,17 +213,9 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
 			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
-		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: candidateName(c)})
+		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr})
-}
-
-// candidateName is what the printer list shows: the model, else the device's own description
-// (up to its first ";": Brother appends the network card and firmware).
-func candidateName(c discovery.Candidate) string {
-	name := cmp.Or(c.ModelID, c.SNMPDescr, c.IEEE1284["MDL"], "Unknown printer")
-	name, _, _ = strings.Cut(name, ";")
-	return strings.TrimSpace(name)
 }
 
 func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
@@ -315,6 +308,26 @@ func (s *Server) setupProbe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	d.Candidates = sortCandidates(d.Candidates)
+	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
+}
+
+// setupIdentify asks an unknown network printer what it is (Zebra ~HI), after the user pressed
+// the button that warns about it.
+func (s *Server) setupIdentify(w http.ResponseWriter, r *http.Request) {
+	_, d, unlock := lockDraft(r)
+	defer unlock()
+	i, err := strconv.Atoi(r.FormValue("candidate"))
+	// the host too: the list may have changed since the page was shown, and the consent was for this printer
+	if err == nil && i >= 0 && i < len(d.Candidates) && d.Candidates[i].Kind == "tcp" && d.Candidates[i].Host == r.FormValue("host") {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		c, _, err := discovery.Identify(ctx, devicedb.Default(), d.Candidates[i])
+		cancel()
+		d.Candidates[i] = c
+		if err != nil {
+			d.Notes = []string{fmt.Sprintf("%s: %v", c.Host, err)}
+		}
+		d.Candidates = sortCandidates(d.Candidates)
+	}
 	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 }
 

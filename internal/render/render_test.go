@@ -232,10 +232,10 @@ func TestTestCardTextFitsRendered(t *testing.T) {
 	}
 	img := pages[0]
 	k := 306.0 / 29 // dots per mm
-	// columns 27.4–28.2 mm: right of any text margin, left of the border line at 28.5 mm;
-	// rows below the top ruler and above the bottom border
-	for y := int(3.5 * k); y < img.Bounds().Dy()-int(0.8*k); y++ {
-		for x := int(27.4 * k); x <= int(28.2*k); x++ {
+	// columns 26.6–27.6 mm: right of any text margin (3 + 29-5.5 = 26.5 mm), left of the border
+	// line at 28 mm; rows below the top ruler and above the bottom border
+	for y := int(4 * k); y < img.Bounds().Dy()-int(1.3*k); y++ {
+		for x := int(26.6 * k); x <= int(27.6*k); x++ {
 			if img.GrayAt(x, y).Y < 128 {
 				t.Fatalf("text reaches the border at (%d,%d)", x, y)
 			}

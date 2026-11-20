@@ -29,6 +29,9 @@ type Options struct {
 	Host          string // network printers: for side channels such as SNMP
 	SNMPCommunity string
 	NoSNMP        bool
+	// zpl: move the print (dots; x > 0 right, y > 0 down) or widen it (0 = the media's width).
+	// Set by `pdb-print try` while it looks for what fixes a cut-off label.
+	OffsetXDots, OffsetYDots, PrintWidthDots int
 }
 
 // Result is what a print did.
@@ -134,6 +137,8 @@ const (
 	CutterJam     Code = "CUTTER_JAM"
 	PaperJam      Code = "PAPER_JAM"
 	Overheat      Code = "OVERHEAT"
+	Paused        Code = "PAUSED"     // the printer is paused (Zebra: press the feed button)
+	RibbonOut     Code = "RIBBON_OUT" // thermal transfer printers
 	CommsError    Code = "COMMS_ERROR"
 	Unsupported   Code = "UNSUPPORTED"
 	RenderError   Code = "RENDER_ERROR"

@@ -4,6 +4,7 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,9 @@ type Report struct {
 	Candidates []discovery.Candidate `json:"candidates"`
 	Queries    []Query               `json:"queries"`
 	Notes      []string              `json:"notes,omitempty"`
+	// Secrets are values found in replies that JSON masks like serial numbers (a Zebra's serial
+	// and printer name).
+	Secrets []string `json:"-"`
 }
 
 // Query is one exchange with a printer. Sent and Reply are escaped text (non-ASCII as \xNN).
@@ -63,11 +67,64 @@ type Options struct {
 	SysDescr  func(ctx context.Context, host string) (string, error) // nil = SNMP
 }
 
-// identify queries per printer language; sent one per connection.
-var identify = []struct{ name, data string }{
-	{"zpl ~HI", "~HI\r\n"},
-	{"zpl ~HS", "~HS\r\n"},
-	{"brother status", string(make([]byte, 100)) + "\x1b@\x1biS"},
+// Identify queries, one per connection: ~HI first; the other ZPL queries only to a printer that
+// answered it (anything else could print them), the Brother status query only to one that didn't.
+var (
+	zplQueries = []struct{ name, data string }{
+		{"zpl ~HS", "~HS\r\n"},
+		{"sgd device.languages", "! U1 getvar \"device.languages\"\r\n"},
+		{"sgd media.printmode", "! U1 getvar \"media.printmode\"\r\n"},
+		{"sgd print.tone", "! U1 getvar \"print.tone\"\r\n"},
+		{"zpl ~HQES", "~HQES\r\n"},
+		{"zpl ~HQSN", "~HQSN\r\n"},
+		{"zpl ^HH", "^XA^HH^XZ\r\n"},
+		{"zpl ^HZA", "^XA^HZA^XZ\r\n"},
+	}
+	brotherQuery = string(make([]byte, 100)) + "\x1b@\x1biS"
+)
+
+// zebraSecrets finds a Zebra's serial number and printer name in a (escaped) reply.
+var zebraSecretRes = []*regexp.Regexp{
+	regexp.MustCompile(`([A-Z0-9]{6,})\s+SERIAL NUMBER`),                                     // ^HH
+	regexp.MustCompile(`SERIAL NUMBER(?:\\r|\\n|\s)+([A-Z0-9]{6,})`),                         // ~HQSN
+	regexp.MustCompile(`<(?:PRINTER-)?NAME>([^<]+)</(?:PRINTER-)?NAME>`),                     // ^HZA: the printer's network name (V61 firmware: <NAME>)
+	regexp.MustCompile(`<(?:SERIAL-NUMBER|HOST-NAME)>([^<]+)</(?:SERIAL-NUMBER|HOST-NAME)>`), // ^HZA, newer firmware
+}
+
+// ZebraQueries records a Zebra's read-only status and setup queries (~HS, ~HQES, ~HQSN, ^HH,
+// ^HZA) and adds the serial number and printer name they reveal to the mask list. Only for a
+// printer that answered ~HI.
+func (r *Report) ZebraQueries(ctx context.Context, c discovery.Candidate, where string) {
+	for _, q := range zplQueries {
+		r.Secrets = append(r.Secrets, zebraSecrets(r.exchange(ctx, c, where, q.name, q.data))...)
+	}
+}
+
+// Mask applies JSON's masking (addresses, MACs, serials, secrets, this computer's name) to text.
+func (r *Report) Mask(text string) string {
+	tmp := &Report{Candidates: r.Candidates, Secrets: r.Secrets, Notes: []string{text}}
+	b, err := tmp.JSON(false)
+	if err != nil {
+		return ""
+	}
+	var out Report
+	if json.Unmarshal(b, &out) != nil || len(out.Notes) != 1 {
+		return ""
+	}
+	return out.Notes[0]
+}
+
+// Escape is how replies are recorded: non-ASCII as \xNN.
+func Escape(b []byte) string { return escape(b) }
+
+func zebraSecrets(reply string) []string {
+	var out []string
+	for _, re := range zebraSecretRes {
+		for _, m := range re.FindAllStringSubmatch(reply, -1) {
+			out = append(out, strings.TrimSpace(m[1]))
+		}
+	}
+	return out
 }
 
 func Run(ctx context.Context, o Options) (*Report, error) {
@@ -139,8 +196,16 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 		}
 		if o.Identify && c.Status != discovery.Supported &&
 			o.Confirm(fmt.Sprintf("Send identify queries to %s %s? A printer that doesn't understand them may print them as a page.", c.Kind, where)) {
-			for _, q := range identify {
-				r.exchange(ctx, c, where, q.name, q.data)
+			if hi := r.exchange(ctx, c, where, "zpl ~HI", "~HI\r\n"); strings.Count(hi, ",") >= 2 {
+				if m, ok := o.DB.ModelByHI(hi); ok && c.Kind == "tcp" {
+					r.Candidates[i].Model, r.Candidates[i].ModelID = m, m.ID
+					if slices.Contains(driver.Families(), m.Driver) {
+						r.Candidates[i].Status = discovery.Supported
+					}
+				}
+				r.ZebraQueries(ctx, c, where)
+			} else {
+				r.exchange(ctx, c, where, "brother status", brotherQuery)
 			}
 		}
 		if o.Print && o.Svc != nil && c.Status == discovery.Supported &&
@@ -177,7 +242,8 @@ func (r *Report) query(target, name, sent string, f func() (string, error)) {
 }
 
 // exchange sends data on a fresh connection (or the USB device) and records the reply.
-func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, name, data string) {
+// exchange returns the reply as recorded (escaped), "" when there was none.
+func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, name, data string) string {
 	r.query(where, name, data, func() (string, error) {
 		var t driver.Transport
 		if c.Kind == "usb" {
@@ -207,6 +273,7 @@ func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, nam
 		}
 		return escape(got), nil
 	})
+	return r.Queries[len(r.Queries)-1].Reply
 }
 
 // connTransport reads with a 1.5 s idle timeout; replies end when the printer stops talking.
@@ -264,6 +331,9 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 		}
 		return tokens[v]
 	}
+	for _, v := range r.Secrets {
+		token(v)
+	}
 	masked := *r
 	masked.Candidates = make([]discovery.Candidate, len(r.Candidates))
 	for i, c := range r.Candidates {
@@ -312,11 +382,16 @@ func (r *Report) JSON(raw bool) ([]byte, error) {
 			c.IEEE1284[k] = text(v)
 		}
 	}
-	b, err := json.MarshalIndent(&masked, "", "  ")
-	if err != nil {
+	// no HTML escaping: "\u003e192.168.1.5" has no word boundary before the address, so the
+	// masks below would miss addresses in XML replies
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(&masked); err != nil {
 		return nil, err
 	}
-	s := string(b)
+	s := strings.TrimSuffix(buf.String(), "\n")
 	if h, _ := os.Hostname(); len(h) > 2 {
 		s = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(h)).ReplaceAllString(s, "this-computer")
 	}

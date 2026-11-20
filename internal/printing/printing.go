@@ -11,6 +11,7 @@ import (
 	"image"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"slices"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
@@ -33,7 +35,10 @@ type Source func(m *driver.Media) ([]byte, error)
 func PDF(pdf []byte) Source { return func(*driver.Media) ([]byte, error) { return pdf, nil } }
 
 // TestCard is a test label sized for whatever media is loaded.
-func TestCard(model, version string) Source {
+func TestCard(model, version string) Source { return TestCardTagged(model, version, "") }
+
+// TestCardTagged is TestCard with a tag ("1/5") printed large, for numbered test runs.
+func TestCardTagged(model, version, tag string) Source {
 	return func(m *driver.Media) ([]byte, error) {
 		length := m.LengthMM
 		if length == 0 {
@@ -43,7 +48,19 @@ func TestCard(model, version string) Source {
 		if m.WidthDots > m.PrintableWidthDots { // tape: card on the print area, edges left clear
 			return pdfgen.TestCardOn(m.WidthMM, float64(m.PrintableWidthDots)/float64(m.DPI)*25.4, length, lines), nil
 		}
-		return pdfgen.TestCard(m.WidthMM, length, lines), nil
+		return pdfgen.TestCardTagged(m.WidthMM, length, lines, tag), nil
+	}
+}
+
+// PartLabel is a generated part label (title, part number, QR code, Code 128) at the media's size.
+func PartLabel(tag string) Source {
+	return func(m *driver.Media) ([]byte, error) {
+		length := m.LengthMM
+		if length == 0 {
+			length = max(m.WidthMM*0.6, 20)
+		}
+		return pdfgen.PartLabel(m.WidthMM, length, "AMS1117-3.3 LDO regulator", "P-000032",
+			"https://partdb.example.org/en/part/32", "P-000032", tag), nil
 	}
 }
 
@@ -228,7 +245,8 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP}
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP,
+		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 
 // lazyTransport opens the connection on first use, so a driver that gets its answer elsewhere
@@ -264,7 +282,10 @@ func (l *lazyTransport) Read(p []byte) (int, error) {
 	return l.t.Read(p)
 }
 
+// Close ends the connection; the next Open, Write or Read connects again (the zpl driver uses a
+// connection per query).
 func (l *lazyTransport) Close() error {
+	defer func() { l.opened, l.err = false, nil }()
 	if l.opened && l.err == nil {
 		return l.t.Close()
 	}
@@ -353,7 +374,11 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		st, err = drv.Status(ctx, t)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
-			return nil, &driver.Error{Code: driver.CommsError, Detail: "printer sent no status reply"}
+			detail := "printer sent no status reply"
+			if err != driver.ErrNoReadback { // the driver says more (Zebra: what silence usually means)
+				detail = err.Error()
+			}
+			return nil, &driver.Error{Code: driver.CommsError, Detail: detail}
 		case errors.Is(err, driver.ErrNoReadback):
 			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
 			st = nil
@@ -371,6 +396,13 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 			}
 			switch {
 			case st.Media == nil:
+			case st.Media.ID == "unknown" && media.Kind == driver.DieCut && st.Media.PrintableLengthDots > 0:
+				// a printer that measures its labels but can't name them (Zebra): when it measured up to a
+				// millimetre less than configured, print at that length so no row lands on the gap; the
+				// measurement includes the gap, so a longer one never stretches the label
+				if d := st.Media.PrintableLengthDots - media.PrintableLengthDots; ok && d <= 0 && float64(-d) <= math.Round(float64(media.DPI)/25.4) {
+					media.PrintableLengthDots, media.LengthMM = st.Media.PrintableLengthDots, st.Media.LengthMM
+				}
 			case st.Media.ID == "unknown":
 				s.Log.Warn("printer reports media this agent doesn't know; using the configured media", "loaded", MediaName(st.Media))
 			case p.Media != "" && st.Media.ID != p.Media:

@@ -65,41 +65,60 @@ func Text(s string) string {
 // TestCard is a printer test label of wMM×hMM: border, 1 mm rulers on the
 // top and left edges, an arrow with "TOP", a 0.5 mm checkerboard and the given text lines.
 func TestCard(wMM, hMM float64, lines []string) []byte {
-	return Page(wMM, hMM, testCard(wMM, hMM, lines))
+	return Page(wMM, hMM, testCard(wMM, hMM, lines, ""))
+}
+
+// TestCardsTagged is one tagged test card per tag, as pages of one PDF (a batch).
+func TestCardsTagged(wMM, hMM float64, lines []string, tags ...string) []byte {
+	var pages []string
+	for _, tag := range tags {
+		pages = append(pages, testCard(wMM, hMM, lines, tag))
+	}
+	return Pages(wMM, hMM, pages...)
+}
+
+// TestCardTagged is TestCard with a tag ("1/5") printed large next to TOP, so a tester can say
+// which label is which.
+func TestCardTagged(wMM, hMM float64, lines []string, tag string) []byte {
+	return Page(wMM, hMM, testCard(wMM, hMM, lines, tag))
 }
 
 // TestCardOn is a cardMM-wide test card centred on a wider pageMM×hMM page
 // (tape: the card covers the print area, the unprintable edges stay blank).
 func TestCardOn(pageMM, cardMM, hMM float64, lines []string) []byte {
-	return Page(pageMM, hMM, fmt.Sprintf("q 1 0 0 1 %.3f 0 cm\n%sQ\n", (pageMM-cardMM)/2, testCard(cardMM, hMM, lines)))
+	return Page(pageMM, hMM, fmt.Sprintf("q 1 0 0 1 %.3f 0 cm\n%sQ\n", (pageMM-cardMM)/2, testCard(cardMM, hMM, lines, "")))
 }
 
-func testCard(wMM, hMM float64, lines []string) string {
+func testCard(wMM, hMM float64, lines []string, tag string) string {
 	var c strings.Builder
-	fmt.Fprintf(&c, "0 g 0.3 w 0.5 0.5 %.2f %.2f re S\n0.15 w\n", wMM-1, hMM-1)
+	// the border sits 1 mm in: a 4" roll is 101.6 mm, and feeds vary by about a millimetre
+	fmt.Fprintf(&c, "0 g 0.3 w 1.00 1.00 %.2f %.2f re S\n0.15 w\n", wMM-2, hMM-2)
 	for x := 1.0; x < wMM-0.5; x++ { // top ruler, longer tick every 5 mm
 		l := 1.0
 		if int(x)%5 == 0 {
 			l = 2
 		}
-		fmt.Fprintf(&c, "%.2f %.2f m %.2f %.2f l S\n", x, hMM-0.5, x, hMM-0.5-l)
+		fmt.Fprintf(&c, "%.2f %.2f m %.2f %.2f l S\n", x, hMM-1, x, hMM-1-l)
 	}
 	for y := 1.0; y < hMM-0.5; y++ { // left ruler
 		l := 1.0
 		if int(y)%5 == 0 {
 			l = 2
 		}
-		fmt.Fprintf(&c, "0.5 %.2f m %.2f %.2f l S\n", y, 0.5+l, y)
+		fmt.Fprintf(&c, "1 %.2f m %.2f %.2f l S\n", y, 1+l, y)
 	}
 	size := min(max(wMM/10, 1.2), 3.2)
 	y := hMM - 3 - size
 	// "▲ TOP" (drawn arrow: the font is ASCII only) so an upside-down print is obvious
 	fmt.Fprintf(&c, "3 %.2f m %.2f %.2f l %.2f %.2f l h f\n", y, 3+size*0.8, y, 3+size*0.4, y+size*0.75)
 	fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (TOP) Tj ET\n", size, 3+size, y)
+	if tag != "" {
+		fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (%s) Tj ET\n", size*1.6, 3+size*5, y-size*0.3, Text(tag))
+	}
 	y -= size * 1.3
 	for _, s := range lines {
 		// shrink long lines to fit the width; rounded down because Tf is written with 2 decimals
-		fs := math.Floor(min(size, (wMM-4.5)/max(textWidthEm(s), 0.001))*100) / 100
+		fs := math.Floor(min(size, (wMM-5.5)/max(textWidthEm(s), 0.001))*100) / 100
 		fmt.Fprintf(&c, "BT /F1 %.2f Tf 3 %.2f Td (%s) Tj ET\n", fs, y, Text(s))
 		y -= size * 1.3
 	}
