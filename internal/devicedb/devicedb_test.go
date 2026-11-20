@@ -272,3 +272,71 @@ func TestEscposModels(t *testing.T) {
 		}
 	}
 }
+
+// Models added untested from public references (2026-11-20) resolve as their sources say.
+func TestAddedModels(t *testing.T) {
+	db := devicedb.Default()
+	for hi, want := range map[string]string{
+		"ZT410-300dpi,V75.20.01Z,12,8192KB": "ZT410-300", "ZT230-200dpi,V72.20.01Z,8,8192KB": "ZT230-203",
+		"ZT620-203dpi,V92.21.39Z,8,8192KB": "ZT620-203", "ZQ620 Plus,V85.20.20Z,8,8192KB": "ZQ620", "ZQ521,V87.1,8,1KB": "ZQ521",
+	} {
+		if m, ok := db.ModelByHI(hi); !ok || m.ID != want {
+			t.Errorf("%q: %v %v, want %s", hi, m, ok, want)
+		}
+	}
+	for code, want := range map[int]string{0x35: "QL-700", 0x43: "QL-1100", 0x50: "QL-1050", 0x68: "PT-P750W", 0x71: "PT-P900"} {
+		if m, ok := db.ModelByStatusCode("brother", code); !ok || m.ID != want {
+			t.Errorf("status code 0x%02x: %v, want %s", code, m, want)
+		}
+	}
+	media := func(model, id string) devicedb.Media {
+		m, _ := db.Model(model)
+		for _, md := range db.MediaFor(m) {
+			if md.ID == id {
+				return md
+			}
+		}
+		t.Fatalf("%s takes no %s", model, id)
+		return devicedb.Media{}
+	}
+	for _, tc := range []struct {
+		model, media           string
+		dpi, width, print, off int
+	}{
+		{"QL-810W", "dk-22210", 300, 0, 306, 6}, // unchanged on the 720-pin head
+		{"QL-1100", "dk-22210", 300, 0, 306, 50},
+		{"QL-1100", "dk-22205", 300, 0, 696, 56},
+		{"QL-1110NWB", "dk-22246", 300, 0, 1200, 38},
+		{"PT-9500PC", "tze-12", 360, 170, 150, 117}, // unchanged
+		{"PT-P750W", "tze-12", 180, 84, 70, 29},
+		{"PT-P900", "tze-36", 360, 512, 454, 61},
+	} {
+		if md := media(tc.model, tc.media); md.DPI != tc.dpi || md.WidthDots != tc.width || md.PrintableWidthDots != tc.print || md.OffsetPins != tc.off {
+			t.Errorf("%s on %s: %+v", tc.media, tc.model, md)
+		}
+	}
+	if m, _ := db.Model("QL-1115NWB"); slices.Contains(m.Media, "dk-22246") {
+		t.Error("QL-1115NWB takes no 103 mm roll")
+	}
+	if m, _ := db.Model("ZT620-300"); m.HeadPins != 2016 || slices.Contains(m.Transports, "bt") {
+		t.Errorf("ZT620-300: %+v", m)
+	}
+	if m, _ := db.Model("ZQ610"); m.HeadPins != 384 || !slices.Contains(m.Transports, "bt") {
+		t.Errorf("ZQ610: %+v", m)
+	}
+}
+
+func TestLintGeometry(t *testing.T) {
+	media := "media:\n  - {id: tape-a, name: a, kind: continuous, width_mm: 6, printable_width_dots: 64, dpi: 360}\n"
+	for name, geo := range map[string]string{
+		"unknown media": "geometry:\n  - {media: tape-x, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
+		"twice":         "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
+		"no dpi":        "geometry:\n  - {media: tape-a, head_pins: 128, printable_width_dots: 32}\n",
+		"too wide":      "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 120, offset_pins: 20}\nmodels:\n  - {id: P, driver: brother, dialect: pt-raster, head_pins: 128, media: [tape-a]}\n",
+	} {
+		fsys := fstest.MapFS{"data/m.yaml": {Data: []byte(media)}, "data/g.yaml": {Data: []byte(geo)}}
+		if _, err := devicedb.Load(fsys); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
