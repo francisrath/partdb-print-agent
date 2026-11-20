@@ -19,5 +19,6 @@ window stays open and you can see where the file was saved.
 
 The program never saves anything on the printer. While it runs it changes a few page settings
 (print width, label length, position, mirror, upside-down) that only last until the printer is
-switched off; at the end it puts back the ones the printer reported and tells you which. To be sure
-everything is as before, switch the printer off and on once afterwards. It doesn't install anything.
+switched off; at the end it puts back the ones the printer reported and tells you which. Switching
+the printer off and on loads the settings saved on it, so if you changed something on the printer
+without saving it, note it down before the test. It doesn't install anything.

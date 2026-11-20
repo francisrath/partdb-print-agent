@@ -14,16 +14,15 @@ import (
 // and a Code 128 drawn as vector rectangles (so a printer gets them through the raster path at its
 // own resolution), and tag ("2/5") so a tester can say which label is which.
 func PartLabel(wMM, hMM float64, title, partNo, qrText, barcode, tag string) []byte {
-	const m = 2.5 // margin
 	var c strings.Builder
-	size := math.Max(1.6, math.Min(hMM/12, 6))
-	y := hMM - m - size
+	size, barH, space := partLabelLayout(hMM)
+	y := hMM - partLabelMargin - size
+	const m = partLabelMargin
 	for _, s := range []string{title, partNo} {
 		fs := math.Floor(math.Min(size, (wMM-2*m)/math.Max(textWidthEm(s), 0.001))*100) / 100
 		fmt.Fprintf(&c, "BT /F1 %.2f Tf %.2f %.2f Td (%s) Tj ET\n", fs, m, y, Text(s))
 		y -= size * 1.25
 	}
-	barH := math.Max(4, math.Min(hMM*0.15, 14))
 	// Code 128 across the bottom, 10 modules of quiet zone each side
 	c.WriteString("% code128\n0 g\n")
 	if bc, err := code128.Encode(barcode); err == nil {
@@ -34,8 +33,7 @@ func PartLabel(wMM, hMM float64, title, partNo, qrText, barcode, tag string) []b
 	c.WriteString("% end\n")
 	// QR code in the space between, 4 modules of quiet zone
 	c.WriteString("% qr\n0 g\n")
-	space := y + size*0.3 - (m + barH + 1)
-	if code, err := qr.Encode(qrText, qr.M, qr.Auto); err == nil && space > 5 {
+	if code, err := qr.Encode(qrText, qr.M, qr.Auto); err == nil && space > minQR {
 		n := code.Bounds().Dx()
 		side := math.Min(space, (wMM-2*m)*0.6)
 		mod := math.Floor(side/float64(n+8)*100) / 100
@@ -50,6 +48,25 @@ func PartLabel(wMM, hMM float64, title, partNo, qrText, barcode, tag string) []b
 	}
 	c.WriteString("% end\n")
 	return Page(wMM, hMM, c.String())
+}
+
+const (
+	partLabelMargin = 2.5
+	minQR           = 5.0 // mm: smaller QR space and no QR code is drawn
+)
+
+// partLabelLayout is a part label's text size, barcode height and the height left for the QR code.
+func partLabelLayout(hMM float64) (size, barH, space float64) {
+	size = math.Max(1.6, math.Min(hMM/12, 6))
+	y := hMM - partLabelMargin - size - 2*size*1.25 // below the title and part number lines
+	barH = math.Max(4, math.Min(hMM*0.15, 14))
+	return size, barH, y + size*0.3 - (partLabelMargin + barH + 1)
+}
+
+// PartLabelHasQR reports whether a part label of hMM length has room for its QR code.
+func PartLabelHasQR(hMM float64) bool {
+	_, _, space := partLabelLayout(hMM)
+	return space > minQR
 }
 
 // drawRuns draws the dark modules of img as rectangles, one per horizontal run, with the image's

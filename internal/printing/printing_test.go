@@ -532,3 +532,18 @@ func TestPrintZebraUsesMeasuredLength(t *testing.T) {
 		t.Errorf("format %.60q, want ^LL812", f)
 	}
 }
+
+// A measurement exactly 1 mm (8 dots on a GK420d) shorter than the label still shortens the job:
+// the tolerance is whole dots per mm, as in the driver's own check.
+func TestPrintZebraShortensByOneMM(t *testing.T) {
+	fake := &zpltest.Fake{Hold: time.Second, LabelDots: 792}
+	host, port, _ := net.SplitHostPort(fake.Start(t))
+	n, _ := strconv.Atoi(port)
+	p := &config.Printer{ID: "zebra", Model: "GK420d", Media: "label-100x100", Transport: config.Transport{Kind: "tcp", Host: host, Port: n}}
+	if _, err := service(t, nil).Print(context.Background(), p, "", TestCard("GK420d", "test")); err != nil {
+		t.Fatal(err)
+	}
+	if f := fake.Formats(); len(f) != 1 || !strings.Contains(f[0], "^LL792") {
+		t.Errorf("format %.60q, want ^LL792", f)
+	}
+}

@@ -344,11 +344,12 @@ func (s *session) pickMedia() bool {
 	if pw, ll := float64(s.setup["pw"]), float64(s.setup["ll"]); pw > 0 && ll > 0 {
 		d := math.Inf(1)
 		for i, m := range media {
-			// the label length is measured (calibration) and includes the gap, the print width is only a
-			// setting: the longest label at least 1 mm shorter than the measured length wins
+			// the measured label length includes the gap (a 100 mm roll measures 101.5 mm), the print
+			// width is only a setting: a size the printer accepts (measured −1…+4 mm, as the driver checks)
+			// comes first, then the one nearest a 1.5 mm gap
 			gap := ll/s.dpm() - m.LengthMM
-			v := 10*gap + math.Abs(m.WidthMM-pw/s.dpm())
-			if gap < 1 {
+			v := 10*math.Abs(gap-1.5) + math.Abs(m.WidthMM-pw/s.dpm())
+			if gap < -1 || gap > 4 {
 				v += 10000
 			}
 			if v < d {
@@ -451,9 +452,14 @@ func (s *session) questions() {
 	s.ask("Is the print dark enough to read easily?", true)
 	s.ask("Is the checkerboard even (no white lines across it)?", true)
 
-	s.say("\n— Label 2/5: part label with QR code and barcode —\n")
-	s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
-	s.ask("Point your phone's camera at the QR code. Does it show a link (partdb.example.org)? You don't need to open it.", true)
+	if m, _ := printing.LookupMedia(s.printer, s.printer.Media); pdfgen.PartLabelHasQR(m.LengthMM) {
+		s.say("\n— Label 2/5: part label with QR code and barcode —\n")
+		s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
+		s.ask("Point your phone's camera at the QR code. Does it show a link (partdb.example.org)? You don't need to open it.", true)
+	} else {
+		s.say("\n— Label 2/5: part label (too short for a QR code, so only the barcode) —\n")
+		s.ask("Is the barcode sharp, with clean edges?", true)
+	}
 	s.choose("If you have a barcode scanner: does it read the barcode? y = yes, n = no, Enter = no scanner:", "y", "n")
 
 	s.say("\n— Labels 3a/5 and 3b/5: two labels in one job —\n")

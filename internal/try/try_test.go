@@ -85,6 +85,34 @@ func (d *dialog) finish() string {
 	return string(b)
 }
 
+// A measured length just over the label (804 dots: 100 mm + 0.5 mm gap) still suggests the size
+// the printer accepts, not a shorter label further off.
+func TestTrySuggestsAcceptedLength(t *testing.T) {
+	fake := &zpltest.Fake{LabelDots: 804}
+	d := start(t, fake.Start(t))
+	d.answer("Ask this printer what it is?", "y")
+	d.answer("Number, or Enter for 2 (100×100 mm", "")
+	d.answer("Print the test labels now?", "n")
+	d.finish()
+}
+
+// A label too short for a QR code doesn't ask about one.
+func TestTryNoQRQuestionsOnShortLabels(t *testing.T) {
+	fake := &zpltest.Fake{Hold: 300 * time.Millisecond, LabelDots: 116} // 13 mm + gap
+	d := start(t, fake.Start(t))
+	d.answer("Ask this printer what it is?", "y")
+	d.answer("Number, or Enter for", "16") // 25×13 mm
+	d.answer("Print the test labels now?", "y")
+	for _, q := range []string{"Did the labels come out", "whole frame", "TOP at the top edge", "mirrored", "dark enough", "checkerboard", "Is the barcode sharp", "barcode scanner"} {
+		d.answer(q, "")
+	}
+	d.answer("each on its own label", "")
+	d.finish()
+	if out := d.output(); strings.Contains(out, "phone") || strings.Contains(out, "QR code and the barcode") {
+		t.Errorf("asked about a QR code that wasn't printed:\n%s", out[strings.Index(out, "Label 2/5"):])
+	}
+}
+
 func start(t *testing.T, addr string) *dialog {
 	host, port, _ := net.SplitHostPort(addr)
 	p, _ := strconv.Atoi(port)

@@ -166,7 +166,8 @@ func (f *Fake) handle(c net.Conn, buf string) string {
 func (f *Fake) format(c net.Conn, fm string) {
 	switch {
 	case strings.Contains(fm, "^HH"):
-		f.reply(c, "\x02"+f.withWidth(realHH, "%d                 PRINT WIDTH")+"\x03\r\n")
+		hh := f.withWidth(realHH, "%d                 PRINT WIDTH")
+		f.reply(c, "\x02"+strings.Replace(hh, "0812                LABEL LENGTH", fmt.Sprintf("%04d                LABEL LENGTH", f.labelDots()), 1)+"\x03\r\n")
 	case strings.Contains(fm, "^HZA"):
 		f.reply(c, f.withWidth(realHZA, "<CURRENT>%d</CURRENT>"))
 	case strings.Contains(fm, "^GF"):
@@ -206,6 +207,12 @@ func (f *Fake) hi() string {
 		model = "GK420d-200dpi"
 	}
 	return fmt.Sprintf("\x02%s,V61.17.11Z,%d,2104KB\x03\r\n", model, or(f.DPM, 8))
+}
+
+func (f *Fake) labelDots() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return or(f.LabelDots, 812)
 }
 
 // withWidth puts the fake's print width into a real reply (the first match of the 799 pattern).
