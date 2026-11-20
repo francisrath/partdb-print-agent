@@ -79,3 +79,11 @@ func Read(r io.Reader) (byte, []byte, error) {
 	}
 	return h[0], p, nil
 }
+
+// ClassicDevice is one line of the helper's scan-classic output: a Bluetooth Classic device macOS
+// knows (paired) or found in an inquiry.
+type ClassicDevice struct {
+	Address string `json:"address"` // AA:BB:CC:DD:EE:FF
+	Name    string `json:"name"`
+	Class   uint32 `json:"class"` // class of device
+}

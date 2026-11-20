@@ -561,7 +561,7 @@ func TestBridgeRFCOMMErrors(t *testing.T) {
 func TestScanClassic(t *testing.T) {
 	useFake(t, "scan-classic")
 	devs, err := ScanClassic(context.Background(), 8*time.Second)
-	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:FF", Name: "RG-MLP80B", Class: 1664}, {Address: "11:22:33:44:55:66"}}
+	want := []blebridge.ClassicDevice{{Address: "AA:BB:CC:DD:EE:FF", Name: "RG-MLP80B", Class: 1664}, {Address: "11:22:33:44:55:66"}}
 	if err != nil || !slices.Equal(devs, want) {
 		t.Errorf("ScanClassic: %+v %v, want %+v", devs, err, want)
 	}

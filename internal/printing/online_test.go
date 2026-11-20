@@ -286,7 +286,7 @@ func TestOnlineBluetooth(t *testing.T) {
 			}
 			online(false, "after a job lost the printer")
 
-			s.SeenBLE(p)
+			s.SeenBluetooth(p)
 			online(true, "found in a scan")
 		})
 	}
@@ -295,7 +295,7 @@ func TestOnlineBluetooth(t *testing.T) {
 // A sighting recorded while a check runs beats the check's older "offline".
 func TestOnlineBLESightingDuringCheck(t *testing.T) {
 	s, p := catService(t, &fakeCat{})
-	s.beforePublish = func() { s.beforePublish = nil; s.SeenBLE(p) }
+	s.beforePublish = func() { s.beforePublish = nil; s.SeenBluetooth(p) }
 	if !s.Online(p) {
 		t.Error("check reported offline over a newer sighting")
 	}
@@ -307,7 +307,7 @@ func TestOnlineBLESightingDuringCheck(t *testing.T) {
 // A job that fails on its document (or rendering) still reached the printer: the sighting stays.
 func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
 	s, p := catService(t, &fakeCat{})
-	s.SeenBLE(p)
+	s.SeenBluetooth(p)
 	noDoc := func(*driver.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
 	if _, err := s.Print(context.Background(), p, "", noDoc); err == nil {
 		t.Fatal("job didn't fail")

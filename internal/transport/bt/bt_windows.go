@@ -33,16 +33,6 @@ var sppUUID = windows.GUID{Data1: 0x00001101, Data2: 0x0000, Data3: 0x1000,
 // Winsock initialises itself: package os (internal/poll) calls WSAStartup in every Go program.
 
 func dial(ctx context.Context, address, name string, channel int) (conn, error) {
-	h, err := windows.Socket(windows.AF_BTH, windows.SOCK_STREAM, windows.BTHPROTO_RFCOMM)
-	if err != nil {
-		return nil, mapErr(label(address, name), err, winErrnos)
-	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = windows.Closesocket(h)
-		}
-	}()
 	if address == "" {
 		devs, err := pairedDevices()
 		if err != nil {
@@ -56,13 +46,23 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	if err != nil {
 		return nil, err
 	}
+	h, err := windows.Socket(windows.AF_BTH, windows.SOCK_STREAM, windows.BTHPROTO_RFCOMM)
+	if err != nil {
+		return nil, mapErr(label(address, name), err, winErrnos)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = windows.Closesocket(h)
+		}
+	}()
 	sa := &windows.SockaddrBth{BtAddr: bthAddr(a), Port: uint32(channel)}
 	if channel == 0 {
 		sa.ServiceClassId = sppUUID // Windows looks the channel up via SDP
 	}
 
-	// A blocking connect; closing the socket ends it early (timeout, ctx). Either way the goroutine has
-	// returned before dial does.
+	// A blocking connect; closing the socket ends it early (timeout, ctx). dial waits a bounded time for
+	// the goroutine, which only owns the closed handle.
 	done := make(chan error, 1)
 	go func() { done <- windows.Connect(h, sa) }()
 	timer := time.NewTimer(connectTimeout)
@@ -72,12 +72,12 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	case <-timer.C:
 		_ = windows.Closesocket(h)
 		closed = true
-		<-done
+		waitDone(done)
 		err = os.ErrDeadlineExceeded
 	case <-ctx.Done():
 		_ = windows.Closesocket(h)
 		closed = true
-		<-done
+		waitDone(done)
 		return nil, ctx.Err()
 	}
 	if err != nil {
@@ -85,6 +85,13 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	}
 	closed = true // handed over to the socket
 	return &socket{h: h}, nil
+}
+
+func waitDone(done <-chan error) {
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 // pairedDevices lists the devices Windows remembers (paired or remembered), without an inquiry.
@@ -148,13 +155,17 @@ func lookupDevices(inquiry int) ([]Device, error) {
 	}
 }
 
-// inquiry is held while an inquiry runs: it can outlive the Scan that started it.
+// inquiry guards the process-wide OS inquiry (a documented exception to "no global state"); it is
+// held while an inquiry runs and can outlive the Scan that started it.
 var inquiry sync.Mutex
 
 // Scan runs an inquiry of about timeout (whole seconds, 1–48) and lists the devices it found and those
 // Windows remembers. The inquiry can't be cancelled: on ctx's end Scan returns and it finishes alone; a
 // Scan meanwhile fails at once rather than queue a second inquiry.
 func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !inquiry.TryLock() {
 		return nil, errors.New("bt: a Bluetooth search is already running")
 	}

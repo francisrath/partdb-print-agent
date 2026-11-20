@@ -120,17 +120,10 @@ func onRunLoop(f func() error) error {
 
 var errBluetoothOff = fmt.Errorf("%w: Bluetooth is off", blecore.ErrNoBluetooth)
 
-// classicDevice is one line of scan-classic's output (ble.ClassicDevice in pdb-print).
-type classicDevice struct {
-	Address string `json:"address"`
-	Name    string `json:"name"`
-	Class   uint32 `json:"class"`
-}
-
 // devices decodes and frees a device list from btPaired or btInquiryStop.
-func devices(s *C.char) []classicDevice {
+func devices(s *C.char) []blebridge.ClassicDevice {
 	defer C.free(unsafe.Pointer(s))
-	var devs []classicDevice
+	var devs []blebridge.ClassicDevice
 	if err := json.Unmarshal([]byte(C.GoString(s)), &devs); err != nil {
 		log.Printf("device list: %v", err)
 	}
@@ -258,7 +251,7 @@ func scanClassicCmd(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	var devs []classicDevice
+	var devs []blebridge.ClassicDevice
 	if err := onRunLoop(func() (err error) {
 		devs, err = scanClassic(ctx, *timeout)
 		return err
@@ -276,7 +269,7 @@ func scanClassicCmd(args []string) error {
 
 // scanClassic lists the paired devices, then those an inquiry finds (once per address). Interrupted, it
 // returns what it has.
-func scanClassic(ctx context.Context, timeout time.Duration) ([]classicDevice, error) {
+func scanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.ClassicDevice, error) {
 	if C.btPowered() == 0 {
 		return nil, errBluetoothOff
 	}
@@ -291,7 +284,7 @@ func scanClassic(ctx context.Context, timeout time.Duration) ([]classicDevice, e
 	case <-time.After(timeout):
 	}
 	seen := map[string]bool{}
-	var all []classicDevice
+	var all []blebridge.ClassicDevice
 	for _, d := range append(devs, devices(C.btInquiryStop())...) {
 		if !seen[d.Address] {
 			seen[d.Address] = true

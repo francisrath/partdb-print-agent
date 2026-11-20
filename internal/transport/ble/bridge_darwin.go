@@ -114,17 +114,10 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	return scanLines[blecore.Advert](ctx, "ble", "scan", timeout)
 }
 
-// ClassicDevice is a Bluetooth Classic device macOS knows (paired) or found in an inquiry.
-type ClassicDevice struct {
-	Address string `json:"address"` // AA:BB:CC:DD:EE:FF
-	Name    string `json:"name"`
-	Class   uint32 `json:"class"` // class of device
-}
-
 // ScanClassic lists the paired Bluetooth Classic devices and those an inquiry finds within timeout, through
 // the helper's scan-classic mode; errors as for Scan.
-func ScanClassic(ctx context.Context, timeout time.Duration) ([]ClassicDevice, error) {
-	return scanLines[ClassicDevice](ctx, "bt", "scan-classic", timeout)
+func ScanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.ClassicDevice, error) {
+	return scanLines[blebridge.ClassicDevice](ctx, "bt", "scan-classic", timeout)
 }
 
 // scanLines runs a scan mode of the helper and decodes its JSON lines; errors start with kind.
@@ -378,7 +371,11 @@ func (t *Transport) Read(p []byte) (int, error) {
 				return 0, t.deadErr()
 			}
 		case <-timer.C:
-			return 0, fmt.Errorf("%s: no notification within %v: %w", t.Kind(), readTimeout, os.ErrDeadlineExceeded)
+			what := "notification"
+			if t.Kind() == "bt" {
+				what = "answer"
+			}
+			return 0, fmt.Errorf("%s: no %s within %v: %w", t.Kind(), what, readTimeout, os.ErrDeadlineExceeded)
 		}
 	}
 }

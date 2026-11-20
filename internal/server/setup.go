@@ -199,7 +199,7 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 			scanErr = err.Error()
 		}
 		bleNote = note
-		s.seenBLE(cs)
+		s.seenBluetooth(cs)
 		d.Candidates, d.Scanned = sortCandidates(cs), true
 	}
 	type row struct {
@@ -253,15 +253,15 @@ func (s *Server) existing(c discovery.Candidate) string {
 	return ""
 }
 
-// seenBLE tells the print service which configured Bluetooth printers a scan found: they count as
-// online for a while (see printing.Service.SeenBLE).
-func (s *Server) seenBLE(cs []discovery.Candidate) {
+// seenBluetooth tells the print service which configured Bluetooth printers a scan found: they count as
+// online for a while (see printing.Service.SeenBluetooth).
+func (s *Server) seenBluetooth(cs []discovery.Candidate) {
 	ps := s.config().Printers
 	for _, c := range cs {
 		for i := range ps {
 			// a classic scan also lists paired printers that are off: only an LE advert means it's there
 			if c.Kind == "ble" && btSame(ps[i].Transport, c) {
-				s.Svc.SeenBLE(&ps[i])
+				s.Svc.SeenBluetooth(&ps[i])
 			}
 		}
 	}

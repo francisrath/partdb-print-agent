@@ -364,7 +364,7 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Sta
 	}
 	defer t.Close()
 	st, err = drv.Status(ctx, t)
-	s.noteBLE(p, err)
+	s.noteBluetooth(p, err)
 	switch {
 	case err == nil:
 		s.observe(p, m, st)
@@ -404,14 +404,14 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	var t *lazyTransport
 	var st *driver.Status
 	if dryRun == "" {
-		// noteBLE only hears how talking to the printer went: a bad document says nothing about its reach
+		// noteBluetooth only hears how talking to the printer went: a bad document says nothing about its reach
 		if t, err = s.connect(ctx, p, model); err != nil {
-			s.noteBLE(p, err)
+			s.noteBluetooth(p, err)
 			return nil, err
 		}
 		defer t.Close()
 		st, err = drv.Status(ctx, t)
-		s.noteBLE(p, err)
+		s.noteBluetooth(p, err)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
 			detail := "printer sent no status reply"
@@ -431,7 +431,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		if err := t.open(); err != nil {
 			s.forgetMedia(p.ID)
 			err = &driver.Error{Code: driver.CommsError, Detail: err.Error()}
-			s.noteBLE(p, err)
+			s.noteBluetooth(p, err)
 			return nil, err
 		}
 		s.observe(p, model, st)
@@ -483,7 +483,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	job.PrevUnconfirmed = s.unconfirmed[p.ID]
 	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
-	s.noteBLE(p, err)
+	s.noteBluetooth(p, err)
 	s.mu.Lock()
 	if s.unconfirmed == nil {
 		s.unconfirmed = map[string]bool{}
