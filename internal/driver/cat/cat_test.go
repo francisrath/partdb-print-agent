@@ -25,7 +25,8 @@ type fake struct {
 	readErr  error  // returned by Read once the replies are used up
 	perRead  int    // most bytes one Read returns (0 = any)
 	onJob    []byte // notifications the job write brings (flow control during the write)
-	// late arrives unsolicited lateDelay after status request number lateAfter (1-based) was written.
+	// late arrives unsolicited lateDelay after status request number lateAfter (1-based) was written
+	// (lateAfter -1: at lateAt, set by the test).
 	late       []byte
 	lateAfter  int
 	lateDelay  time.Duration
@@ -48,7 +49,7 @@ func (f *fake) Write(p []byte) (int, error) {
 	}
 	f.written.Write(p)
 	if !bytes.Equal(p, statusRequest) {
-		f.lateBefore = f.late == nil && f.lateAfter > 0
+		f.lateBefore = f.late == nil && f.lateAfter != 0
 		f.in = append(f.in, f.onJob...)
 	}
 	if bytes.Equal(p, statusRequest) {
@@ -352,5 +353,21 @@ func TestDarknessSpeed(t *testing.T) {
 		if !bytes.Contains(b.Bytes(), frame(0xBD, speed)) {
 			t.Errorf("darkness %q: no speed %#x", darkness, speed)
 		}
+	}
+}
+
+func TestPrintAfterUnconfirmedJob(t *testing.T) {
+	fastTimings(t)
+	drainWait = time.Second
+	d, m := mx10(t, "")
+	// the printer says idle, but the last job wasn't confirmed: its AE 00 may still come and must not
+	// confirm this one
+	j := job(m, 1)
+	j.PrevUnconfirmed = true
+	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x00)}, late: emptied, lateAfter: -1}
+	f.lateAt = time.Now().Add(100 * time.Millisecond)
+	res, err := d.Print(context.Background(), f, j)
+	if err != nil || res.Confirmed || !f.lateBefore {
+		t.Errorf("late AE 00 of an unconfirmed job: %+v, %v, arrived before our write: %v", res, err, f.lateBefore)
 	}
 }

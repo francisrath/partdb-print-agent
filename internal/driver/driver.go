@@ -123,6 +123,9 @@ type Job struct {
 	Media  *Media
 	Cut    string  // "" = the model's default
 	Status *Status // the status read before printing; nil if the printer gave none
+	// PrevUnconfirmed: the last job this process sent to the printer wasn't confirmed, so its end
+	// may still be reported (cat printers wait for it before sending).
+	PrevUnconfirmed bool
 }
 
 // Code is a normalised status code (architecture §9).

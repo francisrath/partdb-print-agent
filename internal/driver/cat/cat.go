@@ -187,7 +187,8 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r := &reader{t: t, busy: !job.Status.Idle}
+	// A previous job still running, or one we stopped waiting for, may yet send its AE 00.
+	r := &reader{t: t, busy: !job.Status.Idle || job.PrevUnconfirmed}
 	if !job.Status.Idle {
 		st, err := c.poll(ctx, r, time.Now().Add(idleWait), func(st *driver.Status) bool { return st.Idle })
 		if err != nil {
@@ -202,6 +203,8 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		if st == nil {
 			return nil, &driver.Error{Code: driver.Busy, Detail: "still busy with a previous job"}
 		}
+	}
+	if r.busy {
 		if err := r.drain(drainWait); err != nil {
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}

@@ -80,10 +80,11 @@ type Service struct {
 	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
 	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r, printers and online
-	online   map[string]onlineState
-	probes   map[string]*sync.Mutex // one online check per printer at a time
-	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
+	mu          sync.Mutex // guards r, printers, online and unconfirmed
+	online      map[string]onlineState
+	probes      map[string]*sync.Mutex // one online check per printer at a time
+	printing    map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
+	unconfirmed map[string]bool        // printers whose last job was sent but not confirmed (see driver.Job.PrevUnconfirmed)
 
 	beforePublish   func()                               // tests: between an online check returning and its result being stored
 	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
@@ -448,7 +449,16 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		res := &Result{Pages: len(pages), Media: media.ID, Bytes: b.Len(), Warnings: warnings}
 		return res, os.WriteFile(dryRun, b.Bytes(), 0o644)
 	}
+	s.mu.Lock()
+	job.PrevUnconfirmed = s.unconfirmed[p.ID]
+	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
+	s.mu.Lock()
+	if s.unconfirmed == nil {
+		s.unconfirmed = map[string]bool{}
+	}
+	s.unconfirmed[p.ID] = res != nil && !res.Confirmed
+	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
