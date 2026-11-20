@@ -124,9 +124,19 @@ If Part-DB has a Mercure hub set up, jobs arrive within a second; otherwise they
 With an older Part-DB this stays off.
 
 Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll, errors
-(cover open, wrong media, empty) and, after sending, whether the label actually printed. A job is
-refused with `MEDIA_MISMATCH` if the roll differs from the configured `media`, or if the Part-DB
-label size doesn't fit the roll (`allow_scaling: true` prints it scaled instead).
+(cover open, wrong media, empty) and, after sending, whether the label actually printed.
+
+**The loaded roll decides the media.** Swap a 29 mm roll for 12 mm and the next 12 mm label prints, with
+no config change or restart. Each job's label size is checked against the roll: continuous tape needs one
+side of the label to match the tape width (±0.6 mm, any length), die-cut labels both sides (±1 mm), turned
+if needed. A label that doesn't fit is refused, and Part-DB shows why on its agents page, e.g.
+`MEDIA_MISMATCH: label is 29×46 mm (needs 29 mm tape), printer has dk-22214 (12 mm tape) loaded`
+(`allow_scaling: true` prints it scaled instead). `media:` in the config is only a fallback for when the
+printer doesn't report its roll (SNMP off, no status reply); `auto`, the default, means no fallback.
+`media_allowed: [dk-22210, dk-22214, dk-11204]` refuses other rolls. A roll seen in the last 30 s stands
+in when a status read says nothing. `pdb-print printers status ql810` and the web UI show
+`media: dk-22214 (detected)` or `(config fallback)`, and which Part-DB label profiles fit it. Configs with a
+fixed `media:` keep working; the agent logs at startup that it's now only a fallback.
 
 ### Zebra (ZPL)
 
