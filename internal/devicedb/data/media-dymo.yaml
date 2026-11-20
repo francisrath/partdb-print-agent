@@ -1,0 +1,25 @@
+# DYMO LabelWriter labels (part numbers on the box). Width across the head × length along the feed, DYMO's
+# nominal sizes (metric 99xxx/11xxx/S09xxxxx in mm, US 30xxx/17xxxxx in inches); dots at the head's true
+# 300 dpi, round(mm × 300 / 25.4). Labels sit against the left edge of the paper path (LabelWriter User
+# Guide), so offset_pins is 0. Wider than the 450-class head (672 dots, 56.9 mm): printed 672 wide.
+# Untested on hardware: see ~/Notes/claude/partdb-agent-dymo-design.md.
+media:
+  # metric
+  - {id: dymo-99010, name: DYMO 99010 address 28×89 mm, kind: die_cut, width_mm: 28, length_mm: 89, printable_width_dots: 331, printable_length_dots: 1051, dpi: 300}
+  - {id: dymo-99012, name: DYMO 99012 large address 36×89 mm, kind: die_cut, width_mm: 36, length_mm: 89, printable_width_dots: 425, printable_length_dots: 1051, dpi: 300}
+  - {id: dymo-99014, name: DYMO 99014 shipping 54×101 mm, kind: die_cut, width_mm: 54, length_mm: 101, printable_width_dots: 638, printable_length_dots: 1193, dpi: 300}
+  - {id: dymo-11352, name: DYMO 11352 return address 25×54 mm, kind: die_cut, width_mm: 25, length_mm: 54, printable_width_dots: 295, printable_length_dots: 638, dpi: 300}
+  - {id: dymo-11354, name: DYMO 11354 multi-purpose 57×32 mm, kind: die_cut, width_mm: 57, length_mm: 32, printable_width_dots: 672, printable_length_dots: 378, dpi: 300}
+  - {id: dymo-11355, name: DYMO 11355 multi-purpose 19×51 mm, kind: die_cut, width_mm: 19, length_mm: 51, printable_width_dots: 224, printable_length_dots: 602, dpi: 300}
+  - {id: dymo-11356, name: DYMO 11356 name badge 41×89 mm, kind: die_cut, width_mm: 41, length_mm: 89, printable_width_dots: 484, printable_length_dots: 1051, dpi: 300}
+  # US (inches)
+  - {id: dymo-30252, name: DYMO 30252 address 1⅛×3½", kind: die_cut, width_mm: 28.6, length_mm: 88.9, printable_width_dots: 338, printable_length_dots: 1050, dpi: 300}
+  - {id: dymo-30321, name: DYMO 30321 large address 1.4×3½", kind: die_cut, width_mm: 35.6, length_mm: 88.9, printable_width_dots: 420, printable_length_dots: 1050, dpi: 300}
+  - {id: dymo-30256, name: DYMO 30256 shipping 2⁵⁄₁₆×4", kind: die_cut, width_mm: 58.7, length_mm: 101.6, printable_width_dots: 672, printable_length_dots: 1200, dpi: 300}
+  - {id: dymo-30323, name: DYMO 30323 shipping 2⅛×4", kind: die_cut, width_mm: 54, length_mm: 101.6, printable_width_dots: 638, printable_length_dots: 1200, dpi: 300}
+  - {id: dymo-30334, name: DYMO 30334 multi-purpose 2¼×1¼", kind: die_cut, width_mm: 57.2, length_mm: 31.8, printable_width_dots: 672, printable_length_dots: 375, dpi: 300}
+  - {id: dymo-30336, name: DYMO 30336 small multi-purpose 1×2⅛", kind: die_cut, width_mm: 25.4, length_mm: 54, printable_width_dots: 300, printable_length_dots: 638, dpi: 300}
+  - {id: dymo-30330, name: DYMO 30330 return address ¾×2", kind: die_cut, width_mm: 19.1, length_mm: 50.8, printable_width_dots: 225, printable_length_dots: 600, dpi: 300}
+  - {id: dymo-30270, name: DYMO 30270 continuous 2¼" receipt, kind: continuous, width_mm: 57.2, printable_width_dots: 672, dpi: 300}
+  # 4XL only (wider than the 450-class head)
+  - {id: dymo-1744907, name: DYMO 1744907 4XL shipping 4×6", kind: die_cut, width_mm: 101.6, length_mm: 152.4, printable_width_dots: 1200, printable_length_dots: 1800, dpi: 300}

@@ -1,0 +1,121 @@
+# DYMO LabelWriter 300/400/450 series (driver dymo), clean-room from DYMO's LabelWriter 400 Series and
+# 450 Series Technical Reference Manuals and the LabelWriter (4XL) User Guides. Head: 672 dots (57 mm)
+# at 300 dpi; the 4XL 1248 dots (4.16 in). USB ids from the tech refs' "USB Product IDs" tables, checked
+# against linux-usb.org usb.ids (vendor 0922); "unverified" = from neither (thermal-label.github.io).
+# All are USB printer-class devices (usblp). Out of scope: the LabelWriter 5xx series (chip-locked labels,
+# another protocol), the SE450 (203 dpi, own command set), the Duo's D1 tape side, the serial-only 300/320.
+# No DYMO printer was on hand: every model is untested. See ~/Notes/claude/partdb-agent-dymo-design.md.
+models:
+  # 450 Series Technical Reference
+  - id: LabelWriter-450
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0020"]}
+    media: &lw [dymo-99010, dymo-99012, dymo-99014, dymo-11352, dymo-11354, dymo-11355, dymo-11356, dymo-30252, dymo-30321, dymo-30256, dymo-30323, dymo-30334, dymo-30336, dymo-30330, dymo-30270]
+    quirks: &lwq {darkness: true}
+  - id: LabelWriter-450-Turbo
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0021"]}
+    media: *lw
+    quirks: *lwq
+  - id: LabelWriter-450-Twin-Turbo # prints on the roll the printer picks (ESC q not sent)
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0022"]}
+    media: *lw
+    quirks: *lwq
+  - id: LabelWriter-450-Duo # label side only; composite device: set device /dev/usb/lpN (README)
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0023"]}
+    media: *lw
+    quirks: *lwq
+  # 4XL: 450-series commands with 156 bytes per line. USB id unverified.
+  - id: LabelWriter-4XL
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 1248
+    transports: [usb]
+    match: {usb: ["0922:001f"]}
+    media: [dymo-1744907, dymo-99010, dymo-99012, dymo-99014, dymo-11352, dymo-11354, dymo-11355, dymo-11356, dymo-30252, dymo-30321, dymo-30256, dymo-30323, dymo-30334, dymo-30336, dymo-30330, dymo-30270]
+    quirks: *lwq
+  # 400 Series Technical Reference
+  - id: LabelWriter-400
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0019"]}
+    media: *lw
+    quirks: *lwq
+  - id: LabelWriter-400-Turbo
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:001a"]}
+    media: *lw
+    quirks: *lwq
+  - id: LabelWriter-Twin-Turbo # the 400-series Twin Turbo
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0018"]}
+    media: *lw
+    quirks: *lwq
+  - id: LabelWriter-Duo # the 400-series Duo (96- or 128-dot tape side), label side only
+    vendor: DYMO
+    driver: dymo
+    dialect: lw400
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0017", "0922:001d"]}
+    media: *lw
+    quirks: *lwq
+  # 300 series: no tech ref found; 2.25 in / 300 dpi per DYMO's user guide spec table, raster commands
+  # assumed (ESC h and density are 400/450-only per the SE450 reference, so not sent). Untested.
+  - id: LabelWriter-330
+    vendor: DYMO
+    driver: dymo
+    dialect: lw300
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0007"]} # usb.ids
+    media: *lw
+  - id: LabelWriter-330-Turbo
+    vendor: DYMO
+    driver: dymo
+    dialect: lw300
+    dpi: 300
+    head_pins: 672
+    transports: [usb]
+    match: {usb: ["0922:0008"]} # unverified
+    media: *lw
