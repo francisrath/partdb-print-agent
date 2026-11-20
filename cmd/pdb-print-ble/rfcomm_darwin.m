@@ -27,6 +27,7 @@ static BOOL sppChannel(BluetoothRFCOMMChannelID *id) {
 
 static BluetoothRFCOMMChannelID gChanID; // for btRetryOpen
 static BOOL gInOpen; // inside openRFCOMMChannelAsync, before gChan is set (a completion then is this attempt's)
+static IOBluetoothRFCOMMChannel *gStale; // the channel btRetryOpen abandoned (there is at most one retry)
 
 static void openChannel(BluetoothRFCOMMChannelID id) {
 	gChanID = id;
@@ -103,7 +104,8 @@ static char *devicesJSON(NSArray *devs) {
 - (void)rfcommChannelOpenComplete:(IOBluetoothRFCOMMChannel *)ch status:(IOReturn)status {
 	// Only the current attempt's channel counts. During btRetryOpen's delay gChan is nil, so a completion
 	// still queued from the channel it closed is dropped here too.
-	if (!gInOpen && ch != gChan) return;
+	// IOBluetooth documents no ordering for these callbacks, so the abandoned channel is named, not inferred.
+	if ((gStale != nil && ch == gStale) || (!gInOpen && ch != gChan)) return;
 	goOpenDone(status == kIOReturnSuccess ? BT_OK : BT_UNREACHABLE, status, [ch getMTU]);
 }
 - (void)rfcommChannelData:(IOBluetoothRFCOMMChannel *)ch data:(void *)data length:(size_t)length {
@@ -210,6 +212,7 @@ void btRetryOpen(void) {
 		// queue): keep it. Only a still pending attempt is replaced.
 		if ([gChan isOpen]) return;
 		[gChan setDelegate:nil]; // a late completion of the first attempt is not this one's
+		gStale = gChan;
 		[gChan closeChannel];
 		gChan = nil;
 		[gDev closeConnection];
