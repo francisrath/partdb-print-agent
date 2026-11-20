@@ -36,6 +36,10 @@ jobs:
         run: |
           go test -coverpkg=./... -coverprofile=coverage.out ./...
           { echo '### Test coverage'; echo; awk -f .github/coverage-summary.awk coverage.out; } >> "$GITHUB_STEP_SUMMARY"
+      # the macOS Bluetooth helper needs cgo (pdb-print itself stays cgo-free, see lint)
+      - name: build pdb-print-ble with cgo
+        if: matrix.os == 'macos-latest'
+        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/pdb-print-ble
 
   lint:
     runs-on: ubuntu-latest
@@ -56,8 +60,8 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
-          args: check
+          version: v2.20.3
+          args: check .goreleaser.yaml .goreleaser-darwin.yaml
       - name: cross-compile without cgo
         run: |
           for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
@@ -81,8 +85,8 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
-          args: release --snapshot --clean --skip=docker,homebrew,sign
+          version: v2.20.3
+          args: release --snapshot --clean --skip=docker,sign
       - name: check packages
         run: |
           for a in amd64 arm64 armhf; do
@@ -92,9 +96,46 @@ jobs:
             dpkg-deb -c "$deb" | grep -q ' ./usr/lib/systemd/system/pdb-print.service$'
             dpkg-deb -I "$deb" | grep -q "Architecture: $a"
             dpkg-deb -I "$deb" | grep -q ' postinst'
+            dpkg-deb -I "$deb" postinst | grep -qx 'getent group bluetooth >/dev/null || groupadd --system bluetooth'
+            dpkg-deb --fsys-tarfile "$deb" | tar -xO ./usr/lib/systemd/system/pdb-print.service | grep -qx 'SupplementaryGroups=lp bluetooth'
           done
+          if ls dist | grep -q darwin; then exit 1; fi # macOS is built by packaging-darwin
           dpkg-deb -I dist/pdb-print_*_armhf.deb | grep -q 'Depends: init-system-helpers, poppler-utils'
           dpkg-deb -I dist/pdb-print_*_arm64.deb | grep -q 'Depends: init-system-helpers$'
           unzip -l dist/pdb-print_*_windows_amd64.zip | grep -q ' try-printer.cmd$'
           unzip -l dist/pdb-print_*_windows_amd64.zip | grep -q ' TRY.md$'
           ! tar tzf dist/pdb-print_*_linux_amd64.tar.gz | grep -q try-printer
+
+  # the macOS release half (.goreleaser-darwin.yaml), as release.yml's release-darwin job runs it
+  packaging-darwin:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build packages
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --snapshot --clean --skip=publish --config .goreleaser-darwin.yaml
+      - name: check packages
+        run: |
+          ble=dist/pdb-print-ble-universal_darwin_all/pdb-print-ble
+          pp=dist/pdb-print-universal_darwin_all/pdb-print
+          for a in x86_64 arm64; do lipo "$pp" -verify_arch "$a"; done
+          go version -m "$pp" | grep -q 'CGO_ENABLED=0'
+          if go version -m "$pp" | grep -q tinygo.org/x/bluetooth; then exit 1; fi
+          go version -m "$ble" | grep -q 'CGO_ENABLED=1'
+          for a in x86_64 arm64; do
+            lipo "$ble" -thin "$a" -output "$RUNNER_TEMP/ble-$a"
+            otool -s __TEXT __info_plist "$RUNNER_TEMP/ble-$a" | grep -q '__info_plist'
+          done
+          launchctl plist "$ble" | grep -q NSBluetoothAlwaysUsageDescription
+          tar tzf dist/pdb-print_*_darwin_universal.tar.gz | grep -qx pdb-print
+          tar tzf dist/pdb-print_*_darwin_universal.tar.gz | grep -qx pdb-print-ble
+          grep -q ' pdb-print_.*_darwin_universal.tar.gz$' dist/checksums-darwin.txt
+          grep -q 'binary "pdb-print-ble"' dist/homebrew/Casks/pdb-print.rb

@@ -2,6 +2,9 @@ name: Release
 
 # Push a tag like v0.1.0 to build and publish: GitHub release with archives and
 # checksums, multi-arch image on ghcr.io, and the Homebrew cask in francisrath/homebrew-tap.
+# release (Linux) makes a draft release with everything but macOS; release-darwin adds the
+# macOS archive (it needs cgo for the Bluetooth helper) and then publishes the draft, so a
+# failed macOS build leaves a draft, never a half release.
 on:
   push:
     tags: ["v*"]
@@ -32,9 +35,32 @@ jobs:
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
+          version: v2.20.3
           args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-darwin:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser reads the tags
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --clean --config .goreleaser-darwin.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # fine-grained token with Contents: read/write on francisrath/homebrew-tap only
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      - name: publish the draft release
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
