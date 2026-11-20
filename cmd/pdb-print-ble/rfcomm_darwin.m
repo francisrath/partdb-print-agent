@@ -26,12 +26,15 @@ static BOOL sppChannel(BluetoothRFCOMMChannelID *id) {
 }
 
 static BluetoothRFCOMMChannelID gChanID; // for btRetryOpen
+static BOOL gInOpen; // inside openRFCOMMChannelAsync, before gChan is set (a completion then is this attempt's)
 
 static void openChannel(BluetoothRFCOMMChannelID id) {
 	gChanID = id;
 	goOpening();
 	IOBluetoothRFCOMMChannel *ch = nil;
+	gInOpen = YES;
 	IOReturn r = [gDev openRFCOMMChannelAsync:&ch withChannelID:id delegate:gDel];
+	gInOpen = NO;
 	gChan = ch;
 	if (r != kIOReturnSuccess) goOpenDone(BT_UNREACHABLE, r, 0);
 }
@@ -98,7 +101,9 @@ static char *devicesJSON(NSArray *devs) {
 
 @implementation PDBDelegate
 - (void)rfcommChannelOpenComplete:(IOBluetoothRFCOMMChannel *)ch status:(IOReturn)status {
-	if (gChan != nil && ch != gChan) return; // an attempt btRetryOpen replaced
+	// Only the current attempt's channel counts. During btRetryOpen's delay gChan is nil, so a completion
+	// still queued from the channel it closed is dropped here too.
+	if (!gInOpen && ch != gChan) return;
 	goOpenDone(status == kIOReturnSuccess ? BT_OK : BT_UNREACHABLE, status, [ch getMTU]);
 }
 - (void)rfcommChannelData:(IOBluetoothRFCOMMChannel *)ch data:(void *)data length:(size_t)length {
