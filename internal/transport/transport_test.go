@@ -38,10 +38,12 @@ var (
 func TestRegisterPassesModel(t *testing.T) {
 	probeGot = nil
 	// the registry is global and rejects duplicates, so register once per process (-count=N)
-	probeOnce.Do(func() { transport.Register("model-probe", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
-		probeGot = m
-		return nil, nil
-	}) })
+	probeOnce.Do(func() {
+		transport.Register("model-probe", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
+			probeGot = m
+			return nil, nil
+		})
+	})
 	want := &devicedb.Model{ID: "x"}
 	if _, err := transport.New(config.Transport{Kind: "model-probe"}, want); err != nil || probeGot != want {
 		t.Errorf("model not passed: %p %p %v", probeGot, want, err)
