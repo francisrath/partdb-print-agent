@@ -10,6 +10,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
@@ -152,16 +153,11 @@ func (d *escpos) Status(ctx context.Context, t driver.Transport) (*driver.Status
 	return st, nil
 }
 
-// Print refuses on a bad status, sends the job, then asks GS r 1 (answered in order, so after the
-// printing) and waits for the answer. No answer: sent, unconfirmed.
+// Print refuses on a bad job.Status, sends the job, then asks GS r 1 (answered in order, so after the
+// printing) and waits for the answer. No answer: sent, unconfirmed. A printer that gave no status
+// (it ignores DLE EOT) won't answer GS r either, so then there is no wait.
 func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
-	st := job.Status
-	if st == nil {
-		var err error
-		if st, err = d.Status(ctx, t); err != nil && !errors.Is(err, driver.ErrNoReadback) {
-			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
-		}
-	}
+	st := job.Status // the service's reading; nil = the printer gave none
 	if st != nil && st.Code != driver.OK {
 		return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 	}
@@ -182,6 +178,10 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 	if st != nil && st.Detail != "" {
 		res.Warnings = append(res.Warnings, st.Detail)
 	}
+	if st == nil {
+		res.Message = "sent (unconfirmed: the printer doesn't report status)"
+		return res, nil
+	}
 	// From here the label may print: never report a failure that a retry would print twice.
 	res.Message = "sent (unconfirmed: no answer to GS r)"
 	if err := drain(t); err != nil {
@@ -201,7 +201,7 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 			switch {
 			case p[0]&gsrPaperEnd != 0:
 				return nil, &driver.Error{Code: driver.NoMedia, Detail: "out of paper while printing"}
-			case p[0]&gsrNearEnd != 0:
+			case p[0]&gsrNearEnd != 0 && !slices.Contains(res.Warnings, nearEnd):
 				res.Warnings = append(res.Warnings, nearEnd)
 			}
 			res.Confirmed, res.Message = true, "printed"

@@ -205,6 +205,9 @@ func Load(fsys fs.FS) (*DB, error) {
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))
 			}
+			if m.Driver == "escpos" && m.HeadPins <= 0 {
+				errs = append(errs, fmt.Errorf("%s: model %s needs head_pins > 0", base, m.ID))
+			}
 			for _, u := range m.Match.USB {
 				if other, dup := usb[u]; dup {
 					errs = append(errs, fmt.Errorf("%s: model %s: usb %s already used by %s (%s)", base, m.ID, u, other, origin[other]))

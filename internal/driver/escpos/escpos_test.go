@@ -215,11 +215,20 @@ func TestPrintRefusesBadStatus(t *testing.T) {
 	if !errors.As(err, &de) || de.Code != driver.NoMedia || len(f.written) != 0 {
 		t.Errorf("err = %v, wrote %d", err, len(f.written))
 	}
-	// status read by Print itself: nothing after the three queries is sent
-	f = &fake{replies: [][]byte{{0x12}, {0x00}, {0x60}}}
-	_, err = newDriver(t, false).Print(context.Background(), f, job(nil))
-	if !errors.As(err, &de) || de.Code != driver.NoMedia || len(f.written) != 3 {
-		t.Errorf("err = %v, wrote %d", err, len(f.written))
+}
+
+func TestPrintWithoutStatusDoesNotWait(t *testing.T) {
+	f := &fake{}
+	d := newDriver(t, false)
+	d.confirm = time.Hour // a wait would hang the test
+	res, err := d.Print(context.Background(), f, job(nil))
+	if err != nil || res.Confirmed || !strings.Contains(res.Message, "doesn't report status") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	for _, w := range f.written {
+		if len(w) == 3 && (w[0] == 0x10 || w[0] == 0x1D && w[1] == 0x72) {
+			t.Errorf("wrote a query: % x", w)
+		}
 	}
 }
 
@@ -309,5 +318,13 @@ func TestPrintNilMedia(t *testing.T) {
 	j.Media = nil
 	if _, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x00}}}, j); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestPrintNearEndWarnsOnce(t *testing.T) {
+	st := &driver.Status{Code: driver.OK, Detail: "paper near end"}
+	res, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x03}}}, job(st))
+	if err != nil || len(res.Warnings) != 1 {
+		t.Errorf("%+v %v", res, err)
 	}
 }
