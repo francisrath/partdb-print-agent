@@ -69,6 +69,9 @@ func init() {
 	})
 }
 
+// helperPath finds the helper; tests replace it so they never pick up a real one.
+var helperPath = findHelper
+
 // findHelper looks next to the running executable, then in PATH.
 func findHelper() (string, error) {
 	if exe, err := os.Executable(); err == nil {
@@ -96,7 +99,7 @@ func helperError(msg string) error {
 // prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
-	helper, err := findHelper()
+	helper, err := helperPath()
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +179,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
 	t.stop(false) // a helper left from an earlier Open (it may have died already)
-	helper, err := findHelper()
+	helper, err := helperPath()
 	if err != nil {
 		return err
 	}
@@ -288,10 +291,13 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	if r.typ == blebridge.TypeError {
+	switch r.typ {
+	case blebridge.TypeOK:
+		return r.payload, nil
+	case blebridge.TypeError:
 		return nil, helperError(string(r.payload))
 	}
-	return r.payload, nil
+	return nil, fmt.Errorf("ble: %s: unexpected reply %q", helperName, r.typ)
 }
 
 func (t *Transport) deadErr() error {

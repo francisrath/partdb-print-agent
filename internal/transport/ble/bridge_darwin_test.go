@@ -23,10 +23,13 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 )
 
-const fakeEnv = "PDB_PRINT_BLE_FAKE"
+const (
+	fakeEnv  = "PDB_PRINT_BLE_FAKE"
+	readyEnv = "PDB_PRINT_BLE_READY" // a file the fake creates once it handles an interrupt
+)
 
-// TestMain doubles as the fake pdb-print-ble: the tests put a symlink to this test binary named
-// pdb-print-ble on PATH and pick its behaviour through fakeEnv.
+// TestMain doubles as the fake pdb-print-ble: the tests point helperPath at a symlink to this test binary
+// named pdb-print-ble and pick its behaviour through fakeEnv.
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeEnv); mode != "" {
 		if err := fakeHelper(mode, os.Args[1:]); err != nil {
@@ -41,7 +44,7 @@ func TestMain(m *testing.M) {
 // fakeHelper modes: "ok" echoes the open request and every write back as notifications; on the first
 // write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
 // and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
-// "slowclose" takes the real helper's longest disconnect wait to close; "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
+// "slowclose" takes the real helper's longest disconnect wait to close; "hang" never answers the open; "fail" refuses it; "closeonopen" answers it with a close frame; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
 // "scan-enabling" is interrupted while waiting for Bluetooth; "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
@@ -53,6 +56,9 @@ func fakeHelper(mode string, args []string) error {
 	case "scan-enabling": // waiting for Bluetooth (a permission prompt) when interrupted
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt)
+		if err := os.WriteFile(os.Getenv(readyEnv), nil, 0o600); err != nil {
+			return err
+		}
 		<-c
 		return blecore.ErrNotEnabled
 	case "scan":
@@ -82,6 +88,12 @@ func fakeHelper(mode string, args []string) error {
 	}
 	if mode == "fail" {
 		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("no Bluetooth adapter: bluetooth is not authorized for this app"))
+	}
+	if mode == "closeonopen" { // a mismatched helper: a well-formed frame that isn't an answer
+		if err := blebridge.Write(os.Stdout, blebridge.TypeClose, nil); err != nil {
+			return err
+		}
+		time.Sleep(time.Hour)
 	}
 	if err := blebridge.Write(os.Stdout, blebridge.TypeNotify, p); err != nil {
 		return err
@@ -133,21 +145,31 @@ func fakeHelper(mode string, args []string) error {
 	}
 }
 
-// useFake puts the fake helper on PATH (or, with mode "", an empty PATH).
+// useFake makes helperPath find the fake helper (or, with mode "", no helper), never a real pdb-print-ble
+// next to the test binary or on PATH.
 func useFake(t *testing.T, mode string) {
 	t.Helper()
 	dir := t.TempDir()
+	helper := filepath.Join(dir, helperName)
 	if mode != "" {
 		exe, err := os.Executable()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(exe, filepath.Join(dir, helperName)); err != nil {
+		if err := os.Symlink(exe, helper); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", dir)
+	old := helperPath
+	helperPath = func() (string, error) {
+		if mode == "" {
+			return "", errNoHelper
+		}
+		return helper, nil
+	}
+	t.Cleanup(func() { helperPath = old })
 	t.Setenv(fakeEnv, mode)
+	t.Setenv(readyEnv, filepath.Join(dir, "ready"))
 	// a -race test binary sleeps 1 s at exit by default, which would eat into the close grace
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
 }
@@ -270,6 +292,7 @@ func TestBridgeOpenErrors(t *testing.T) {
 	}{
 		{"", "install pdb-print-ble (comes with the macOS release) for Bluetooth printers", false},
 		{"fail", "not authorized", true},
+		{"closeonopen", "ble: pdb-print-ble: unexpected reply 'C'", false},
 		{"abort", denied + " (run it from Terminal or another terminal app and allow Bluetooth when asked; a service needs its own permission); the helper exited: signal: abort trap", false},
 	}
 	for _, tt := range tests {
@@ -416,8 +439,17 @@ func TestBridgeScanCancel(t *testing.T) {
 // permission prompt: the helper's reason wins over the context's error.
 func TestBridgeScanEndsWhileEnabling(t *testing.T) {
 	useFake(t, "scan-enabling")
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go func() { // cancel once the fake can take the interrupt; within below is the watchdog
+		for {
+			if _, err := os.Stat(os.Getenv(readyEnv)); err == nil || ctx.Err() != nil {
+				cancel()
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
 	err := within(t, 4*time.Second, "Scan", func() error {
 		_, err := Scan(ctx, 8*time.Second)
 		return err
