@@ -855,7 +855,6 @@ func formModels() []string {
 	return out
 }
 
-// needsStatus: printers that can't print without a status reply (PT) are not OK when silent.
 // checkHint says what to check on a printer that doesn't answer.
 func checkHint(kind string) string {
 	switch kind {
@@ -867,6 +866,7 @@ func checkHint(kind string) string {
 	return "check the printer's power and network connection"
 }
 
+// needsStatus: printers that can't print without a status reply (PT) are not OK when silent.
 func needsStatus(p *config.Printer) bool {
 	m, err := p.DeviceModel()
 	return err == nil && m.QuirkBool("needs_status")

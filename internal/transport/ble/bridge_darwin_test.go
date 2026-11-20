@@ -148,6 +148,8 @@ func useFake(t *testing.T, mode string) {
 	}
 	t.Setenv("PATH", dir)
 	t.Setenv(fakeEnv, mode)
+	// a -race test binary sleeps 1 s at exit by default, which would eat into the close grace
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
 }
 
 func newBridge(t *testing.T, c config.Transport) *Transport {
