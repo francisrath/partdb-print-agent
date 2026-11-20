@@ -312,11 +312,13 @@ func restored(fake *zpltest.Fake) bool {
 	return false
 }
 
-// fakeCat is a BLE cat printer: idle to every status request, a D3 after every job.
+// fakeCat is a BLE cat printer like an MX10: after a job, busy to the next status request and then
+// AE 00 ("buffer empty"); idle otherwise.
 type fakeCat struct {
-	mu      sync.Mutex
-	in      []byte
-	written bytes.Buffer
+	mu       sync.Mutex
+	in       []byte
+	written  bytes.Buffer
+	printing bool
 }
 
 func catFrame(cmd byte, payload ...byte) []byte {
@@ -343,10 +345,15 @@ func (f *fakeCat) Write(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.written.Write(p)
-	if bytes.Equal(p, catFrame(0xA3, 0x00)) {
+	switch {
+	case !bytes.Equal(p, catFrame(0xA3, 0x00)):
+		f.printing = true
+	case f.printing:
+		f.printing = false
+		f.in = append(f.in, catFrame(0xA3, 0x80, 0x01, 0x95)...)
+		f.in = append(f.in, catFrame(0xAE, 0x00)...)
+	default:
 		f.in = append(f.in, catFrame(0xA3, 0x00, 0x01, 0x95)...)
-	} else {
-		f.in = append(f.in, catFrame(0xD3, 0x13)...)
 	}
 	return len(p), nil
 }
