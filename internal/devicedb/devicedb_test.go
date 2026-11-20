@@ -194,14 +194,12 @@ func TestModelByBLEName(t *testing.T) {
 	for _, tc := range []struct{ name, want string }{
 		{"MX10", "MX10"}, {"GB03", "GB03"}, {"YT01", "YT01"}, {"MX10-1234", ""}, {"Phone", ""}, {"", ""},
 	} {
-		m, ok := db.ModelByBLEName(tc.name)
-		if got := ""; ok {
+		got := ""
+		if m, ok := db.ModelByBLEName(tc.name); ok {
 			got = m.ID
-			if got != tc.want {
-				t.Errorf("%q: %s, want %q", tc.name, got, tc.want)
-			}
-		} else if tc.want != "" {
-			t.Errorf("%q: not found, want %s", tc.name, tc.want)
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
