@@ -21,6 +21,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
@@ -245,7 +246,7 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP,
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness,
 		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 

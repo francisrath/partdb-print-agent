@@ -29,6 +29,7 @@ type Options struct {
 	Host          string // network printers: for side channels such as SNMP
 	SNMPCommunity string
 	NoSNMP        bool
+	Darkness      string // cat: light | normal | dark ("" = normal)
 	// zpl: move the print (dots; x > 0 right, y > 0 down) or widen it (0 = the media's width).
 	// Set by `pdb-print try` while it looks for what fixes a cut-off label.
 	OffsetXDots, OffsetYDots, PrintWidthDots int
