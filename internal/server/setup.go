@@ -199,6 +199,7 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 			scanErr = err.Error()
 		}
 		bleNote = note
+		s.seenBLE(cs)
 		d.Candidates, d.Scanned = sortCandidates(cs), true
 	}
 	type row struct {
@@ -250,6 +251,19 @@ func (s *Server) existing(c discovery.Candidate) string {
 		}
 	}
 	return ""
+}
+
+// seenBLE tells the print service which configured Bluetooth printers a scan found: they count as
+// online for a while (see printing.Service.SeenBLE).
+func (s *Server) seenBLE(cs []discovery.Candidate) {
+	ps := s.config().Printers
+	for _, c := range cs {
+		for i := range ps {
+			if c.Kind == "ble" && ps[i].Transport.Kind == "ble" && bleSame(ps[i].Transport, c) {
+				s.Svc.SeenBLE(&ps[i])
+			}
+		}
+	}
 }
 
 // bleSame: the address wins; a printer configured by name only matches by the advertised name.

@@ -453,3 +453,23 @@ func TestWizardBLEExistingByName(t *testing.T) {
 		t.Errorf("printer page: %s", w.Body)
 	}
 }
+
+// A configured Bluetooth printer the wizard's scan found counts as online for Part-DB (the online
+// check never connects to a BLE printer).
+func TestWizardScanMarksBLEOnline(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "cat", Model: "MX10",
+		Transport: config.Transport{Kind: "ble", Name: "MX10"}})
+	p := &h.srv.cfg.Printers[len(h.srv.cfg.Printers)-1]
+	if h.srv.Svc.Online(p) {
+		t.Fatal("online before any scan")
+	}
+	m, _ := devicedb.Default().Model("MX10")
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported}}, nil
+	}
+	h.do("GET", "/setup/printer", nil)
+	if !h.srv.Svc.Online(p) {
+		t.Error("offline after the scan found it")
+	}
+}

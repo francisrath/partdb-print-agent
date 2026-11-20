@@ -85,6 +85,7 @@ type Service struct {
 	probes      map[string]*sync.Mutex // one online check per printer at a time
 	printing    map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
 	unconfirmed map[string]bool        // printers whose last job was sent but not confirmed (see driver.Job.PrevUnconfirmed)
+	seen        map[string]time.Time   // BLE printers (by onlineKey): when a status, job or scan last found them working
 
 	beforePublish   func()                                                       // tests: between an online check returning and its result being stored
 	probeTimeout    time.Duration                                                // USB online check; 0 = 2 s
@@ -336,7 +337,7 @@ func commsError(err error) error {
 // Status queries the printer. Models that must not be asked while printing (PT) and printers on a
 // single connection (USB, BLE) answer BUSY during a job without being asked. driver.ErrNoReadback
 // if the printer doesn't answer.
-func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
+func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Status, err error) {
 	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
@@ -355,17 +356,21 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 		return nil, err
 	}
 	defer t.Close()
-	st, err := drv.Status(ctx, t)
+	st, err = drv.Status(ctx, t)
+	s.noteBLE(p, err)
 	return st, commsError(err)
 }
 
 // Print checks the printer, settles the media (config or what the printer reports), gets the
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
-func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (*Result, error) {
+func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (_ *Result, err error) {
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	if dryRun == "" {
+		defer func() { s.noteBLE(p, err) }()
+	}
 	s.setPrinting(p.ID, true)
 	defer s.setPrinting(p.ID, false)
 
