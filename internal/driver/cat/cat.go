@@ -25,8 +25,9 @@ func init() {
 	})
 }
 
-// Darkness is mostly speed (a slower head prints darker; heat hardly matters past 0x4000).
-var speeds = map[string]byte{"light": 0x60, "": 0x80, "normal": 0x80, "dark": 0xC0}
+// Darkness is mostly speed (a slower head prints darker; heat hardly matters past 0x4000). On an MX10,
+// 0x60–0xC0 look alike; 0x20/0x40 are visibly lighter.
+var speeds = map[string]byte{"light": 0x30, "": 0x80, "normal": 0x80, "dark": 0xC0}
 
 const energy = 0x6000
 

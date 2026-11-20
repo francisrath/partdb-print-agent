@@ -156,6 +156,9 @@ its advertised Bluetooth name, which must be exactly the model name.
   darkness: normal            # light | normal | dark; darker prints slower
 ```
 
+`darkness` sets the print speed (slower is darker). On an MX10, `dark` looks about the same as `normal`;
+`light` is visibly lighter and faster.
+
 `pdb-print discover` lists nearby Bluetooth printers with their address and the exact `transport:` line
 (the Bluetooth scan can make `discover` take up to about 8 s; `--no-ble` skips it), and the setup wizard lists them too. The address
 is the platform's device id: a MAC address on Linux and Windows, a CoreBluetooth UUID on macOS. With only

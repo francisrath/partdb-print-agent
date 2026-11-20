@@ -338,3 +338,16 @@ func TestPrintWaitsForIdle(t *testing.T) {
 		t.Errorf("waited the whole drain although the AE 00 came")
 	}
 }
+
+func TestDarknessSpeed(t *testing.T) {
+	for darkness, speed := range map[string]byte{"light": 0x30, "": 0x80, "normal": 0x80, "dark": 0xC0} {
+		d, m := mx10(t, darkness)
+		var b bytes.Buffer
+		if err := d.Encode(&b, job(m, 1)); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(b.Bytes(), frame(0xBD, speed)) {
+			t.Errorf("darkness %q: no speed %#x", darkness, speed)
+		}
+	}
+}
