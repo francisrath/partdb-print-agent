@@ -102,7 +102,7 @@ func wantMismatch(t *testing.T, err error, detail string) {
 func TestRollChangeBetweenJobs(t *testing.T) {
 	f := &fakeQL{width: 29}
 	s := qlService(t, f)
-	p := qlUSB("dk-22210") // stale config media: now only a fallback
+	p := qlUSB("dk-22210") // config media is only a fallback
 	ctx := context.Background()
 
 	res, err := s.Print(ctx, p, "", label(29, 46))

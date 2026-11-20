@@ -171,12 +171,6 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	for _, p := range cfg.Printers {
-		if f := p.FallbackMedia(); f != "" {
-			log.Info("the roll the printer reports now decides the media; media in the config is only a fallback for when it reports none",
-				"printer", p.ID, "media", f)
-		}
-	}
 	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
 	pdftoppm := cfg.Pdftoppm
 	if v := os.Getenv("PDB_PRINT_PDFTOPPM"); v != "" {
