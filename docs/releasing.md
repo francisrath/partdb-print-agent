@@ -9,7 +9,8 @@ Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in two jobs.
    macOS archive and `checksums-darwin.txt` to that draft (GoReleaser leaves it a draft: `draft: true`) and
    pushes the Homebrew cask to `francisrath/homebrew-tap`. Its last step, **publish the draft**, checks that
    the tag has exactly one release, that it is a draft, and that it carries `checksums.txt`,
-   `checksums-darwin.txt` and the Linux, Windows and macOS archives; only then it publishes it.
+   `checksums-darwin.txt` and the Linux, Windows and macOS archives; only then it publishes it. The step lists those
+   files by name: renaming or adding an archive in a `.goreleaser*.yaml` means updating that list too.
 
 A failed macOS build therefore leaves a draft, never a release without macOS. Between the cask push and the
 publish step (seconds), the cask points at the still-draft release: `brew install` fails in that window.
