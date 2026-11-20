@@ -233,3 +233,41 @@ func TestBadBLEName(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestModelByBTName(t *testing.T) {
+	db := devicedb.Default()
+	for _, tc := range []struct{ name, want string }{
+		{"RG-MLP80B", "RG-MLP80B"}, {"RG-MLP80B-1234", "RG-MLP80B"}, {"MX10", ""}, {"", ""},
+	} {
+		got := ""
+		if m, ok := db.ModelByBTName(tc.name); ok {
+			got = m.ID
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestEscposModels(t *testing.T) {
+	db := devicedb.Default()
+	for id, want := range map[string]struct {
+		pins  int
+		media string
+		dots  int
+	}{"RG-MLP80B": {576, "paper-80", 576}, "ESCPOS-80": {576, "paper-80", 576}, "ESCPOS-58": {384, "paper-57", 384}} {
+		m, ok := db.Model(id)
+		if !ok {
+			t.Errorf("%s missing", id)
+			continue
+		}
+		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt"}) ||
+			m.Quirk("feed_lines", 0) != 80 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
+			t.Errorf("%s: %+v", id, m)
+		}
+		md := db.MediaFor(m)
+		if len(md) != 1 || md[0].ID != want.media || md[0].PrintableWidthDots != want.dots || md[0].Kind != devicedb.Continuous {
+			t.Errorf("%s media: %+v", id, md)
+		}
+	}
+}
