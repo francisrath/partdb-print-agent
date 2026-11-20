@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"sync"
 	"syscall"
@@ -50,48 +51,33 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	if err != nil {
 		return nil, mapErr(label(address, name), err, winErrnos)
 	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = windows.Closesocket(h)
-		}
-	}()
+	s := &socket{h: h}
 	sa := &windows.SockaddrBth{BtAddr: bthAddr(a), Port: uint32(channel)}
 	if channel == 0 {
 		sa.ServiceClassId = sppUUID // Windows looks the channel up via SDP
 	}
 
-	// A blocking connect; closing the socket ends it early (timeout, ctx). dial waits a bounded time for
-	// the goroutine, which only owns the closed handle.
+	// A blocking connect, run under the socket's ownership (socket.do): on a timeout or ctx's end dial closes
+	// the socket and returns, but the handle is only released once Connect has returned, so it can't be
+	// reused under it. Close cancels the pending connect (CancelIoEx); failing that, Windows' own connect
+	// timeout bounds it.
 	done := make(chan error, 1)
-	go func() { done <- windows.Connect(h, sa) }()
+	go func() { done <- s.do(func(h windows.Handle) error { return windows.Connect(h, sa) }) }()
 	timer := time.NewTimer(connectTimeout)
 	defer timer.Stop()
 	select {
 	case err = <-done:
 	case <-timer.C:
-		_ = windows.Closesocket(h)
-		closed = true
-		waitDone(done)
 		err = os.ErrDeadlineExceeded
 	case <-ctx.Done():
-		_ = windows.Closesocket(h)
-		closed = true
-		waitDone(done)
+		_ = s.Close()
 		return nil, ctx.Err()
 	}
 	if err != nil {
+		_ = s.Close()
 		return nil, mapErr(label(address, name), err, winErrnos)
 	}
-	closed = true // handed over to the socket
-	return &socket{h: h}, nil
-}
-
-func waitDone(done <-chan error) {
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
+	return s, nil
 }
 
 // pairedDevices lists the devices Windows remembers (paired or remembered), without an inquiry.
@@ -193,7 +179,52 @@ func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
 }
 
 // socket is a blocking Winsock RFCOMM socket; deadlines become SO_RCVTIMEO / SO_SNDTIMEO.
-type socket struct{ h windows.Handle }
+//
+// Winsock may hand a closed handle out again at once, and closesocket must not race a call that is about to
+// use it, so every native call runs under do, which counts it in flight. Close marks the socket closed: with
+// no call in flight it closes the handle; otherwise it cancels the pending I/O (else the call's timeout ends
+// it) and the last call to return closes the handle.
+type socket struct {
+	h      windows.Handle
+	mu     sync.Mutex
+	users  int // native calls in flight
+	closed bool
+}
+
+// do runs f on the handle unless the socket is closed (net.ErrClosed).
+func (s *socket) do(f func(windows.Handle) error) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return net.ErrClosed
+	}
+	s.users++
+	s.mu.Unlock()
+	err := f(s.h)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.users--; s.closed && s.users == 0 {
+		_ = windows.Closesocket(s.h)
+	}
+	return err
+}
+
+func (s *socket) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.users > 0 {
+		// End the blocked call: shutdown alone doesn't wake a blocking WSARecv (seen on Windows 11), but
+		// cancelling the handle's pending I/O does. The last call in flight closes the handle.
+		_ = windows.Shutdown(s.h, windows.SHUT_RDWR)
+		_ = windows.CancelIoEx(s.h, nil)
+		return nil
+	}
+	return windows.Closesocket(s.h)
+}
 
 func timeoutMS(t time.Time) int {
 	if t.IsZero() {
@@ -203,26 +234,33 @@ func timeoutMS(t time.Time) int {
 }
 
 func (s *socket) SetReadDeadline(t time.Time) error {
-	return windows.SetsockoptInt(s.h, windows.SOL_SOCKET, windows.SO_RCVTIMEO, timeoutMS(t))
+	return s.do(func(h windows.Handle) error {
+		return windows.SetsockoptInt(h, windows.SOL_SOCKET, windows.SO_RCVTIMEO, timeoutMS(t))
+	})
 }
 
 func (s *socket) SetWriteDeadline(t time.Time) error {
-	return windows.SetsockoptInt(s.h, windows.SOL_SOCKET, windows.SO_SNDTIMEO, timeoutMS(t))
+	return s.do(func(h windows.Handle) error {
+		return windows.SetsockoptInt(h, windows.SOL_SOCKET, windows.SO_SNDTIMEO, timeoutMS(t))
+	})
 }
 
 func (s *socket) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	b := windows.WSABuf{Len: uint32(len(p)), Buf: &p[0]}
-	var n, flags uint32
-	if err := windows.WSARecv(s.h, &b, 1, &n, &flags, nil, nil); err != nil {
-		if errors.Is(err, windows.WSAETIMEDOUT) {
-			return 0, os.ErrDeadlineExceeded
-		}
+	var n uint32
+	err := s.do(func(h windows.Handle) error {
+		b := windows.WSABuf{Len: uint32(len(p)), Buf: &p[0]}
+		var flags uint32
+		return windows.WSARecv(h, &b, 1, &n, &flags, nil, nil)
+	})
+	switch {
+	case errors.Is(err, windows.WSAETIMEDOUT):
+		return 0, os.ErrDeadlineExceeded
+	case err != nil:
 		return 0, err
-	}
-	if n == 0 {
+	case n == 0:
 		return 0, io.EOF
 	}
 	return int(n), nil
@@ -231,9 +269,12 @@ func (s *socket) Read(p []byte) (int, error) {
 func (s *socket) Write(p []byte) (int, error) {
 	sent := 0
 	for sent < len(p) {
-		b := windows.WSABuf{Len: uint32(len(p) - sent), Buf: &p[sent]}
 		var n uint32
-		if err := windows.WSASend(s.h, &b, 1, &n, 0, nil, nil); err != nil {
+		err := s.do(func(h windows.Handle) error {
+			b := windows.WSABuf{Len: uint32(len(p) - sent), Buf: &p[sent]}
+			return windows.WSASend(h, &b, 1, &n, 0, nil, nil)
+		})
+		if err != nil {
 			if errors.Is(err, windows.WSAETIMEDOUT) {
 				err = os.ErrDeadlineExceeded
 			}
@@ -243,5 +284,3 @@ func (s *socket) Write(p []byte) (int, error) {
 	}
 	return sent, nil
 }
-
-func (s *socket) Close() error { return windows.Closesocket(s.h) }
