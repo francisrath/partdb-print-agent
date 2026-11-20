@@ -31,6 +31,7 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/blebridge"
 	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/partdb-print-agent/internal/bleradio"
 )
 
 // fatalMark starts the last stderr line when the helper exits on an error (internal/transport/ble reads it).
@@ -100,63 +101,11 @@ func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scan
 	case <-ctx.Done(): // interrupted before the scan started, perhaps with a permission prompt still open
 		return nil, blecore.ErrNotEnabled
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	var (
-		mu   sync.Mutex
-		seen blecore.Scanned
-	)
-	errc := make(chan error, 1)
-	go func() {
-		errc <- adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
-			ad := blecore.Advert{Name: r.LocalName(), Address: r.Address.String(), RSSI: int(r.RSSI)}
-			for _, u := range r.ServiceUUIDs() {
-				ad.Services = append(ad.Services, u.String())
-			}
-			mu.Lock()
-			seen.Add(ad, time.Now())
-			mu.Unlock()
-		})
-	}()
-	results := func() []blecore.Advert {
-		mu.Lock()
-		defer mu.Unlock()
-		return seen.Adverts()
+	ads, err := bleradio.Scan(ctx, adapter, timeout, settled)
+	if err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
 	}
-	tick := time.NewTicker(50 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case err := <-errc:
-			if err != nil {
-				return nil, fmt.Errorf("scan: %w", err)
-			}
-			return results(), nil
-		case <-ctx.Done():
-			stopScan(errc)
-			return results(), nil
-		case <-tick.C:
-			mu.Lock()
-			done := settled != nil && settled(&seen, time.Now())
-			mu.Unlock()
-			if done {
-				stopScan(errc)
-				return results(), nil
-			}
-		}
-	}
-}
-
-// stopScan repeats StopScan until Scan returns: it fails while Scan is still starting.
-func stopScan(errc <-chan error) {
-	for {
-		_ = adapter.StopScan()
-		select {
-		case <-errc:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
+	return ads, nil
 }
 
 // frames writes frames to stdout from the request loop and the notification callback.
@@ -330,25 +279,9 @@ func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*blecore.Chunker, *bluetooth.DeviceCharacteristic, int, error) {
 	service := bluetooth.New16BitUUID(req.Service)
 	write, notify := bluetooth.New16BitUUID(req.Write), bluetooth.New16BitUUID(req.Notify)
-	svcs, err := dev.DiscoverServices([]bluetooth.UUID{service})
-	if err != nil || len(svcs) == 0 {
-		return nil, nil, 0, fmt.Errorf("printer has no service %s: %v", service, err)
-	}
-	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{write, notify})
+	tx, rx, err := bleradio.Characteristics(dev, service, write, notify)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("characteristics: %w", err)
-	}
-	var tx, rx *bluetooth.DeviceCharacteristic
-	for i := range chars {
-		switch chars[i].UUID() {
-		case write:
-			tx = &chars[i]
-		case notify:
-			rx = &chars[i]
-		}
-	}
-	if tx == nil || rx == nil {
-		return nil, nil, 0, fmt.Errorf("printer lacks characteristic %s or %s", write, notify)
+		return nil, nil, 0, err
 	}
 	// macOS reports the writable length itself (no −3), and WriteWithoutResponse waits for buffer space.
 	mtu, err := tx.GetMTU()

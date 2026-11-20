@@ -13,6 +13,7 @@ import (
 	"tinygo.org/x/bluetooth"
 
 	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/partdb-print-agent/internal/bleradio"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
@@ -98,68 +99,11 @@ func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scan
 	}
 	scanMu.Lock()
 	defer scanMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var (
-		mu   sync.Mutex
-		seen blecore.Scanned
-	)
-	errc := make(chan error, 1)
-	go func() {
-		errc <- adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
-			ad := blecore.Advert{Name: r.LocalName(), Address: r.Address.String(), RSSI: int(r.RSSI)}
-			for _, u := range r.ServiceUUIDs() {
-				ad.Services = append(ad.Services, u.String())
-			}
-			mu.Lock()
-			seen.Add(ad, time.Now())
-			mu.Unlock()
-		})
-	}()
-	results := func() []blecore.Advert {
-		mu.Lock()
-		defer mu.Unlock()
-		return seen.Adverts()
+	ads, err := bleradio.Scan(ctx, adapter, timeout, settled)
+	if err != nil {
+		return nil, scanError(err)
 	}
-
-	tick := time.NewTicker(50 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case err := <-errc: // the scan ended by itself
-			if err == nil {
-				return results(), nil
-			}
-			return nil, scanError(err)
-		case <-ctx.Done():
-			stopScan(errc) // an error while stopping doesn't spoil what was found
-			return results(), nil
-		case <-tick.C:
-			mu.Lock()
-			done := settled != nil && settled(&seen, time.Now())
-			mu.Unlock()
-			if done {
-				stopScan(errc)
-				return results(), nil
-			}
-		}
-	}
-}
-
-// stopScan stops the scan and waits for the library's Scan to return. StopScan fails while Scan is still
-// starting and may be lost on Windows before the watcher has started, so it is repeated until Scan returns.
-// Once stopped, v0.17.0 returns promptly: BlueZ's loop sees the closed cancel channel at once, Windows
-// waits for the watcher's Stopped event.
-func stopScan(errc <-chan error) {
-	for {
-		_ = adapter.StopScan()
-		select {
-		case <-errc:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
+	return ads, nil
 }
 
 // Transport is one BLE connection to a cat printer.
@@ -260,25 +204,9 @@ func connect(ctx context.Context, addr bluetooth.Address) (bluetooth.Device, err
 }
 
 func (t *Transport) setup(dev bluetooth.Device, addr string) error {
-	svcs, err := dev.DiscoverServices([]bluetooth.UUID{t.service})
-	if err != nil || len(svcs) == 0 {
-		return fmt.Errorf("ble: printer has no service %s: %v", t.service, err)
-	}
-	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{t.write, t.notify})
+	tx, rx, err := bleradio.Characteristics(dev, t.service, t.write, t.notify)
 	if err != nil {
-		return fmt.Errorf("ble: characteristics: %w", err)
-	}
-	var tx, rx *bluetooth.DeviceCharacteristic
-	for i := range chars {
-		switch chars[i].UUID() {
-		case t.write:
-			tx = &chars[i]
-		case t.notify:
-			rx = &chars[i]
-		}
-	}
-	if tx == nil || rx == nil {
-		return fmt.Errorf("ble: printer lacks characteristic %s or %s", t.write, t.notify)
+		return fmt.Errorf("ble: %w", err)
 	}
 	write := *tx
 	ch := &blecore.Chunker{Max: 20, Gap: t.gap, Write: func(b []byte) error {
