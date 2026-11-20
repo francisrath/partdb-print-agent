@@ -361,3 +361,13 @@ func TestDrainShortensReadTimeout(t *testing.T) {
 		t.Errorf("SetReadTimeout calls %v, want [%v 0]", f.timeout, drainWait)
 	}
 }
+
+// An ASB frame split by drain (its first byte read there, the rest after it) is still skipped whole: its
+// payload byte 0x00 is not the GS r answer.
+func TestPrintSplitASBFrameIsNotTheAnswer(t *testing.T) {
+	f := &fake{in: []byte{0x38}, replies: [][]byte{{0x00, 0x00, 0x00}}} // no GS r answer of its own
+	res, err := newDriver(t, false).Print(context.Background(), f, job(okStatus))
+	if err != nil || res.Confirmed {
+		t.Errorf("%+v %v", res, err)
+	}
+}

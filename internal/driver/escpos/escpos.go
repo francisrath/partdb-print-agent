@@ -92,8 +92,9 @@ func isTimeout(err error) bool {
 }
 
 // drain drops what the printer sent late (an answer that came after its read timed out), reading
-// until a read brings nothing; it would otherwise be taken for the next answer.
-func drain(t driver.Transport) error {
+// until a read brings nothing; it would otherwise be taken for the next answer. The dropped bytes go
+// through rs, so an ASB frame that drain only saw the start of is still skipped by the reads after it.
+func drain(t driver.Transport, rs *replies) error {
 	if s, ok := t.(driver.ReadTimeoutSetter); ok {
 		s.SetReadTimeout(drainWait)
 		defer s.SetReadTimeout(0)
@@ -107,6 +108,9 @@ func drain(t driver.Transport) error {
 			}
 			return nil
 		}
+		for _, b := range p[:n] {
+			rs.take(b, func(byte) bool { return false })
+		}
 	}
 	return nil
 }
@@ -118,7 +122,7 @@ func drain(t driver.Transport) error {
 func dleEOTReply(b byte) bool { return b&0x93 == 0x12 }
 func gsrReply(b byte) bool    { return b&0x90 == 0 }
 
-// replies filters the bytes read for one request.
+// replies filters the bytes read for one Status or Print, drain included: an ASB frame may straddle them.
 type replies struct{ skip int } // ASB frame bytes still to drop
 
 // take reports whether b is the reply that ok accepts.
@@ -135,12 +139,11 @@ func (r *replies) take(b byte, ok func(byte) bool) bool {
 }
 
 // query sends DLE EOT n and reads the one-byte answer; ok is false when none came.
-func query(t driver.Transport, n byte) (b byte, ok bool, err error) {
+func query(t driver.Transport, rs *replies, n byte) (b byte, ok bool, err error) {
 	if _, err := t.Write([]byte{0x10, 0x04, n}); err != nil {
 		return 0, false, err
 	}
 	p := make([]byte, 1)
-	var rs replies
 	for range 64 { // a printer that keeps talking gets no more than this
 		got, err := t.Read(p)
 		if got > 0 {
@@ -159,14 +162,15 @@ func query(t driver.Transport, n byte) (b byte, ok bool, err error) {
 
 func (d *escpos) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
 	var raw [3]byte
-	if err := drain(t); err != nil { // once: the answers then come back in order
+	var rs replies
+	if err := drain(t, &rs); err != nil { // once: the answers then come back in order
 		return nil, err
 	}
 	for i, n := range []byte{1, 2, 4} {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		b, ok, err := query(t, n)
+		b, ok, err := query(t, &rs, n)
 		if err != nil {
 			return nil, err
 		}
@@ -222,14 +226,14 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 	}
 	// From here the label may print: never report a failure that a retry would print twice.
 	res.Message = "sent (unconfirmed: no answer to GS r)"
-	if err := drain(t); err != nil {
+	var rs replies
+	if err := drain(t, &rs); err != nil {
 		return nil, dropped(err)
 	}
 	if _, err := t.Write([]byte{0x1D, 0x72, 0x01}); err != nil {
 		return nil, dropped(err)
 	}
 	p := make([]byte, 1)
-	var rs replies
 	for end := time.Now().Add(d.confirm); time.Now().Before(end); {
 		if err := ctx.Err(); err != nil {
 			res.Message = "sent (unconfirmed: stopped waiting: " + err.Error() + ")"
