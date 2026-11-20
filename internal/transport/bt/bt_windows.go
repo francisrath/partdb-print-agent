@@ -2,6 +2,7 @@ package bt
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -15,8 +16,13 @@ import (
 func init() { register(dial) }
 
 var winErrnos = errnos{
-	off:       []syscall.Errno{windows.WSAETIMEDOUT, windows.WSAECONNREFUSED, windows.WSAEHOSTDOWN},
+	// WSAETIMEDOUT also comes back (after ~5 s) for an address nobody answers on; WSAEACCES: not paired.
+	off:       []syscall.Errno{windows.WSAETIMEDOUT, windows.WSAECONNREFUSED, windows.WSAEHOSTDOWN, windows.WSAEACCES},
 	noAdapter: []syscall.Errno{windows.WSAEAFNOSUPPORT, windows.WSAENETDOWN},
+	// The device answered, but SDP found no SPP record (seen after ~1 s).
+	noSPP: []syscall.Errno{windows.WSAEADDRNOTAVAIL},
+	// Nothing remembered; WSALookupServiceBegin reports an empty result as an error.
+	noDevices: []syscall.Errno{windows.WSASERVICE_NOT_FOUND, windows.WSA_E_NO_MORE, windows.WSAENOMORE},
 }
 
 // sppUUID is the Serial Port Profile service class, 00001101-0000-1000-8000-00805F9B34FB.
@@ -30,16 +36,16 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	if err != nil {
 		return nil, mapErr(label(address, name), err, winErrnos)
 	}
-	ok := false
+	closed := false
 	defer func() {
-		if !ok {
+		if !closed {
 			_ = windows.Closesocket(h)
 		}
 	}()
 	if address == "" {
 		devs, err := pairedDevices()
 		if err != nil {
-			return nil, mapErr(name, err, winErrnos)
+			return nil, err
 		}
 		if address, err = resolve(devs, name); err != nil {
 			return nil, err
@@ -54,7 +60,8 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 		sa.ServiceClassId = sppUUID // Windows looks the channel up via SDP
 	}
 
-	// A blocking connect; closing the socket ends it early (timeout, ctx).
+	// A blocking connect; closing the socket ends it early (timeout, ctx). Either way the goroutine has
+	// returned before dial does.
 	done := make(chan error, 1)
 	go func() { done <- windows.Connect(h, sa) }()
 	timer := time.NewTimer(connectTimeout)
@@ -62,14 +69,20 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	select {
 	case err = <-done:
 	case <-timer.C:
+		_ = windows.Closesocket(h)
+		closed = true
+		<-done
 		err = os.ErrDeadlineExceeded
 	case <-ctx.Done():
-		return nil, ctx.Err() // the deferred Closesocket aborts the connect
+		_ = windows.Closesocket(h)
+		closed = true
+		<-done
+		return nil, ctx.Err()
 	}
 	if err != nil {
 		return nil, mapErr(label(address, name), err, winErrnos)
 	}
-	ok = true
+	closed = true // handed over to the socket
 	return &socket{h: h}, nil
 }
 
@@ -80,10 +93,7 @@ func pairedDevices() ([]device, error) {
 	q.Size = uint32(unsafe.Sizeof(q))
 	var h windows.Handle
 	if err := windows.WSALookupServiceBegin(&q, flags, &h); err != nil {
-		if errors.Is(err, windows.WSASERVICE_NOT_FOUND) {
-			return nil, nil // nothing remembered
-		}
-		return nil, err
+		return lookupErr(err, winErrnos)
 	}
 	defer func() { _ = windows.WSALookupServiceEnd(h) }()
 
@@ -100,13 +110,16 @@ func pairedDevices() ([]device, error) {
 			buf = make([]uint64, (n+7)/8)
 			continue
 		case err != nil:
-			return nil, err
+			if _, err := lookupErr(err, winErrnos); err != nil {
+				return nil, err
+			}
+			return devs, nil // another end-of-list code keeps what came before
 		}
 		if r.ServiceInstanceName == nil || r.NumberOfCsAddrs == 0 || r.SaBuffer == nil || r.SaBuffer.RemoteAddr.Sockaddr == nil {
 			continue
 		}
 		raw := (*windows.RawSockaddrBth)(unsafe.Pointer(r.SaBuffer.RemoteAddr.Sockaddr))
-		v := *(*uint64)(unsafe.Pointer(&raw.BtAddr))
+		v := binary.LittleEndian.Uint64(raw.BtAddr[:])
 		devs = append(devs, device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))})
 	}
 }

@@ -52,18 +52,18 @@ func TestResolve(t *testing.T) {
 
 func TestMapErr(t *testing.T) {
 	// plain numbers: the real per-OS tables are in bt_linux.go / bt_windows.go
-	tab := errnos{off: []syscall.Errno{112, 111}, noAdapter: []syscall.Errno{19}}
+	tab := errnos{off: []syscall.Errno{112, 111}, noAdapter: []syscall.Errno{19}, noSPP: []syscall.Errno{49}}
 	tests := []struct {
-		name     string
-		err      error
-		off, no  bool
-		passThru bool
+		name           string
+		err            error
+		off, no, nospp bool
 	}{
 		{"host down", syscall.Errno(112), true, false, false},
 		{"refused, wrapped", fmt.Errorf("connect: %w", syscall.Errno(111)), true, false, false},
 		{"our timeout", os.ErrDeadlineExceeded, true, false, false},
 		{"no adapter", syscall.Errno(19), false, true, false},
-		{"other", syscall.Errno(1), false, false, true},
+		{"no SPP service", syscall.Errno(49), false, false, true},
+		{"other", syscall.Errno(1), false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +71,9 @@ func TestMapErr(t *testing.T) {
 			msg := err.Error()
 			if got := strings.Contains(msg, "did not answer – is it switched on and paired with this computer?"); got != tt.off {
 				t.Errorf("off message %v: %q", got, msg)
+			}
+			if got := strings.Contains(msg, "has no serial port (SPP) service – is it the printer, and is it switched on?"); got != tt.nospp {
+				t.Errorf("no-SPP message %v: %q", got, msg)
 			}
 			if got := errors.Is(err, blecore.ErrNoBluetooth); got != tt.no {
 				t.Errorf("ErrNoBluetooth %v: %q", got, msg)
@@ -154,5 +157,61 @@ func TestOpenDialError(t *testing.T) {
 	}
 	if err := tr.Close(); err != nil {
 		t.Fatalf("Close after a failed Open: %v", err)
+	}
+}
+
+func TestConnectRetry(t *testing.T) {
+	tab := errnos{retry: []syscall.Errno{12, 16}}
+	tests := []struct {
+		name  string
+		errs  []error // what each attempt returns
+		calls int
+		ok    bool
+	}{
+		{"first try", []error{nil}, 1, true},
+		{"busy once", []error{syscall.Errno(12), nil}, 2, true},
+		{"busy twice", []error{syscall.Errno(16), syscall.Errno(12)}, 2, false},
+		{"our timeout", []error{os.ErrDeadlineExceeded, nil}, 1, false},
+		{"other", []error{syscall.Errno(1), nil}, 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			err := connectRetry(context.Background(), time.Millisecond, tab, func() error {
+				calls++
+				return tt.errs[calls-1]
+			})
+			if calls != tt.calls || (err == nil) != tt.ok {
+				t.Fatalf("%d calls, err %v; want %d calls, ok %v", calls, err, tt.calls, tt.ok)
+			}
+		})
+	}
+}
+
+func TestLookupErr(t *testing.T) {
+	tab := errnos{noDevices: []syscall.Errno{108}}
+	if devs, err := lookupErr(syscall.Errno(108), tab); devs != nil || err != nil {
+		t.Errorf("nothing remembered: %v %v, want an empty list", devs, err)
+	}
+	if _, err := lookupErr(syscall.Errno(22), tab); !errors.Is(err, blecore.ErrNoBluetooth) || !errors.Is(err, syscall.Errno(22)) {
+		t.Errorf("lookup failure: %v, want ErrNoBluetooth wrapping the errno", err)
+	}
+}
+
+// Close may race a Read (a job cancelled while waiting for the printer); run with -race.
+func TestCloseDuringRead(t *testing.T) {
+	tr, _ := pipeTransport(t)
+	tr.ReadTimeout = time.Second
+	done := make(chan error)
+	go func() {
+		_, err := tr.Read(make([]byte, 1))
+		done <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("Read during Close: %v, want a closed-link error", err)
 	}
 }

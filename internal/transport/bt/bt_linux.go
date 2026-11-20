@@ -16,25 +16,20 @@ import (
 
 func init() { register(dial) }
 
+// retryPause is the wait before the one connect retry.
+const retryPause = 2 * time.Second
+
 var linuxErrnos = errnos{
-	// EACCES: authentication failed, i.e. not (or no longer) paired.
-	off: []syscall.Errno{unix.EHOSTDOWN, unix.ECONNREFUSED, unix.ETIMEDOUT, unix.EACCES},
+	// EACCES: authentication failed, i.e. not (or no longer) paired. ENOMEM/EBUSY: the kernel still
+	// tears down the last link (seen right after a failed attempt); after the retry they mean the same.
+	off: []syscall.Errno{unix.EHOSTDOWN, unix.ECONNREFUSED, unix.ETIMEDOUT, unix.EACCES, unix.ENOMEM, unix.EBUSY},
 	// EHOSTUNREACH: the kernel found no powered-up adapter to route through (hci_get_route);
 	// EAFNOSUPPORT: no Bluetooth support in the kernel.
 	noAdapter: []syscall.Errno{unix.EADDRNOTAVAIL, unix.ENODEV, unix.EHOSTUNREACH, unix.EAFNOSUPPORT},
+	retry:     []syscall.Errno{unix.ENOMEM, unix.EBUSY},
 }
 
 func dial(ctx context.Context, address, name string, channel int) (conn, error) {
-	fd, err := unix.Socket(unix.AF_BLUETOOTH, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.BTPROTO_RFCOMM)
-	if err != nil {
-		return nil, mapErr(label(address, name), err, linuxErrnos)
-	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = unix.Close(fd)
-		}
-	}()
 	if address == "" {
 		devs, err := bluezDevices(ctx)
 		if err != nil {
@@ -51,18 +46,35 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 	if channel == 0 {
 		channel = 1
 	}
-	printer := label(address, name)
-	err = unix.Connect(fd, &unix.SockaddrRFCOMM{Addr: rfcommAddr(a), Channel: uint8(channel)})
-	if errors.Is(err, unix.EINPROGRESS) {
-		err = waitConnected(ctx, fd, connectTimeout)
-	}
+	sa := &unix.SockaddrRFCOMM{Addr: rfcommAddr(a), Channel: uint8(channel)}
+	var f *os.File
+	err = connectRetry(ctx, retryPause, linuxErrnos, func() (err error) {
+		f, err = connectOnce(ctx, sa, address)
+		return err
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, mapErr(printer, err, linuxErrnos)
+		return nil, mapErr(label(address, name), err, linuxErrnos)
 	}
-	ok = true
+	return f, nil
+}
+
+// connectOnce connects a new RFCOMM socket, giving up after connectTimeout (os.ErrDeadlineExceeded).
+func connectOnce(ctx context.Context, sa *unix.SockaddrRFCOMM, address string) (*os.File, error) {
+	fd, err := unix.Socket(unix.AF_BLUETOOTH, unix.SOCK_STREAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.BTPROTO_RFCOMM)
+	if err != nil {
+		return nil, err
+	}
+	err = unix.Connect(fd, sa)
+	if errors.Is(err, unix.EINPROGRESS) {
+		err = waitConnected(ctx, fd, connectTimeout)
+	}
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
 	// Non-blocking, so the runtime poller serves it: deadlines work and Close interrupts a Read.
 	return os.NewFile(uintptr(fd), "bt:"+address), nil
 }
@@ -102,11 +114,17 @@ func waitConnected(ctx context.Context, fd int, timeout time.Duration) error {
 func bluezDevices(ctx context.Context) ([]device, error) {
 	bus, err := dbus.SystemBus() // shared connection: not closed here
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("bt: %w: D-Bus: %w", blecore.ErrNoBluetooth, err)
 	}
 	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 	err = bus.Object("org.bluez", "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("bt: %w: BlueZ: %w", blecore.ErrNoBluetooth, err)
 	}
 	var devs []device

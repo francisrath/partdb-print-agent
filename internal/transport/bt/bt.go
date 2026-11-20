@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +34,18 @@ type Transport struct {
 	Channel       int           // RFCOMM channel; 0 = the OS default (Linux 1, Windows SDP lookup)
 	ReadTimeout   time.Duration // per Read; 0 = 2s
 	dial          func(ctx context.Context) (conn, error)
-	conn          conn
+
+	mu   sync.Mutex // guards conn only: Close must be able to interrupt a blocked Read
+	conn conn
+}
+
+func (t *Transport) open() (conn, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.conn == nil {
+		return nil, errors.New("bt: not open")
+	}
+	return t.conn, nil
 }
 
 func (t *Transport) Kind() string { return "bt" }
@@ -46,34 +58,38 @@ func (t *Transport) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	t.mu.Lock()
 	t.conn = c
+	t.mu.Unlock()
 	return nil
 }
 
 func (t *Transport) Write(p []byte) (int, error) {
-	if t.conn == nil {
-		return 0, errors.New("bt: not open")
-	}
-	if err := t.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+	c, err := t.open()
+	if err != nil {
 		return 0, err
 	}
-	return t.conn.Write(p)
+	if err := c.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return 0, err
+	}
+	return c.Write(p)
 }
 
 // Read returns an error wrapping os.ErrDeadlineExceeded when the printer says nothing within ReadTimeout,
 // io.EOF (or the OS error) once the link is gone.
 func (t *Transport) Read(p []byte) (int, error) {
-	if t.conn == nil {
-		return 0, errors.New("bt: not open")
+	c, err := t.open()
+	if err != nil {
+		return 0, err
 	}
 	to := t.ReadTimeout
 	if to == 0 {
 		to = readTimeout
 	}
-	if err := t.conn.SetReadDeadline(time.Now().Add(to)); err != nil {
+	if err := c.SetReadDeadline(time.Now().Add(to)); err != nil {
 		return 0, err
 	}
-	n, err := t.conn.Read(p)
+	n, err := c.Read(p)
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		return n, fmt.Errorf("bt: no answer within %v: %w", to, err)
 	}
@@ -81,12 +97,14 @@ func (t *Transport) Read(p []byte) (int, error) {
 }
 
 func (t *Transport) Close() error {
-	if t.conn == nil {
+	t.mu.Lock()
+	c := t.conn
+	t.conn = nil
+	t.mu.Unlock()
+	if c == nil {
 		return nil
 	}
-	err := t.conn.Close()
-	t.conn = nil
-	return err
+	return c.Close()
 }
 
 // device is one Bluetooth device the OS knows by name (BlueZ lists Name and Alias as two entries).
@@ -124,6 +142,26 @@ func resolve(devs []device, name string) (string, error) {
 type errnos struct {
 	off       []syscall.Errno // the printer did not answer: off, out of range or not paired
 	noAdapter []syscall.Errno // no usable Bluetooth adapter
+	noSPP     []syscall.Errno // the device answered but offers no serial port service
+	retry     []syscall.Errno // a connect worth one more try (the stack still cleaning up the last link)
+	noDevices []syscall.Errno // the paired-device lookup found nothing (not a failure)
+}
+
+// connectRetry runs connect once more after pause when it fails with a retryable errno. Never after
+// os.ErrDeadlineExceeded: the full connect timeout has passed already.
+func connectRetry(ctx context.Context, pause time.Duration, e errnos, connect func() error) error {
+	return blecore.ConnectRetry(ctx, pause, connect, func(err error) bool {
+		return !errors.Is(err, os.ErrDeadlineExceeded) && isAny(err, e.retry)
+	}, func() {})
+}
+
+// lookupErr turns a failed paired-device lookup into an empty list (nothing remembered) or an error
+// wrapping blecore.ErrNoBluetooth.
+func lookupErr(err error, e errnos) ([]device, error) {
+	if isAny(err, e.noDevices) {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("bt: %w: looking up paired devices: %w", blecore.ErrNoBluetooth, err)
 }
 
 func isAny(err error, list []syscall.Errno) bool {
@@ -140,6 +178,8 @@ func mapErr(printer string, err error, e errnos) error {
 	switch {
 	case errors.Is(err, os.ErrDeadlineExceeded) || isAny(err, e.off):
 		return fmt.Errorf("bt: %s did not answer – is it switched on and paired with this computer? (%w)", printer, err)
+	case isAny(err, e.noSPP):
+		return fmt.Errorf("bt: %s has no serial port (SPP) service – is it the printer, and is it switched on? (%w)", printer, err)
 	case isAny(err, e.noAdapter):
 		return fmt.Errorf("bt: %w: %w", blecore.ErrNoBluetooth, err)
 	}
