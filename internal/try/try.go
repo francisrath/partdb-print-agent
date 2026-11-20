@@ -354,7 +354,7 @@ func (s *session) identifyCat(c discovery.Candidate) bool {
 	return true
 }
 
-// runCat tests a cat printer: status, test card, part label, then a darker reprint if it's too pale.
+// runCat tests a cat printer: status, test card, part label, then paper advice if the print is pale.
 func (s *session) runCat() {
 	if !s.ask("Print the test labels now? This prints a test card and a part label on the paper roll.", false) {
 		s.note("Stopped before printing.")
@@ -373,12 +373,11 @@ func (s *session) runCat() {
 	s.ask("Is the whole frame of label 1/2 (the border line) visible on both sides?", true)
 	s.say("\n— Label 2/2: part label with QR code and barcode —\n")
 	s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
-	if s.ask("Too pale? Print the test card again darker?", false) {
-		s.printer.Darkness = "dark"
-		s.note("  fix: darkness = dark")
-		if s.print("1b/2", s.card("1b/2")) {
-			s.ask("Is label 1b/2 dark enough to read easily?", true)
-		}
+	// darkness hardly changes the print on these printers (an MX10 looks the same at every setting)
+	if s.ask("Is the print pale or patchy?", false) {
+		s.say("Darkness changes little on these printers. Check the paper: thermal side up (a fingernail " +
+			"scratch turns that side dark), and a fresh roll — old or sun-faded paper prints pale.\n")
+		s.note("  pale: check the paper (thermal side up, fresh roll)")
 	}
 }
 

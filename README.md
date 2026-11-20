@@ -164,7 +164,8 @@ its advertised Bluetooth name, which must be exactly the model name.
 is the platform's device id: a MAC address on Linux and Windows, a CoreBluetooth UUID on macOS. With only
 `name`, the agent listens about 2 s longer after the first match and refuses to guess if two printers
 share the name (the error ends "set the address instead"); with `address`, the address wins. `pdb-print try` supports cat printers
-(status, test card, part label, and a "too pale?" question that reprints darker).
+(status, test card, part label, and a "pale or patchy?" question that points at the paper, since
+darkness changes little).
 
 A printer holds one connection at a time: disconnect it from phones and other apps first.
 

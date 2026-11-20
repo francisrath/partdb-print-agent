@@ -397,17 +397,19 @@ func TestTryCatPrinter(t *testing.T) {
 	d.answer("Did the labels come out", "")
 	d.answer("whole frame", "")
 	d.answer("sharp", "")
-	d.answer("Too pale?", "y")
-	d.answer("dark enough", "", func() {
-		if sent := fake.sent(); bytes.Count(sent, catFrame(0xBD, 0xC0)) != 1 || bytes.Count(sent, catFrame(0xBD, 0x80)) != 2 {
-			t.Errorf("speeds: %d dark, %d normal jobs; want the reprint dark", bytes.Count(sent, catFrame(0xBD, 0xC0)), bytes.Count(sent, catFrame(0xBD, 0x80)))
-		}
-	})
+	d.answer("pale or patchy?", "y")
 	got := d.finish()
-	for _, want := range []string{"MX10", "Label 1/2: printed", "Label 2/2: printed", "Label 1b/2: printed", "darkness = dark"} {
+	// darkness hardly changes an MX10's print: no darker reprint, the paper is the likely cause
+	if sent := fake.sent(); bytes.Count(sent, catFrame(0xBD, 0xC0)) != 0 || bytes.Count(sent, catFrame(0xBD, 0x80)) != 2 {
+		t.Errorf("speeds: %d dark, %d normal jobs; want the two labels only", bytes.Count(sent, catFrame(0xBD, 0xC0)), bytes.Count(sent, catFrame(0xBD, 0x80)))
+	}
+	for _, want := range []string{"MX10", "Label 1/2: printed", "Label 2/2: printed", "pale: check the paper"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}
+	}
+	if out := d.output(); !strings.Contains(out, "thermal side") || !strings.Contains(out, "Darkness changes little") {
+		t.Errorf("no paper advice:\n%s", out)
 	}
 	out := d.output()
 	for _, zebra := range []string{"~HI", "Ask this printer what it is", "Read this printer's settings", "Which labels are loaded", "Switch the printer off", "restored", "Open the printer's lid"} {
