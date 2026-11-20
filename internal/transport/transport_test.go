@@ -1,12 +1,12 @@
 package transport_test
 
 import (
+	"sync"
 	"testing"
 
+	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
-
-	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
 	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
@@ -30,14 +30,20 @@ func TestTransportRegistry(t *testing.T) {
 	}
 }
 
+var (
+	probeOnce sync.Once
+	probeGot  *devicedb.Model
+)
+
 func TestRegisterPassesModel(t *testing.T) {
-	var got *devicedb.Model
-	transport.Register("model-probe", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
-		got = m
+	probeGot = nil
+	// the registry is global and rejects duplicates, so register once per process (-count=N)
+	probeOnce.Do(func() { transport.Register("model-probe", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
+		probeGot = m
 		return nil, nil
-	})
+	}) })
 	want := &devicedb.Model{ID: "x"}
-	if _, err := transport.New(config.Transport{Kind: "model-probe"}, want); err != nil || got != want {
-		t.Errorf("model not passed: %p %p %v", got, want, err)
+	if _, err := transport.New(config.Transport{Kind: "model-probe"}, want); err != nil || probeGot != want {
+		t.Errorf("model not passed: %p %p %v", probeGot, want, err)
 	}
 }
