@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/blebridge"
@@ -35,6 +36,18 @@ const (
 )
 
 var errNoHelper = errors.New("install pdb-print-ble (comes with the macOS release) for Bluetooth printers")
+
+// errDenied: macOS privacy (TCC) kills the helper with SIGABRT when the app that started pdb-print (its
+// "responsible" app, e.g. the Claude desktop app) may not use Bluetooth. Not ErrNoBluetooth: the adapter is fine.
+var errDenied = errors.New("macOS stopped " + helperName + " from using Bluetooth because the app that started " +
+	"pdb-print isn't allowed to (run it from Terminal or another terminal app and allow Bluetooth when asked; " +
+	"a service needs its own permission)")
+
+// killedByPrivacy reports whether the helper died of SIGABRT.
+func killedByPrivacy(ps *os.ProcessState) bool {
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGABRT
+}
 
 func init() {
 	transport.Register("ble", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
@@ -97,6 +110,9 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
+		}
+		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
+			return nil, fmt.Errorf("ble: %w", errDenied)
 		}
 		if msg := fatalLine(stderr.String()); msg != "" {
 			return nil, helperError(msg)
@@ -226,6 +242,8 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	switch {
 	case !exiting:
 		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
+	case killedByPrivacy(cmd.ProcessState):
+		t.dead = fmt.Errorf("ble: %w", errDenied)
 	case msg != "" && werr != nil:
 		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
 	case werr != nil:

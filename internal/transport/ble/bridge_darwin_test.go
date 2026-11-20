@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -40,9 +41,12 @@ func TestMain(m *testing.M) {
 // fakeHelper modes: "ok" echoes the open request and every write back as notifications; on the first
 // write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
 // and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
-// "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode.
+// "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
+// "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
+	case "abort": // a shell dies of the signal (Go would catch it and exit 2)
+		return syscall.Exec("/bin/sh", []string{"sh", "-c", "kill -ABRT $$"}, nil)
 	case "scan-hang": // stuck in Enable, deaf to the interrupt
 		signal.Ignore(os.Interrupt)
 		time.Sleep(time.Hour)
@@ -230,6 +234,8 @@ func TestBridgeDisconnectMidWrite(t *testing.T) {
 	}
 }
 
+const denied = "macOS stopped pdb-print-ble from using Bluetooth because the app that started pdb-print isn't allowed to"
+
 func TestBridgeOpenErrors(t *testing.T) {
 	tests := []struct {
 		mode, want  string
@@ -237,6 +243,7 @@ func TestBridgeOpenErrors(t *testing.T) {
 	}{
 		{"", "install pdb-print-ble (comes with the macOS release) for Bluetooth printers", false},
 		{"fail", "not authorized", true},
+		{"abort", denied, false},
 	}
 	for _, tt := range tests {
 		t.Run(cmp.Or(tt.mode, "no helper"), func(t *testing.T) {
@@ -265,9 +272,11 @@ func TestBridgeScan(t *testing.T) {
 		ads         int
 		noBluetooth bool
 		missing     bool
+		denied      bool
 	}{
 		{mode: "scan", ads: 2},
 		{mode: "scan-nobt", noBluetooth: true},
+		{mode: "abort", denied: true},
 		{mode: "", missing: true},
 	}
 	for _, tt := range tests {
@@ -278,6 +287,10 @@ func TestBridgeScan(t *testing.T) {
 			case tt.missing:
 				if err == nil || !strings.Contains(err.Error(), "install pdb-print-ble") {
 					t.Errorf("Scan: %v", err)
+				}
+			case tt.denied:
+				if err == nil || !strings.Contains(err.Error(), denied) || errors.Is(err, blecore.ErrNoBluetooth) {
+					t.Errorf("Scan: %v, want %q and not ErrNoBluetooth", err, denied)
 				}
 			case tt.noBluetooth:
 				if !errors.Is(err, blecore.ErrNoBluetooth) {

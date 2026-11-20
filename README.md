@@ -176,7 +176,9 @@ A printer holds one connection at a time: disconnect it from phones and other ap
 - **macOS:** Bluetooth goes through the helper `pdb-print-ble`, shipped next to `pdb-print` in the macOS
   archive and the Homebrew cask (if it's missing, the error says to install it). Only the helper asks for
   Bluetooth permission, once, the first time a Bluetooth printer is used; the prompt names the app that ran
-  it (e.g. Terminal). Other commands never trigger it. The helper isn't Developer-ID signed yet, so macOS
+  it (e.g. Terminal). An app that can't ask for Bluetooth (e.g. an editor or chat app running pdb-print for
+  you) gets the helper stopped by macOS; the error says so: run it from a terminal app instead. Other commands
+  never trigger it. The helper isn't Developer-ID signed yet, so macOS
   may ask again after an update.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
 
