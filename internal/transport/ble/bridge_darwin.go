@@ -227,7 +227,7 @@ func (t *Transport) Open(ctx context.Context) error {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("ble: start %s: %w", helper, err)
+		return fmt.Errorf("%s: start %s: %w", t.Kind(), helper, err)
 	}
 	done := make(chan struct{})
 	t.mu.Lock()
@@ -281,15 +281,15 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	t.mu.Lock()
 	switch {
 	case !exiting:
-		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
+		t.dead = fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
 	case killedByPrivacy(cmd.ProcessState):
-		t.dead = fmt.Errorf("ble: %w; the helper exited: %w", errDenied, werr)
+		t.dead = fmt.Errorf("%s: %w; the helper exited: %w", t.Kind(), errDenied, werr)
 	case msg != "" && werr != nil:
-		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
+		t.dead = fmt.Errorf("%s: %s: %s (%w)", t.Kind(), helperName, msg, werr)
 	case werr != nil:
-		t.dead = fmt.Errorf("ble: %s exited: %w", helperName, werr)
+		t.dead = fmt.Errorf("%s: %s exited: %w", t.Kind(), helperName, werr)
 	default:
-		t.dead = fmt.Errorf("ble: %s exited", helperName)
+		t.dead = fmt.Errorf("%s: %s exited", t.Kind(), helperName)
 	}
 	t.mu.Unlock()
 	close(done)
@@ -301,14 +301,14 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	stdin, replies, done := t.stdin, t.replies, t.done
 	t.mu.Unlock()
 	if stdin == nil {
-		return nil, errors.New("ble: not open")
+		return nil, fmt.Errorf("%s: not open", t.Kind())
 	}
 	if err := blebridge.Write(stdin, typ, payload); err != nil {
 		select { // a failed pipe write means the helper is gone, or about to be
 		case <-done:
 			return nil, t.deadErr()
 		case <-time.After(closeGrace):
-			return nil, fmt.Errorf("ble: %s: %w", helperName, err)
+			return nil, fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
 		}
 	}
 	var r reply
@@ -329,7 +329,7 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	case blebridge.TypeError:
 		return nil, helperError(t.Kind(), string(r.payload))
 	}
-	return nil, fmt.Errorf("ble: %s: unexpected reply %q", helperName, r.typ)
+	return nil, fmt.Errorf("%s: %s: unexpected reply %q", t.Kind(), helperName, r.typ)
 }
 
 func (t *Transport) deadErr() error {
@@ -358,7 +358,7 @@ func (t *Transport) Read(p []byte) (int, error) {
 		t.mu.Lock()
 		if t.cmd == nil {
 			t.mu.Unlock()
-			return 0, errors.New("ble: not open")
+			return 0, fmt.Errorf("%s: not open", t.Kind())
 		}
 		if len(t.buf) > 0 {
 			n := copy(p, t.buf)
@@ -378,7 +378,7 @@ func (t *Transport) Read(p []byte) (int, error) {
 				return 0, t.deadErr()
 			}
 		case <-timer.C:
-			return 0, fmt.Errorf("ble: no notification within %v: %w", readTimeout, os.ErrDeadlineExceeded)
+			return 0, fmt.Errorf("%s: no notification within %v: %w", t.Kind(), readTimeout, os.ErrDeadlineExceeded)
 		}
 	}
 }

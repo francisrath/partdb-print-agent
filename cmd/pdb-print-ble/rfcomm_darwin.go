@@ -36,7 +36,7 @@ import (
 func init() { runtime.LockOSThread() }
 
 const (
-	rfcommConnect = 30 * time.Second // page timeout, SDP query and channel open
+	rfcommConnect = 20 * time.Second // page timeout, SDP query (≤10 s) and channel open
 	rfcommClose   = 3 * time.Second
 )
 
@@ -222,13 +222,13 @@ func scanClassic(ctx context.Context, timeout time.Duration) ([]classicDevice, e
 	}
 	devs := devices(C.btPaired())
 	C.btInquiryStart(C.int(min(max(timeout/time.Second, 1), 60)))
-	select { // the inquiry may run past its length while it asks new devices for their names
+	select { // the inquiry would run past its length asking new devices for their names: stop it on time
 	case st := <-rf.inquiry:
 		if st != 0 {
 			log.Printf("inquiry: IOReturn %#x", uint32(st))
 		}
 	case <-ctx.Done():
-	case <-time.After(timeout + 10*time.Second):
+	case <-time.After(timeout):
 	}
 	seen := map[string]bool{}
 	var all []classicDevice

@@ -513,8 +513,8 @@ func TestBridgeRFCOMM(t *testing.T) {
 	if got := readAll(t, tr); got != "\x10\x04\x01" {
 		t.Errorf("data %q", got)
 	}
-	if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Errorf("Read with nothing sent: %v, want os.ErrDeadlineExceeded", err)
+	if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, os.ErrDeadlineExceeded) || !strings.HasPrefix(err.Error(), "bt: ") {
+		t.Errorf("Read with nothing sent: %v, want bt: … os.ErrDeadlineExceeded", err)
 	}
 	if err := tr.Close(); err != nil {
 		t.Error(err)
@@ -547,10 +547,14 @@ func TestBridgeRFCOMMErrors(t *testing.T) {
 		if _, err := tr.Write([]byte("x")); err == nil {
 			t.Error("Write to a dropped link succeeded")
 		}
-		if _, err := tr.Read(make([]byte, 10)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
-			t.Errorf("Read after the link dropped: %v, want the helper's exit", err)
+		want := "bt: pdb-print-ble: printer 5E3F0A6B disconnected (exit status 1)"
+		if _, err := tr.Read(make([]byte, 10)); err == nil || err.Error() != want {
+			t.Errorf("Read after the link dropped: %v, want %q", err, want)
 		}
 		_ = tr.Close()
+		if _, err := tr.Write([]byte("x")); err == nil || err.Error() != "bt: not open" {
+			t.Errorf("Write after Close: %v, want bt: not open", err)
+		}
 	})
 }
 

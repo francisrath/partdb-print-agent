@@ -13,6 +13,9 @@ static IOBluetoothDevice *gDev;
 static IOBluetoothRFCOMMChannel *gChan;
 static IOBluetoothDeviceInquiry *gInq;
 static volatile int gStop;
+static NSTimer *gSDPPoll;   // the SDP query's completion check (see startSDP)
+static NSDate *gSDPBefore;  // the device's last services update when the query started
+static BOOL gSDPDone;
 
 // sppChannel finds the serial port service's RFCOMM channel in gDev's (cached) SDP records.
 static BOOL sppChannel(BluetoothRFCOMMChannelID *id) {
@@ -26,6 +29,55 @@ static void openChannel(BluetoothRFCOMMChannelID id) {
 	IOReturn r = [gDev openRFCOMMChannelAsync:&ch withChannelID:id delegate:gDel];
 	gChan = ch;
 	if (r != kIOReturnSuccess) goOpenDone(BT_UNREACHABLE, r, 0);
+}
+
+// sdpDone ends the SDP query wait once: open the SPP channel, or report why not.
+static void sdpDone(IOReturn status) {
+	if (gSDPDone) return;
+	gSDPDone = YES;
+	[gSDPPoll invalidate];
+	gSDPPoll = nil;
+	BluetoothRFCOMMChannelID id;
+	if (sppChannel(&id)) {
+		openChannel(id);
+	} else if (status != kIOReturnSuccess) {
+		goOpenDone(BT_UNREACHABLE, status, 0);
+	} else {
+		goOpenDone(BT_NO_SPP, 0, 0);
+	}
+}
+
+// startSDP queries the device's services. IOBluetooth may fill its record cache without ever calling
+// sdpQueryComplete:status: (seen on macOS 27 with a first connect), so the cache is also polled every
+// 500 ms. After 10 s with no SPP record: services updated means no SPP; nothing at all means fall back to
+// channel 1 (BlueZ's default, and what most SPP printers use).
+static void startSDP(void) {
+	gSDPDone = NO;
+	gSDPBefore = [gDev getLastServicesUpdate];
+	IOReturn r = [gDev performSDPQuery:gDel]; // may end in sdpQueryComplete:status:
+	if (r != kIOReturnSuccess) {
+		sdpDone(r);
+		return;
+	}
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+	gSDPPoll = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) {
+		BluetoothRFCOMMChannelID id;
+		if (sppChannel(&id)) {
+			sdpDone(kIOReturnSuccess);
+			return;
+		}
+		if ([deadline timeIntervalSinceNow] > 0) return;
+		NSDate *now = [gDev getLastServicesUpdate];
+		if (now != nil && ![now isEqualToDate:gSDPBefore]) {
+			sdpDone(kIOReturnSuccess); // updated, but no SPP
+			return;
+		}
+		gSDPDone = YES;
+		[gSDPPoll invalidate];
+		gSDPPoll = nil;
+		fprintf(stderr, "pdb-print-ble: no answer to the service query within 10 s, trying RFCOMM channel 1\n");
+		openChannel(1);
+	}];
 }
 
 static char *devicesJSON(NSArray *devs) {
@@ -50,14 +102,7 @@ static char *devicesJSON(NSArray *devs) {
 	goClosed();
 }
 - (void)sdpQueryComplete:(IOBluetoothDevice *)dev status:(IOReturn)status {
-	BluetoothRFCOMMChannelID id;
-	if (status != kIOReturnSuccess) {
-		goOpenDone(BT_UNREACHABLE, status, 0);
-	} else if (sppChannel(&id)) {
-		openChannel(id);
-	} else {
-		goOpenDone(BT_NO_SPP, 0, 0);
-	}
+	sdpDone(status);
 }
 - (void)deviceInquiryComplete:(IOBluetoothDeviceInquiry *)sender error:(IOReturn)error aborted:(BOOL)aborted {
 	goInquiryDone(error);
@@ -108,8 +153,7 @@ void btOpen(const char *address, int channel) {
 		} else if (sppChannel(&id)) { // remembered from pairing
 			openChannel(id);
 		} else {
-			IOReturn r = [gDev performSDPQuery:gDel]; // ends in sdpQueryComplete:status:
-			if (r != kIOReturnSuccess) goOpenDone(BT_UNREACHABLE, r, 0);
+			startSDP();
 		}
 	});
 }
