@@ -1,9 +1,11 @@
 package blecore
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -83,6 +85,150 @@ func TestScannedSettled(t *testing.T) {
 		}
 		if _, err := Pick(nil, "", ""); err == nil || errors.Is(err, ErrNotFound) {
 			t.Fatalf("err %v", err)
+		}
+	})
+}
+
+func TestScannedNameChangeRestartsSettle(t *testing.T) {
+	var s Scanned
+	s.Add(Advert{Name: "GB01", Address: "AA:01"}, t0)
+	s.Add(Advert{Name: "MX10", Address: "AA:01"}, t0.Add(3*time.Second))
+	if s.Settled("MX10", "", t0.Add(3*time.Second)) {
+		t.Fatal("settle window counted from the old name")
+	}
+	s.Add(Advert{Address: "AA:01"}, t0.Add(4*time.Second))               // nameless update keeps the time
+	s.Add(Advert{Name: "MX10", Address: "AA:01"}, t0.Add(4*time.Second)) // same name keeps the time
+	if !s.Settled("MX10", "", t0.Add(3*time.Second+Settle)) {
+		t.Fatal("same-name or nameless update restarted the window")
+	}
+}
+
+// fakeRadio delivers adverts at given offsets, then blocks until stopped.
+type fakeRadio struct {
+	at       []time.Duration
+	ads      []Advert
+	startErr error // Scan fails at once with this
+	stopErr  error // Scan returns this once stopped
+	stops    chan struct{}
+	stopped  chan struct{}
+	once     sync.Once
+}
+
+func newFakeRadio() *fakeRadio {
+	return &fakeRadio{stops: make(chan struct{}, 100), stopped: make(chan struct{})}
+}
+
+func (f *fakeRadio) radio(fatal func(error) bool) Radio {
+	return Radio{
+		Scan: func(found func(Advert)) error {
+			if f.startErr != nil {
+				return f.startErr
+			}
+			start := time.Now()
+			for i, ad := range f.ads {
+				select {
+				case <-f.stopped:
+					return f.stopErr
+				case <-time.After(f.at[i] - time.Since(start)):
+					found(ad)
+				}
+			}
+			<-f.stopped
+			return f.stopErr
+		},
+		Stop: func() error {
+			f.stops <- struct{}{}
+			f.once.Do(func() { close(f.stopped) })
+			return nil
+		},
+		Fatal: fatal,
+	}
+}
+
+func TestRadioRun(t *testing.T) {
+	ctx := context.Background()
+	t.Run("name match at the deadline settles before returning", func(t *testing.T) {
+		f := newFakeRadio()
+		f.at = []time.Duration{80 * time.Millisecond, Settle / 2}
+		f.ads = []Advert{{Name: "MX10", Address: "AA:01"}, {Name: "MX10", Address: "AA:02"}}
+		start := time.Now()
+		got, err := f.radio(nil).Run(ctx, 100*time.Millisecond, &Target{Name: "MX10"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %+v, want both same-name printers (the second came inside the window)", got)
+		}
+		if d := time.Since(start); d < Settle {
+			t.Fatalf("returned after %v, before the settle window ended", d)
+		}
+	})
+	t.Run("nothing found stops at the deadline", func(t *testing.T) {
+		f := newFakeRadio()
+		start := time.Now()
+		got, err := f.radio(nil).Run(ctx, 100*time.Millisecond, &Target{Name: "MX10"})
+		if err != nil || len(got) != 0 {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("waited %v without a match", d)
+		}
+	})
+	t.Run("address stops at once", func(t *testing.T) {
+		f := newFakeRadio()
+		f.at = []time.Duration{10 * time.Millisecond}
+		f.ads = []Advert{{Name: "MX10", Address: "AA:01"}}
+		got, err := f.radio(nil).Run(ctx, 5*time.Second, &Target{Address: "aa:01"})
+		if err != nil || len(got) != 1 {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+	})
+	t.Run("failed start clears the library's scan state", func(t *testing.T) {
+		f := newFakeRadio()
+		f.startErr = errors.New("SetDiscoveryFilter failed")
+		_, err := f.radio(nil).Run(ctx, time.Second, nil)
+		if err != f.startErr {
+			t.Fatalf("err %v", err)
+		}
+		if len(f.stops) == 0 {
+			t.Fatal("Stop not called after the failed start")
+		}
+	})
+	t.Run("fatal error while stopping at the deadline", func(t *testing.T) {
+		f := newFakeRadio()
+		f.stopErr = errors.New("failed to stop scanning (error code 1)")
+		fatal := func(err error) bool { return strings.Contains(err.Error(), "code 1") }
+		if _, err := f.radio(fatal).Run(ctx, 50*time.Millisecond, nil); err != f.stopErr {
+			t.Fatalf("err %v, want the adapter error", err)
+		}
+	})
+	t.Run("other error while stopping keeps the adverts", func(t *testing.T) {
+		f := newFakeRadio()
+		f.at = []time.Duration{10 * time.Millisecond}
+		f.ads = []Advert{{Name: "GB01", Address: "AA:01"}}
+		f.stopErr = errors.New("No discovery started")
+		fatal := func(err error) bool { return false }
+		got, err := f.radio(fatal).Run(ctx, 50*time.Millisecond, nil)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("got %+v, %v", got, err)
+		}
+	})
+	t.Run("a double close in the library doesn't panic", func(t *testing.T) {
+		ch := make(chan struct{})
+		close(ch)
+		r := Radio{
+			Scan: func(func(Advert)) error { close(ch); return nil }, // the library's power-off branch lost the race
+			Stop: func() error { return nil },
+		}
+		if _, err := r.Run(ctx, time.Second, nil); err == nil {
+			t.Fatal("want an error from the recovered close")
+		}
+		r = Radio{
+			Scan: func(func(Advert)) error { time.Sleep(300 * time.Millisecond); return nil },
+			Stop: func() error { close(ch); return nil }, // our StopScan lost the race
+		}
+		if _, err := r.Run(ctx, 10*time.Millisecond, nil); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

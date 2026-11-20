@@ -28,11 +28,13 @@ func TestChunkerPausesOnFlowControl(t *testing.T) {
 		got []byte
 	)
 	wrote := make(chan struct{}, 100)
+	proceed := make(chan struct{})
 	c := &Chunker{Max: 20, Gap: 30 * time.Millisecond, Write: func(b []byte) error {
 		mu.Lock()
 		got = append(got, b...)
 		mu.Unlock()
 		wrote <- struct{}{}
+		<-proceed // the test installs the mid-send pause before the first write returns
 		return nil
 	}}
 	if p, changed := c.OnNotify(pause); !p || !changed {
@@ -54,6 +56,7 @@ func TestChunkerPausesOnFlowControl(t *testing.T) {
 	}
 	<-wrote // one chunk goes out, then pause mid-send
 	c.OnNotify(pause)
+	close(proceed)
 	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
 	n := len(got)

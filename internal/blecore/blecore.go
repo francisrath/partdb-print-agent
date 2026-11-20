@@ -160,6 +160,59 @@ func ConnectRetry(ctx context.Context, pause time.Duration, connect func() error
 	return connect()
 }
 
+// ErrConnectTimeout: Dial gave up waiting for the connection.
+var ErrConnectTimeout = errors.New("no connection")
+
+// Dial runs connect, giving up after timeout or when ctx ends. An abandoned attempt may still connect
+// later: Dial waits up to grace for it to end and drops what it brought up, so that cleanup can't hit the
+// link of a later connection to the same device (callers serialise connects). An attempt still running
+// after grace is left to drop its connection on its own.
+func Dial[D any](ctx context.Context, timeout, grace time.Duration, connect func() (D, error), drop func(D)) (D, error) {
+	type result struct {
+		dev D
+		err error
+	}
+	res := make(chan result, 1)
+	go func() {
+		d, err := connect()
+		res <- result{d, err}
+	}()
+	late := func(r result) {
+		if r.err == nil {
+			drop(r.dev)
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-res:
+		return r.dev, r.err
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	select {
+	case r := <-res:
+		late(r)
+	case <-time.After(grace):
+		go func() { late(<-res) }() // ponytail: may then hit a later link; grace covers BlueZ's own timeout
+	}
+	var zero D
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
+	return zero, fmt.Errorf("%w within %v", ErrConnectTimeout, timeout)
+}
+
+// Connected checks what a library Connect returned: v0.17.0's darwin Connect returns a zero Device and no
+// error when CoreBluetooth reports the failure before its timeout, and that Device panics on first use.
+func Connected[D comparable](dev D, err error) error {
+	var zero D
+	if err == nil && dev == zero {
+		return errors.New("the connection failed")
+	}
+	return err
+}
+
 // ErrNotEnabled: Bluetooth didn't come up in time (macOS: perhaps a permission prompt still open). Not
 // ErrNoBluetooth, which means a definite "off" or "none".
 var ErrNotEnabled = errors.New("bluetooth didn't become available — if macOS asked for permission, allow it and run again; otherwise check that Bluetooth is on")

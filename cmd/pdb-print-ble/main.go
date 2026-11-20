@@ -89,8 +89,8 @@ func scanCmd(args []string) error {
 // unavailable until it is answered.
 func enable() error { return blecore.WaitEnable(adapter.Enable, blecore.EnableWait) }
 
-// scan listens until timeout, ctx ends, or settled reports true.
-func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scanned, time.Time) bool) ([]blecore.Advert, error) {
+// scan listens until timeout, ctx ends, or target has settled (see blecore.Radio.Run).
+func scan(ctx context.Context, timeout time.Duration, target *blecore.Target) ([]blecore.Advert, error) {
 	enabled := make(chan error, 1)
 	go func() { enabled <- enable() }() // may wait for the permission prompt
 	select {
@@ -101,7 +101,7 @@ func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scan
 	case <-ctx.Done(): // interrupted before the scan started, perhaps with a permission prompt still open
 		return nil, blecore.ErrNotEnabled
 	}
-	ads, err := bleradio.Scan(ctx, adapter, timeout, settled)
+	ads, err := bleradio.Scan(ctx, adapter, timeout, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
@@ -205,9 +205,7 @@ func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 	if req.Name == "" && req.Address == "" {
 		return nil, errors.New("set the printer's address or name")
 	}
-	found, err := scan(context.Background(), openScan, func(s *blecore.Scanned, now time.Time) bool {
-		return s.Settled(req.Name, req.Address, now)
-	})
+	found, err := scan(context.Background(), openScan, &blecore.Target{Name: req.Name, Address: req.Address})
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +248,7 @@ func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 	})
 	dev, err := adapter.Connect(bluetooth.Address{UUID: id},
 		bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
-	if err != nil {
+	if err = blecore.Connected(dev, err); err != nil {
 		if missed != nil {
 			return nil, fmt.Errorf("%w; connecting by address: %v", missed, err)
 		}

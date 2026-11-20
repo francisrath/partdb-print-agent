@@ -92,14 +92,17 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	return scan(ctx, timeout, nil)
 }
 
-// scan stops early once settled reports true.
-func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scanned, time.Time) bool) ([]blecore.Advert, error) {
+// scan stops early once target has settled (see blecore.Radio.Run).
+func scan(ctx context.Context, timeout time.Duration, target *blecore.Target) ([]blecore.Advert, error) {
 	if err := enable(); err != nil {
 		return nil, err
 	}
 	scanMu.Lock()
 	defer scanMu.Unlock()
-	ads, err := bleradio.Scan(ctx, adapter, timeout, settled)
+	// An adapter gone at the deadline (Windows reports it as the watcher stops) is still ErrNoBluetooth.
+	ads, err := bleradio.Scan(ctx, adapter, timeout, target, func(err error) bool {
+		return errors.Is(scanError(err), blecore.ErrNoBluetooth)
+	})
 	if err != nil {
 		return nil, scanError(err)
 	}
@@ -131,9 +134,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	if _, err := blecore.Pick(nil, t.Name, t.Address); !errors.Is(err, blecore.ErrNotFound) {
 		return err // neither name nor address set
 	}
-	found, err := scan(ctx, openScan, func(s *blecore.Scanned, now time.Time) bool {
-		return s.Settled(t.Name, t.Address, now)
-	})
+	found, err := scan(ctx, openScan, &blecore.Target{Name: t.Name, Address: t.Address})
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	err = blecore.ConnectRetry(ctx, retryPause, func() (err error) {
 		dev, err = connect(ctx, addr)
 		return err
-	}, func(err error) bool { return !errors.Is(err, errConnectTimeout) }, func() { dropStale(ctx, addr) })
+	}, func(err error) bool { return !errors.Is(err, blecore.ErrConnectTimeout) }, func() { dropStale(ctx, addr) })
 	if err != nil {
 		return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
 	}
@@ -171,36 +172,13 @@ func (t *Transport) Open(ctx context.Context) error {
 	return nil
 }
 
-var errConnectTimeout = fmt.Errorf("no connection within %v", connectTimeout)
-
-// connect gives up after connectTimeout; a connection that still comes up later is dropped.
+// connect gives up after connectTimeout. A connection that still comes up later is dropped before
+// connect returns (Open holds connectMu), so it can't drop a later Open's link to the same printer. BlueZ's
+// Connect call itself ends after the 25 s D-Bus timeout.
 func connect(ctx context.Context, addr bluetooth.Address) (bluetooth.Device, error) {
-	type result struct {
-		dev bluetooth.Device
-		err error
-	}
-	res := make(chan result, 1)
-	go func() {
-		d, err := adapter.Connect(addr, bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
-		res <- result{d, err}
-	}()
-	timer := time.NewTimer(connectTimeout)
-	defer timer.Stop()
-	select {
-	case r := <-res:
-		return r.dev, r.err
-	case <-timer.C:
-	case <-ctx.Done():
-	}
-	go func() {
-		if r := <-res; r.err == nil {
-			_ = r.dev.Disconnect()
-		}
-	}()
-	if err := ctx.Err(); err != nil {
-		return bluetooth.Device{}, err
-	}
-	return bluetooth.Device{}, errConnectTimeout
+	return blecore.Dial(ctx, connectTimeout, 30*time.Second, func() (bluetooth.Device, error) {
+		return adapter.Connect(addr, bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
+	}, func(d bluetooth.Device) { _ = d.Disconnect() })
 }
 
 func (t *Transport) setup(dev bluetooth.Device, addr string) error {
