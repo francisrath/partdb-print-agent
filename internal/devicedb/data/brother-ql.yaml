@@ -1,5 +1,10 @@
-# Brother QL label printers (Raster Command Reference QL-800/810W/820NWB). status_code = byte 4 of
-# the 32-byte status reply; USB ids from the reference's Appendix A (vendor 0x04F9).
+# Brother QL label printers. QL-800/810W/820NWB: "Raster Command Reference QL-800/810W/820NWB".
+# Further models (untested, see the comment above each block): "Raster Command Reference
+# QL-600/QL-710W/QL-720NW" v1.02, "Raster Command Reference QL-1100/1110NWB/1115NWB" v1.00 and
+# "QL-500/550/560/570/580N/650TD/700/1050/1060N Command Reference" v6.00 (Brother's developer site).
+# status_code = byte 4 of the 32-byte status reply; USB ids from each reference's USB appendix
+# (vendor 0x04F9), all also in linux-usb.org usb.ids. ieee1284_model and snmp_descr follow the
+# model name like the tested QLs (the references don't give them).
 models:
   - id: QL-800
     vendor: Brother
@@ -32,3 +37,124 @@ models:
     match: {status_code: 0x41, usb: ["04f9:209d"], ieee1284_model: QL-820NWB, snmp_descr: "QL-820NWB"}
     media: *dk
     quirks: *ql
+
+  # untested: added from "Raster Command Reference QL-600/QL-710W/QL-720NW" v1.02, 2026-11-20.
+  # TIFF compression on both (p.11); 720 pins, same DK tables as the QL-800.
+  - id: QL-710W
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp, usb]
+    match: {status_code: 0x36, usb: ["04f9:2043"], ieee1284_model: QL-710W, snmp_descr: "QL-710W"}
+    media: *dk
+    quirks: *ql
+  - id: QL-720NW
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp, usb]
+    match: {status_code: 0x37, usb: ["04f9:2044"], ieee1284_model: QL-720NW, snmp_descr: "QL-720NW"}
+    media: *dk
+    quirks: *ql
+  # untested: added from "QL-500/550/560/570/580N/650TD/700/1050/1060N Command Reference" v6.00, 2026-11-20.
+  # ESC i a only on QL-580N/650TD/1050/1060N, M (compression) only on QL-570/580N/650TD/1050/1060N
+  # and TIFF only on QL-580N/650TD/1050/1060N (p.3, 17–21); min. length 295 dots on QL-560/1050/1060N,
+  # 150 on QL-570/580N/700; max. 11811 (1 m), 35433 (3 m) on QL-1050/1060N (p.8). 102×152 mm is left
+  # out of the QL-1050/1060N: this reference has it report a length of 153 mm, the QL-1100 one 152.
+  - id: QL-560
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [usb]
+    match: {status_code: 0x31, usb: ["04f9:2027"], ieee1284_model: QL-560}
+    media: *dk
+    quirks: {min_lines: 295, max_lines: 11811, feed_margin: 35, no_mode_switch: true, no_compression: true, no_compression_cmd: true}
+  - id: QL-570
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [usb]
+    match: {status_code: 0x32, usb: ["04f9:2028"], ieee1284_model: QL-570}
+    media: *dk
+    quirks: {min_lines: 150, max_lines: 11811, feed_margin: 35, no_mode_switch: true, no_compression: true}
+  - id: QL-580N
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [tcp, usb]
+    match: {status_code: 0x33, usb: ["04f9:2029"], ieee1284_model: QL-580N, snmp_descr: "QL-580N"}
+    media: *dk
+    quirks: *ql
+  - id: QL-700
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 720
+    transports: [usb]
+    match: {status_code: 0x35, usb: ["04f9:2042"], ieee1284_model: QL-700} # 0x2049 is its mass-storage mode
+    media: *dk
+    quirks: {min_lines: 150, max_lines: 11811, feed_margin: 35, no_mode_switch: true, no_compression: true, no_compression_cmd: true}
+  - id: QL-1050
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 1296
+    transports: [usb]
+    match: {status_code: 0x50, usb: ["04f9:2020"], ieee1284_model: QL-1050}
+    media: &dkwide-old [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-22243, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202, dk-11240]
+    quirks: &qlwide-old {min_lines: 295, max_lines: 35433, feed_margin: 35}
+  - id: QL-1060N
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 1296
+    transports: [tcp, usb]
+    match: {status_code: 0x34, usb: ["04f9:202a"], ieee1284_model: QL-1060N, snmp_descr: "QL-1060N"}
+    media: *dkwide-old
+    quirks: *qlwide-old
+  # untested: added from "Raster Command Reference QL-1100/1110NWB/1115NWB" v1.00, 2026-11-20.
+  # 1296 pins (162-byte lines), TIFF compression; 25.4 mm–3 m (301–35434 dots, p.17); the QL-1115NWB
+  # takes no 103 mm roll (p.14–15).
+  - id: QL-1100
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 1296
+    transports: [usb]
+    match: {status_code: 0x43, usb: ["04f9:20a7"], ieee1284_model: QL-1100} # 0x20a9: mass-storage mode
+    media: &dkwide [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-22243, dk-22246, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202, dk-11240, dk-11241, dk-11247]
+    quirks: &qlwide {min_lines: 301, max_lines: 35434, feed_margin: 35}
+  - id: QL-1110NWB
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 1296
+    transports: [tcp, usb]
+    match: {status_code: 0x44, usb: ["04f9:20a8"], ieee1284_model: QL-1110NWB, snmp_descr: "QL-1110NWB"} # 0x20aa: mass storage
+    media: *dkwide
+    quirks: *qlwide
+  - id: QL-1115NWB
+    vendor: Brother
+    driver: brother
+    dialect: ql
+    dpi: 300
+    head_pins: 1296
+    transports: [tcp, usb]
+    match: {status_code: 0x45, usb: ["04f9:20ab"], ieee1284_model: QL-1115NWB, snmp_descr: "QL-1115NWB"} # 0x20ac: mass storage
+    media: [dk-22214, dk-22210, dk-22225, dk-22223, dk-n55224, dk-22205, dk-22243, dk-11204, dk-11201, dk-11208, dk-11209, dk-11202, dk-11240, dk-11241]
+    quirks: *qlwide

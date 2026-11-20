@@ -516,7 +516,7 @@ func TestPTStatusWithoutReplyFamilyName(t *testing.T) {
 
 func TestFormMediaTaggedWithModels(t *testing.T) {
 	h := newHarness(t)
-	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, `data-models="QL-810W QL-820NWB"`) {
+	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, ` QL-810W QL-820NWB"`) {
 		t.Error("media options don't say which models take them")
 	}
 }

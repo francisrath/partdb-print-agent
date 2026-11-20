@@ -48,6 +48,26 @@ type Media struct {
 	EdgeMM float64 `yaml:"edge_mm"`
 }
 
+// Geometry is how a medium lies on one size of head, where that differs from the media entry:
+// a DK roll sits on other pins of a 1296-pin QL than of a 720-pin one, and TZe tape has other dots
+// on a 180 dpi P-touch. MediaFor applies it to models with that many head pins; every field
+// replaces the media's (printable_length_dots only when set).
+type Geometry struct {
+	Media               string  `yaml:"media"`
+	HeadPins            int     `yaml:"head_pins"`
+	DPI                 int     `yaml:"dpi"`
+	WidthDots           int     `yaml:"width_dots"`
+	PrintableWidthDots  int     `yaml:"printable_width_dots"`
+	PrintableLengthDots int     `yaml:"printable_length_dots"`
+	OffsetPins          int     `yaml:"offset_pins"`
+	EdgeMM              float64 `yaml:"edge_mm"`
+}
+
+type geoKey struct {
+	media string
+	pins  int
+}
+
 // Match says how a model recognises itself.
 type Match struct {
 	USB           []string `yaml:"usb"`            // "04f9:200f"
@@ -103,13 +123,15 @@ func (m *Model) QuirkString(key string) string {
 }
 
 type DB struct {
-	models map[string]*Model
-	media  map[string]Media
+	models   map[string]*Model
+	media    map[string]Media
+	geometry map[geoKey]Geometry
 }
 
 type file struct {
-	Models []*Model `yaml:"models"`
-	Media  []Media  `yaml:"media"`
+	Models   []*Model   `yaml:"models"`
+	Media    []Media    `yaml:"media"`
+	Geometry []Geometry `yaml:"geometry"`
 }
 
 //go:embed data/*.yaml
@@ -138,7 +160,7 @@ func Load(fsys fs.FS) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db := &DB{models: map[string]*Model{}, media: map[string]Media{}}
+	db := &DB{models: map[string]*Model{}, media: map[string]Media{}, geometry: map[geoKey]Geometry{}}
 	origin := map[string]string{} // model id → file
 	usb := map[string]string{}    // usb id → model id
 	var errs []error
@@ -164,6 +186,13 @@ func Load(fsys fs.FS) (*DB, error) {
 				errs = append(errs, fmt.Errorf("%s: media %q missing or defined twice", base, m.ID))
 			}
 			db.media[m.ID] = m
+		}
+		for _, g := range f.Geometry {
+			k := geoKey{g.Media, g.HeadPins}
+			if _, dup := db.geometry[k]; dup || g.HeadPins <= 0 || g.DPI <= 0 || g.PrintableWidthDots <= 0 {
+				errs = append(errs, fmt.Errorf("%s: geometry of %q on %d pins defined twice or without head_pins, dpi, printable_width_dots", base, g.Media, g.HeadPins))
+			}
+			db.geometry[k] = g
 		}
 		for i, m := range f.Models {
 			if m == nil {
@@ -217,6 +246,11 @@ func Load(fsys fs.FS) (*DB, error) {
 			db.models[m.ID], origin[m.ID] = m, base
 		}
 	}
+	for k := range db.geometry {
+		if _, ok := db.media[k.media]; !ok {
+			errs = append(errs, fmt.Errorf("geometry for unknown media %s", k.media))
+		}
+	}
 	codes := map[string]string{} // family + status code → model id
 	for _, id := range slices.Sorted(maps.Keys(db.models)) {
 		m := db.models[id]
@@ -228,11 +262,11 @@ func Load(fsys fs.FS) (*DB, error) {
 			codes[key] = m.ID
 		}
 		for _, mid := range m.Media {
-			md, ok := db.media[mid]
-			if !ok {
+			if _, ok := db.media[mid]; !ok {
 				errs = append(errs, fmt.Errorf("%s: model %s: unknown media %s", origin[m.ID], m.ID, mid))
 				continue
 			}
+			md := db.on(m, mid)
 			if m.HeadPins > 0 && md.OffsetPins+md.PrintableWidthDots > m.HeadPins {
 				errs = append(errs, fmt.Errorf("%s: model %s: media %s needs pins %d–%d, head has %d", origin[m.ID], m.ID, mid,
 					md.OffsetPins, md.OffsetPins+md.PrintableWidthDots-1, m.HeadPins))
@@ -282,18 +316,29 @@ func (db *DB) Media(id string) (Media, bool) {
 func (db *DB) MediaFor(m *Model) []Media {
 	out := make([]Media, 0, len(m.Media))
 	for _, id := range m.Media {
-		md := db.media[id]
-		if md.DPI == 0 && m.DPI > 0 {
-			md.DPI = m.DPI
-			md.PrintableWidthDots = dots(md.WidthMM, m.DPI)
-			if m.HeadPins > 0 {
-				md.PrintableWidthDots = min(md.PrintableWidthDots, m.HeadPins)
-			}
-			md.PrintableLengthDots = dots(md.LengthMM, m.DPI)
-		}
-		out = append(out, md)
+		out = append(out, db.on(m, id))
 	}
 	return out
+}
+
+// on is media id as model m prints it: its head's geometry, or dots from mm at the model's dpi.
+func (db *DB) on(m *Model, id string) Media {
+	md := db.media[id]
+	if g, ok := db.geometry[geoKey{id, m.HeadPins}]; ok {
+		md.DPI, md.WidthDots, md.PrintableWidthDots, md.OffsetPins, md.EdgeMM = g.DPI, g.WidthDots, g.PrintableWidthDots, g.OffsetPins, g.EdgeMM
+		if g.PrintableLengthDots > 0 {
+			md.PrintableLengthDots = g.PrintableLengthDots
+		}
+	}
+	if md.DPI == 0 && m.DPI > 0 {
+		md.DPI = m.DPI
+		md.PrintableWidthDots = dots(md.WidthMM, m.DPI)
+		if m.HeadPins > 0 {
+			md.PrintableWidthDots = min(md.PrintableWidthDots, m.HeadPins)
+		}
+		md.PrintableLengthDots = dots(md.LengthMM, m.DPI)
+	}
+	return md
 }
 
 // dots converts mm at whole dots per mm: printers sold as "203/300 dpi" in this catalogue (Zebra)
