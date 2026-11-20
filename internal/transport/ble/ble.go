@@ -199,7 +199,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	ad, err := blecore.Pick(found, t.Name, t.Address)
 	if err != nil {
 		if errors.Is(err, blecore.ErrNotFound) {
-			return fmt.Errorf("%w within %v (is it on, and not connected to a phone?)", err, openScan)
+			return blecore.NotFound(err, openScan)
 		}
 		return err
 	}

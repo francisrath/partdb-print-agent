@@ -187,13 +187,14 @@ func serve(in io.Reader, out *frames) error {
 	if err := json.Unmarshal(p, &req); err != nil {
 		return fmt.Errorf("open request: %w", err)
 	}
-	dev, ch, mtu, err := open(req, out)
+	c, err := open(req, out)
 	if err != nil {
 		_ = out.send(blebridge.TypeError, []byte(err.Error()))
 		return err
 	}
-	defer func() { _ = dev.Disconnect() }()
-	ok, _ := json.Marshal(blebridge.OK{MTU: mtu})
+	defer c.close()
+	ch := c.ch
+	ok, _ := json.Marshal(blebridge.OK{MTU: c.mtu})
 	if err := out.send(blebridge.TypeOK, ok); err != nil {
 		return err
 	}
@@ -223,39 +224,73 @@ func serve(in io.Reader, out *frames) error {
 	}
 }
 
+// conn is the open connection serve uses.
+type conn struct {
+	dev  bluetooth.Device
+	rx   *bluetooth.DeviceCharacteristic
+	ch   *blecore.Chunker
+	mtu  int
+	link *blecore.Link
+}
+
+// close switches notifications off, disconnects and waits for CoreBluetooth to confirm: Disconnect only
+// asks for it, and a helper that exits at once can leave the printer connected (it then doesn't advertise,
+// so the next job can't find it).
+func (c *conn) close() {
+	c.link.Closing()
+	off := make(chan struct{})
+	go func() { _ = c.rx.EnableNotifications(nil); close(off) }()
+	select {
+	case <-off:
+	case <-time.After(blecore.NotifyOffWait):
+	}
+	_ = c.dev.Disconnect()
+	if !c.link.Wait(blecore.DisconnectWait) {
+		log.Printf("disconnect not confirmed within %v", blecore.DisconnectWait)
+	}
+}
+
 // open scans for the printer (settling on a name like the in-process transport), connects and subscribes.
 // Every notification goes to the client; the chunker also sees the flow control.
-func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Chunker, int, error) {
-	var none bluetooth.Device
+func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 	if req.Name == "" && req.Address == "" {
-		return none, nil, 0, errors.New("set the printer's address or name")
+		return nil, errors.New("set the printer's address or name")
 	}
 	found, err := scan(context.Background(), openScan, func(s *blecore.Scanned, now time.Time) bool {
 		return s.Settled(req.Name, req.Address, now)
 	})
 	if err != nil {
-		return none, nil, 0, err
+		return nil, err
 	}
 	ad, err := blecore.Pick(found, req.Name, req.Address)
+	var missed error // the scan missed the configured address
+	if errors.Is(err, blecore.ErrNotFound) && req.Address != "" {
+		// A printer still connected (macOS may hold the link a while after the last job) doesn't
+		// advertise, but Connect finds a peripheral the system knows by its UUID.
+		log.Printf("%s not seen in the scan, connecting by its address", req.Address)
+		missed, ad, err = blecore.NotFound(err, openScan), blecore.Advert{Address: req.Address}, nil
+	}
 	if errors.Is(err, blecore.ErrNotFound) {
-		return none, nil, 0, fmt.Errorf("%w within %v (is it on, and not connected to a phone?)", err, openScan)
+		return nil, blecore.NotFound(err, openScan)
 	}
 	if err != nil {
-		return none, nil, 0, err
+		return nil, err
 	}
 	id, err := bluetooth.ParseUUID(ad.Address)
 	if err != nil {
-		return none, nil, 0, fmt.Errorf("address %q: %w", ad.Address, err)
+		return nil, fmt.Errorf("address %q: %w", ad.Address, err)
 	}
 	// When the link drops, the client learns from this process ending (and its last stderr line). The
 	// handler is in place before Connect so a drop during setup isn't missed; disconnects before Connect
-	// succeeded belong to a failed attempt (Connect reports those itself).
+	// succeeded belong to a failed attempt (Connect reports those itself), and those after close started
+	// are our own.
 	var (
 		connected atomic.Bool
 		live      atomic.Pointer[blecore.Chunker]
+		link      = blecore.NewLink()
 	)
 	adapter.SetConnectionStateHandler(func(d bluetooth.Device, s bluetooth.ConnectionState) {
-		if s.Connected || d.Address.UUID != id || !connected.Load() {
+		if s.Connected || d.Address.UUID != id || !connected.Load() || !link.Dropped() {
 			return
 		}
 		if ch := live.Load(); ch != nil {
@@ -267,16 +302,21 @@ func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Ch
 	dev, err := adapter.Connect(bluetooth.Address{UUID: id},
 		bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
 	if err != nil {
-		return none, nil, 0, fmt.Errorf("connect %s: %w", ad.Address, err)
+		if missed != nil {
+			return nil, fmt.Errorf("%w; connecting by address: %v", missed, err)
+		}
+		return nil, fmt.Errorf("connect %s: %w", ad.Address, err)
 	}
 	connected.Store(true)
 	if ok, _ := dev.Connected(); !ok { // dropped before the handler could count it
-		return none, nil, 0, fmt.Errorf("printer %s disconnected", ad.Address)
+		return nil, fmt.Errorf("printer %s disconnected", ad.Address)
 	}
-	ch, mtu, err := setup(dev, req, out)
+	ch, rx, mtu, err := setup(dev, req, out)
 	if err != nil {
+		link.Closing()
 		_ = dev.Disconnect()
-		return none, nil, 0, err
+		link.Wait(blecore.DisconnectWait)
+		return nil, err
 	}
 	live.Store(ch)
 	who := ad.Address
@@ -284,19 +324,19 @@ func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Ch
 		who += " (" + ad.Name + ")"
 	}
 	log.Printf("connected to %s, %d bytes per write", who, mtu)
-	return dev, ch, mtu, nil
+	return &conn{dev: dev, rx: rx, ch: ch, mtu: mtu, link: link}, nil
 }
 
-func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*blecore.Chunker, int, error) {
+func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*blecore.Chunker, *bluetooth.DeviceCharacteristic, int, error) {
 	service := bluetooth.New16BitUUID(req.Service)
 	write, notify := bluetooth.New16BitUUID(req.Write), bluetooth.New16BitUUID(req.Notify)
 	svcs, err := dev.DiscoverServices([]bluetooth.UUID{service})
 	if err != nil || len(svcs) == 0 {
-		return nil, 0, fmt.Errorf("printer has no service %s: %v", service, err)
+		return nil, nil, 0, fmt.Errorf("printer has no service %s: %v", service, err)
 	}
 	chars, err := svcs[0].DiscoverCharacteristics([]bluetooth.UUID{write, notify})
 	if err != nil {
-		return nil, 0, fmt.Errorf("characteristics: %w", err)
+		return nil, nil, 0, fmt.Errorf("characteristics: %w", err)
 	}
 	var tx, rx *bluetooth.DeviceCharacteristic
 	for i := range chars {
@@ -308,12 +348,12 @@ func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*bleco
 		}
 	}
 	if tx == nil || rx == nil {
-		return nil, 0, fmt.Errorf("printer lacks characteristic %s or %s", write, notify)
+		return nil, nil, 0, fmt.Errorf("printer lacks characteristic %s or %s", write, notify)
 	}
 	// macOS reports the writable length itself (no −3), and WriteWithoutResponse waits for buffer space.
 	mtu, err := tx.GetMTU()
 	if err != nil {
-		return nil, 0, fmt.Errorf("mtu: %w", err)
+		return nil, nil, 0, fmt.Errorf("mtu: %w", err)
 	}
 	ch := &blecore.Chunker{Max: int(mtu), Gap: time.Duration(req.GapMS) * time.Millisecond, Write: func(b []byte) error {
 		_, err := tx.WriteWithoutResponse(b)
@@ -325,7 +365,7 @@ func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*bleco
 			log.Printf("notification: %v", err)
 		}
 	}); err != nil {
-		return nil, 0, fmt.Errorf("enable notifications: %w", err)
+		return nil, nil, 0, fmt.Errorf("enable notifications: %w", err)
 	}
-	return ch, max(int(mtu), 20), nil
+	return ch, rx, max(int(mtu), 20), nil
 }

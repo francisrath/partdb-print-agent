@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 // fakeHelper modes: "ok" echoes the open request and every write back as notifications; on the first
 // write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
 // and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
-// "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
+// "slowclose" takes the real helper's longest disconnect wait to close; "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
 // "scan-enabling" is interrupted while waiting for Bluetooth; "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
@@ -97,6 +97,9 @@ func fakeHelper(mode string, args []string) error {
 		}
 		switch typ {
 		case blebridge.TypeClose:
+			if mode == "slowclose" { // the real helper's longest wait for notifications off and the disconnect
+				time.Sleep(blecore.NotifyOffWait + blecore.DisconnectWait)
+			}
 			return nil
 		case blebridge.TypeWrite:
 			switch mode {
@@ -211,6 +214,23 @@ func TestBridgeTransport(t *testing.T) {
 	readAll(t, tr)
 	if err := tr.Close(); err != nil {
 		t.Error(err)
+	}
+}
+
+// The helper waits for the disconnect before it exits (else macOS may keep the printer connected): Close
+// gives it time for that instead of killing it.
+func TestBridgeCloseWaitsForDisconnect(t *testing.T) {
+	useFake(t, "slowclose")
+	tr := newBridge(t, config.Transport{Name: "MX10"})
+	if err := tr.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	readAll(t, tr)
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.deadErr(); err == nil || err.Error() != "ble: pdb-print-ble exited" {
+		t.Errorf("helper ended with %v, want a clean exit (not killed)", err)
 	}
 }
 

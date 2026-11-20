@@ -32,7 +32,8 @@ import (
 const (
 	helperName  = "pdb-print-ble"
 	readTimeout = 2 * time.Second
-	closeGrace  = 2 * time.Second // for the helper to disconnect and exit before it is killed
+	// for the helper to disconnect and exit before it is killed: it waits for the disconnect to be confirmed
+	closeGrace = blecore.NotifyOffWait + blecore.DisconnectWait + time.Second
 )
 
 var errNoHelper = errors.New("install pdb-print-ble (comes with the macOS release) for Bluetooth printers")
