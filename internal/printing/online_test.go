@@ -244,53 +244,58 @@ type opens struct {
 
 func (o *opens) Open(context.Context) error { *o.n++; return nil }
 
-// A BLE printer takes one connection, so the online check never connects: the printer is online while a
-// status, a job or a discovery scan found it working in the last 10 minutes.
-func TestOnlineBLE(t *testing.T) {
-	f := &fakeCat{}
-	s, p := catService(t, f)
-	n := 0
-	s.OpenTransport = func(*config.Printer) driver.Transport { return &opens{silent{kind: "ble"}, &n} }
-	online := func(want bool, when string) {
-		t.Helper()
-		before := n
-		if got := s.Online(p); got != want {
-			t.Errorf("%s: online %v, want %v", when, got, want)
-		}
-		if n != before {
-			t.Errorf("%s: the online check connected", when)
-		}
-	}
-	online(false, "never seen")
-	if _, err := s.Status(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-	online(true, "after a status")
+// A Bluetooth printer (LE or Classic) takes one connection, so the online check never connects: the
+// printer is online while a status, a job or a discovery scan found it working in the last 10 minutes.
+func TestOnlineBluetooth(t *testing.T) {
+	for _, kind := range []string{"ble", "bt"} {
+		t.Run(kind, func(t *testing.T) {
+			f := &fakeCat{}
+			s, p := catService(t, f)
+			p.Transport.Kind = kind
+			n := 0
+			s.OpenTransport = func(*config.Printer) driver.Transport { return &opens{silent{kind: kind}, &n} }
+			online := func(want bool, when string) {
+				t.Helper()
+				before := n
+				if got := s.Online(p); got != want {
+					t.Errorf("%s: online %v, want %v", when, got, want)
+				}
+				if n != before {
+					t.Errorf("%s: the online check connected", when)
+				}
+			}
+			online(false, "never seen")
+			if _, err := s.Status(context.Background(), p); err != nil {
+				t.Fatal(err)
+			}
+			online(true, "after a status")
 
-	s.mu.Lock()
-	s.seen[onlineKey(p)] = time.Now().Add(-11 * time.Minute)
-	s.online = nil
-	s.mu.Unlock()
-	online(false, "seen 11 minutes ago")
+			s.mu.Lock()
+			s.seen[onlineKey(p)] = time.Now().Add(-11 * time.Minute)
+			s.online = nil
+			s.mu.Unlock()
+			online(false, "seen 11 minutes ago")
 
-	if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
-		t.Fatal(err)
-	}
-	online(true, "after a job")
-	f.results = []error{errors.New("link dropped")}
-	if _, err := s.Print(context.Background(), p, "", labels(1)); err == nil {
-		t.Fatal("job didn't fail")
-	}
-	online(false, "after a job lost the printer")
+			if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
+				t.Fatal(err)
+			}
+			online(true, "after a job")
+			f.results = []error{errors.New("link dropped")}
+			if _, err := s.Print(context.Background(), p, "", labels(1)); err == nil {
+				t.Fatal("job didn't fail")
+			}
+			online(false, "after a job lost the printer")
 
-	s.SeenBLE(p)
-	online(true, "found in a scan")
+			s.SeenBluetooth(p)
+			online(true, "found in a scan")
+		})
+	}
 }
 
 // A sighting recorded while a check runs beats the check's older "offline".
 func TestOnlineBLESightingDuringCheck(t *testing.T) {
 	s, p := catService(t, &fakeCat{})
-	s.beforePublish = func() { s.beforePublish = nil; s.SeenBLE(p) }
+	s.beforePublish = func() { s.beforePublish = nil; s.SeenBluetooth(p) }
 	if !s.Online(p) {
 		t.Error("check reported offline over a newer sighting")
 	}
@@ -302,7 +307,7 @@ func TestOnlineBLESightingDuringCheck(t *testing.T) {
 // A job that fails on its document (or rendering) still reached the printer: the sighting stays.
 func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
 	s, p := catService(t, &fakeCat{})
-	s.SeenBLE(p)
+	s.SeenBluetooth(p)
 	noDoc := func(*driver.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
 	if _, err := s.Print(context.Background(), p, "", noDoc); err == nil {
 		t.Fatal("job didn't fail")
@@ -312,5 +317,31 @@ func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
 	}
 	if !s.Online(p) {
 		t.Error("a document error cleared the sighting")
+	}
+}
+
+// A Classic printer that prints but ignores DLE EOT stays online: silence on a link that opened says
+// nothing about its reach; only a link failure clears the sighting.
+func TestOnlineBluetoothSilentStatusKeepsSighting(t *testing.T) {
+	f := &fakeCat{statusErr: driver.ErrNoReadback}
+	s, p := catService(t, f)
+	p.Transport.Kind = "bt"
+	s.OpenTransport = func(*config.Printer) driver.Transport { return &silent{kind: "bt"} }
+	s.SeenBluetooth(p)
+	if _, err := s.Status(context.Background(), p); !errors.Is(err, driver.ErrNoReadback) {
+		t.Fatalf("err = %v", err)
+	}
+	if !s.Online(p) {
+		t.Error("a silent status took the printer offline")
+	}
+}
+
+// An edited RFCOMM channel is a new route: it needs its own sighting.
+func TestOnlineKeyChannel(t *testing.T) {
+	p := &config.Printer{ID: "rego", Transport: config.Transport{Kind: "bt", Address: "AA:BB:CC:DD:EE:FF", Channel: 1}}
+	k := onlineKey(p)
+	p.Transport.Channel = 2
+	if onlineKey(p) == k {
+		t.Error("the channel isn't part of the key")
 	}
 }

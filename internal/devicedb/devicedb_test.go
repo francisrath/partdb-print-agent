@@ -87,6 +87,7 @@ func TestLint(t *testing.T) {
 		"null model":       {map[string]string{"data/a.yaml": "models: [null]\n"}, []string{"a.yaml", "empty model"}},
 		"same status code": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {status_code: 0x39}}\n  - {id: Q2, driver: brother, dialect: ql, match: {status_code: 0x39}}\n"}, []string{"Q1", "Q2", "0x39"}},
 		"bad snmp pattern": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {snmp_descr: \"QL-(\"}}\n"}, []string{"Q1", "snmp_descr"}},
+		"escpos no pins":   {map[string]string{"data/e.yaml": "models:\n  - {id: E1, driver: escpos, dialect: raster}\n"}, []string{"E1", "head_pins"}},
 		"media too wide":   {map[string]string{"data/m.yaml": "media:\n  - {id: wide, name: w, kind: continuous, width_mm: 62, printable_width_dots: 696, offset_pins: 32, dpi: 300}\n", "data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, head_pins: 720, media: [wide]}\n"}, []string{"Q1", "wide", "720"}},
 	} {
 		fsys := fstest.MapFS{}
@@ -231,5 +232,43 @@ func TestBadBLEName(t *testing.T) {
 	fsys := fstest.MapFS{"data/a.yaml": &fstest.MapFile{Data: []byte("models:\n  - {id: A, driver: cat, dialect: gb, match: {ble_name: \"MX(\"}}\n")}}
 	if _, err := devicedb.Load(fsys); err == nil || !strings.Contains(err.Error(), "ble_name") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestModelByBTName(t *testing.T) {
+	db := devicedb.Default()
+	for _, tc := range []struct{ name, want string }{
+		{"RG-MLP80B", "RG-MLP80B"}, {"RG-MLP80B-1234", "RG-MLP80B"}, {"MX10", ""}, {"", ""},
+	} {
+		got := ""
+		if m, ok := db.ModelByBTName(tc.name); ok {
+			got = m.ID
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestEscposModels(t *testing.T) {
+	db := devicedb.Default()
+	for id, want := range map[string]struct {
+		pins  int
+		media string
+		dots  int
+	}{"RG-MLP80B": {576, "paper-80", 576}, "ESCPOS-80": {576, "paper-80", 576}, "ESCPOS-58": {384, "paper-57", 384}} {
+		m, ok := db.Model(id)
+		if !ok {
+			t.Errorf("%s missing", id)
+			continue
+		}
+		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt"}) ||
+			m.Quirk("feed_lines", 0) != 80 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
+			t.Errorf("%s: %+v", id, m)
+		}
+		md := db.MediaFor(m)
+		if len(md) != 1 || md[0].ID != want.media || md[0].PrintableWidthDots != want.dots || md[0].Kind != devicedb.Continuous {
+			t.Errorf("%s media: %+v", id, md)
+		}
 	}
 }

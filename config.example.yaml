@@ -41,6 +41,13 @@ printers:
   #   transport: {kind: ble, name: MX10, address: "AA:BB:CC:DD:EE:FF"}
   #   media: paper-57
   #   darkness: normal          # light | normal | dark (darker prints slower)
+  # Bluetooth Classic ESC/POS printer (RG-MLP80B, ESCPOS-80, ESCPOS-58; 80/58 mm paper). address is the MAC
+  # on every OS; channel is optional (Linux: 1 unless set; Windows/macOS look up the SPP service).
+  # - id: rego
+  #   name: REGO
+  #   model: RG-MLP80B
+  #   transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MLP80B", channel: 1}
+  #   media: paper-80           # paper-57 for ESCPOS-58
   # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
   # - id: pt9500
   #   name: Brother PT-9500PC

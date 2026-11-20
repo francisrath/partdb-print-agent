@@ -20,8 +20,10 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"
 	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
+	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
 )
 
 func sysfs(t *testing.T, printers map[string][4]string) string {
@@ -252,7 +254,8 @@ func TestCandidateName(t *testing.T) {
 		{ModelID: "QL-810W", SNMPDescr: "Brother QL-810W"}:                                        "QL-810W",
 		{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z  ,MID 84E-755"}: "Brother HL-L3270CDW series",
 		{IEEE1284: map[string]string{"MFG": "Zebra Technologies", "MDL": "ZTC GK420d"}}:           "Zebra Technologies ZTC GK420d",
-		{}: "?",
+		{Kind: "bt", BTName: "RG-MLP80B-1234"}:                                                    "RG-MLP80B-1234",
+		{}:                                                                                        "?",
 	} {
 		if got := c.Name(); got != want {
 			t.Errorf("%+v → %q, want %q", *c, got, want)
@@ -297,7 +300,92 @@ func TestBLENoAdapter(t *testing.T) {
 	if !errors.Is(err, blecore.ErrNoBluetooth) {
 		t.Fatalf("err %v", err)
 	}
-	if n := BLENote(err); !strings.Contains(n, "Bluetooth printers not searched") || !strings.Contains(n, "off") {
+	if n := note("Bluetooth printers", err); !strings.Contains(n, "Bluetooth printers not searched") || !strings.Contains(n, "off") {
 		t.Errorf("note %q", n)
+	}
+}
+
+// Classic: a known name, an unknown printer by class (imaging + printer bit, or imaging + SPP on Linux);
+// phones, headphones and an imaging device that is neither printer nor SPP (a camera) are dropped.
+func TestBTCandidates(t *testing.T) {
+	scan := func(context.Context, time.Duration) ([]bt.Device, error) {
+		return []bt.Device{
+			{Name: "RG-MLP80B-1234", Address: "AA:BB:CC:DD:EE:01"},
+			{Name: "Headphones", Address: "AA:BB:CC:DD:EE:02", Class: 0x240404},
+			{Name: "Receipt", Address: "AA:BB:CC:DD:EE:03", Class: 0x0680},
+			{Name: "Phone", Address: "AA:BB:CC:DD:EE:04", Class: 0x5a020c, SPP: true},
+			{Name: "Serial imager", Address: "AA:BB:CC:DD:EE:05", Class: 0x0620, SPP: true},
+			{Name: "Camera", Address: "AA:BB:CC:DD:EE:06", Class: 0x0620},
+		}, nil
+	}
+	cs, err := BT(context.Background(), devicedb.Default(), Options{ScanBT: scan})
+	if err != nil || len(cs) != 3 {
+		t.Fatalf("%+v %v", cs, err)
+	}
+	for i, want := range []struct{ addr, name, model, status string }{
+		{"AA:BB:CC:DD:EE:01", "RG-MLP80B", "RG-MLP80B", Supported},
+		{"AA:BB:CC:DD:EE:03", "Receipt", "", Unknown},
+		{"AA:BB:CC:DD:EE:05", "Serial imager", "", Unknown},
+	} {
+		c := cs[i]
+		if c.Kind != "bt" || c.Address != want.addr || c.Name() != want.name || c.ModelID != want.model || c.Status != want.status {
+			t.Errorf("%d: %+v, want %+v", i, c, want)
+		}
+	}
+	if got := TransportLine(cs[0]); got != `transport: {kind: bt, name: "RG-MLP80B-1234", address: "AA:BB:CC:DD:EE:01"}` {
+		t.Errorf("transport line %q", got)
+	}
+}
+
+// Bluetooth runs both scans at once; a failing one is a note, both failing alike one note.
+func TestBluetooth(t *testing.T) {
+	off := fmt.Errorf("%w: adaptor is not powered", blecore.ErrNoBluetooth)
+	other := errors.New("helper crashed")
+	mx10 := func(context.Context, time.Duration) ([]blecore.Advert, error) {
+		return []blecore.Advert{{Name: "MX10", Address: "AA:BB:CC:DD:EE:01"}}, nil
+	}
+	rego := func(context.Context, time.Duration) ([]bt.Device, error) {
+		return []bt.Device{{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:02"}}, nil
+	}
+	bleFail := func(err error) func(context.Context, time.Duration) ([]blecore.Advert, error) {
+		return func(context.Context, time.Duration) ([]blecore.Advert, error) { return nil, err }
+	}
+	btFail := func(err error) func(context.Context, time.Duration) ([]bt.Device, error) {
+		return func(context.Context, time.Duration) ([]bt.Device, error) { return nil, err }
+	}
+	for _, tc := range []struct {
+		name  string
+		o     Options
+		kinds []string
+		notes []string // each must be in the note; "" = no note
+	}{
+		{"both", Options{ScanBLE: mx10, ScanBT: rego}, []string{"ble", "bt"}, nil},
+		{"both off", Options{ScanBLE: bleFail(off), ScanBT: btFail(off)}, nil, []string{"Bluetooth printers not searched: Bluetooth is off"}},
+		{"classic fails", Options{ScanBLE: mx10, ScanBT: btFail(other)}, []string{"ble"}, []string{"Bluetooth Classic printers not searched: helper crashed"}},
+		{"ble off", Options{ScanBLE: bleFail(off), ScanBT: rego}, []string{"bt"}, []string{"Bluetooth LE printers not searched: Bluetooth is off"}},
+		{"both fail differently", Options{ScanBLE: bleFail(off), ScanBT: btFail(other)}, nil,
+			[]string{"Bluetooth LE printers not searched: Bluetooth is off", "Bluetooth Classic printers not searched: helper crashed"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs, n, err := Bluetooth(context.Background(), devicedb.Default(), tc.o)
+			var kinds []string
+			for _, c := range cs {
+				kinds = append(kinds, c.Kind)
+			}
+			if !slices.Equal(kinds, tc.kinds) {
+				t.Errorf("kinds %v, want %v", kinds, tc.kinds)
+			}
+			if (n == "") != (len(tc.notes) == 0) || (err == nil) != (len(tc.notes) == 0) {
+				t.Errorf("note %q, err %v", n, err)
+			}
+			for _, want := range tc.notes {
+				if !strings.Contains(n, want) {
+					t.Errorf("note %q lacks %q", n, want)
+				}
+			}
+			if strings.Count(n, "not searched") != len(tc.notes) {
+				t.Errorf("note %q: %d notes, want %d", n, strings.Count(n, "not searched"), len(tc.notes))
+			}
+		})
 	}
 }

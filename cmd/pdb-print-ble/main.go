@@ -2,10 +2,12 @@
 
 // Command pdb-print-ble is pdb-print's Bluetooth helper on macOS. The Bluetooth library asks macOS for
 // Bluetooth permission as soon as it is loaded, so pdb-print itself never links it; it starts this helper
-// for each BLE job instead (see internal/blebridge for the protocol on stdin/stdout).
+// for each Bluetooth job instead (see internal/blebridge for the protocol on stdin/stdout). Besides BLE it
+// speaks Bluetooth Classic serial port (RFCOMM, pdb-print's transport kind bt) through IOBluetooth.
 //
-//	pdb-print-ble                     bridge mode: frames on stdin/stdout, logs on stderr
-//	pdb-print-ble scan --timeout 8s   one JSON advert per line
+//	pdb-print-ble                             bridge mode: frames on stdin/stdout, logs on stderr
+//	pdb-print-ble scan --timeout 8s           one JSON advert per line
+//	pdb-print-ble scan-classic --timeout 8s   paired and nearby Classic devices, one JSON object per line
 //
 // Build with the embedded Info.plist (NSBluetoothAlwaysUsageDescription):
 //
@@ -51,8 +53,10 @@ func main() {
 	switch {
 	case len(os.Args) > 1 && os.Args[1] == "scan":
 		err = scanCmd(os.Args[2:])
+	case len(os.Args) > 1 && os.Args[1] == "scan-classic":
+		err = scanClassicCmd(os.Args[2:])
 	case len(os.Args) > 1:
-		fmt.Fprintln(os.Stderr, "usage: pdb-print-ble [scan --timeout 8s]")
+		fmt.Fprintln(os.Stderr, "usage: pdb-print-ble [scan|scan-classic --timeout 8s]")
 		os.Exit(2)
 	default:
 		err = serve(os.Stdin, &frames{w: os.Stdout})
@@ -120,6 +124,13 @@ func (f *frames) send(typ byte, p []byte) error {
 	return blebridge.Write(f.w, typ, p)
 }
 
+// link is an open connection: BLE or RFCOMM.
+type link struct {
+	mtu   int
+	send  func([]byte) error
+	close func()
+}
+
 // serve answers one connection: Open, then Writes until Close or end of input.
 func serve(in io.Reader, out *frames) error {
 	typ, p, err := blebridge.Read(in)
@@ -136,13 +147,33 @@ func serve(in io.Reader, out *frames) error {
 	if err := json.Unmarshal(p, &req); err != nil {
 		return fmt.Errorf("open request: %w", err)
 	}
-	c, err := open(req, out)
+	switch req.Kind {
+	case "":
+		return relay(in, out, func() (link, error) {
+			c, err := open(req, out)
+			if err != nil {
+				return link{}, err
+			}
+			return link{mtu: c.mtu, send: c.ch.Send, close: c.close}, nil
+		})
+	case blebridge.KindRFCOMM:
+		return onRunLoop(func() error {
+			return relay(in, out, func() (link, error) { return openRFCOMM(req, out) })
+		})
+	}
+	err = fmt.Errorf("unknown link kind %q", req.Kind)
+	_ = out.send(blebridge.TypeError, []byte(err.Error()))
+	return err
+}
+
+// relay opens the link, then passes Writes to it until Close or end of input.
+func relay(in io.Reader, out *frames, open func() (link, error)) error {
+	c, err := open()
 	if err != nil {
 		_ = out.send(blebridge.TypeError, []byte(err.Error()))
 		return err
 	}
 	defer c.close()
-	ch := c.ch
 	ok, _ := json.Marshal(blebridge.OK{MTU: c.mtu})
 	if err := out.send(blebridge.TypeOK, ok); err != nil {
 		return err
@@ -160,7 +191,7 @@ func serve(in io.Reader, out *frames) error {
 			return nil
 		case blebridge.TypeWrite:
 			answer, msg := blebridge.TypeOK, []byte(nil)
-			if err := ch.Send(p); err != nil {
+			if err := c.send(p); err != nil {
 				log.Printf("write: %v", err)
 				answer, msg = blebridge.TypeError, []byte(err.Error())
 			}

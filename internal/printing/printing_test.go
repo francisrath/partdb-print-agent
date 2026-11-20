@@ -559,12 +559,13 @@ func TestLazyTransportUnwrap(t *testing.T) {
 // fakeCat is a cat-printer driver that records its jobs: Print answers from results in turn (an
 // unconfirmed send, a confirmed one, an error) and, with gate set, waits for it first.
 type fakeCat struct {
-	mu       sync.Mutex
-	jobs     []driver.Job
-	statuses int
-	results  []error // nil = confirmed; errUnconfirmed = sent, not confirmed; else the error
-	gate     chan struct{}
-	printing chan struct{}
+	mu        sync.Mutex
+	jobs      []driver.Job
+	statuses  int
+	statusErr error   // Status fails with it
+	results   []error // nil = confirmed; errUnconfirmed = sent, not confirmed; else the error
+	gate      chan struct{}
+	printing  chan struct{}
 }
 
 var errUnconfirmed = errors.New("unconfirmed")
@@ -573,6 +574,9 @@ func (f *fakeCat) Status(context.Context, driver.Transport) (*driver.Status, err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statuses++
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
 	return &driver.Status{Code: driver.OK, Model: "MX10"}, nil
 }
 
@@ -627,26 +631,52 @@ func TestPrintPassesPrevUnconfirmed(t *testing.T) {
 	}
 }
 
-// A BLE printer takes one connection: a status check during a job answers BUSY instead of
-// connecting (which would drop the job's link).
-func TestStatusDuringBLEJobIsBusy(t *testing.T) {
-	f := &fakeCat{gate: make(chan struct{}), printing: make(chan struct{})}
-	s, p := catService(t, f)
-	printed := make(chan error, 1)
-	go func() {
-		_, err := s.Print(context.Background(), p, "", labels(1))
-		printed <- err
-	}()
-	<-f.printing
-	st, err := s.Status(context.Background(), p)
-	if err != nil || st.Code != driver.Busy {
-		t.Errorf("status during a job: %+v %v, want BUSY", st, err)
+// A Bluetooth printer (LE or Classic) takes one connection: a status check during a job answers BUSY
+// instead of connecting (which would drop the job's link).
+func TestStatusDuringBluetoothJobIsBusy(t *testing.T) {
+	for _, kind := range []string{"ble", "bt"} {
+		t.Run(kind, func(t *testing.T) {
+			f := &fakeCat{gate: make(chan struct{}), printing: make(chan struct{})}
+			s, p := catService(t, f)
+			p.Transport.Kind = kind
+			printed := make(chan error, 1)
+			go func() {
+				_, err := s.Print(context.Background(), p, "", labels(1))
+				printed <- err
+			}()
+			select {
+			case <-f.printing:
+			case err := <-printed:
+				t.Fatalf("the job ended before it reached the printer: %v", err)
+			}
+			st, err := s.Status(context.Background(), p)
+			if err != nil || st.Code != driver.Busy {
+				t.Errorf("status during a job: %+v %v, want BUSY", st, err)
+			}
+			close(f.gate)
+			if err := <-printed; err != nil {
+				t.Fatal(err)
+			}
+			if f.statuses != 1 {
+				t.Errorf("%d status requests; only the job's own may be", f.statuses)
+			}
+		})
 	}
-	close(f.gate)
-	if err := <-printed; err != nil {
-		t.Fatal(err)
+}
+
+type timeoutT struct {
+	fakePT
+	got []time.Duration
+}
+
+func (t *timeoutT) SetReadTimeout(d time.Duration) { t.got = append(t.got, d) }
+
+// The lazy wrapper passes a driver's read timeout on to a transport that takes one, and ignores it otherwise.
+func TestLazyTransportSetReadTimeout(t *testing.T) {
+	inner := &timeoutT{}
+	(&lazyTransport{t: inner}).SetReadTimeout(time.Millisecond)
+	if len(inner.got) != 1 || inner.got[0] != time.Millisecond {
+		t.Errorf("got %v", inner.got)
 	}
-	if f.statuses != 1 {
-		t.Errorf("%d status requests; only the job's own may be", f.statuses)
-	}
+	(&lazyTransport{t: &fakePT{}}).SetReadTimeout(time.Millisecond)
 }

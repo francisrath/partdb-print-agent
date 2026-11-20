@@ -1,4 +1,4 @@
-// Package discovery finds printers on USB (Linux sysfs), the local network and Bluetooth LE, and names
+// Package discovery finds printers on USB (Linux sysfs), the local network and Bluetooth (LE and Classic), and names
 // them from the device database. It is passive: it never writes to a printer.
 package discovery
 
@@ -21,6 +21,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/snmp"
 	"github.com/francisrath/partdb-print-agent/internal/transport/ble"
+	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
 	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
 )
 
@@ -32,7 +33,7 @@ const (
 )
 
 type Candidate struct {
-	Kind      string            `json:"kind"` // usb | tcp | ble
+	Kind      string            `json:"kind"` // usb | tcp | ble | bt
 	Device    string            `json:"device,omitempty"`
 	Host      string            `json:"host,omitempty"`
 	Port      int               `json:"port,omitempty"`
@@ -40,8 +41,9 @@ type Candidate struct {
 	Serial    string            `json:"serial,omitempty"`
 	IEEE1284  map[string]string `json:"ieee1284,omitempty"`
 	SNMPDescr string            `json:"snmp_descr,omitempty"`
-	Address   string            `json:"address,omitempty"`  // ble: MAC, or a CoreBluetooth UUID on macOS
+	Address   string            `json:"address,omitempty"`  // ble: MAC, or a CoreBluetooth UUID on macOS; bt: MAC
 	BLEName   string            `json:"ble_name,omitempty"` // ble: the advertised name
+	BTName    string            `json:"bt_name,omitempty"`  // bt: the device's name
 	Model     *devicedb.Model   `json:"-"`
 	ModelID   string            `json:"model,omitempty"`
 	Status    string            `json:"status"`
@@ -51,7 +53,7 @@ type Candidate struct {
 // SNMP description up to its first ";": Brother appends the network card and firmware, or the
 // advertised Bluetooth name), else "?".
 func (c *Candidate) Name() string {
-	name := cmp.Or(c.ModelID, c.BLEName)
+	name := cmp.Or(c.ModelID, c.BLEName, c.BTName)
 	if name == "" && c.IEEE1284["MDL"] != "" {
 		name = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
 	}
@@ -108,9 +110,9 @@ func byUSB(db *devicedb.DB, usbID, mdl string) *devicedb.Model {
 	return byMDL
 }
 
-// Options for Network and BLE. Network's zero values: the host's subnets (each at most a /24), port
-// 9100, 300 ms per connect, 64 at a time, 30 s in all, real TCP and SNMP (community public). BLE uses
-// only Timeout (0 = 8 s) and ScanBLE.
+// Options for Network and Bluetooth. Network's zero values: the host's subnets (each at most a /24), port
+// 9100, 300 ms per connect, 64 at a time, 30 s in all, real TCP and SNMP (community public). BLE and BT
+// use only Timeout (0 = 8 s) and ScanBLE / ScanBT.
 type Options struct {
 	Subnets     []netip.Prefix // IPv4, at most /22 each (1024 addresses)
 	Timeout     time.Duration  // the whole scan (BLE: how long to listen)
@@ -121,6 +123,8 @@ type Options struct {
 	SysDescr    func(ctx context.Context, host string) (string, error) // nil = SNMP device description + sysDescr
 	// ScanBLE lists the Bluetooth LE devices seen within timeout (BLE); nil = ble.Scan.
 	ScanBLE func(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error)
+	// ScanBT lists the Bluetooth Classic devices known or found within timeout (BT); nil = bt.Scan.
+	ScanBT func(ctx context.Context, timeout time.Duration) ([]bt.Device, error)
 }
 
 // Network finds hosts with the print port open and names them from their SNMP sysDescr.
@@ -251,12 +255,71 @@ func isCatService(u string) bool {
 	return u == "ae30" || u == "0000ae30-0000-1000-8000-00805f9b34fb"
 }
 
-// BLENote says why Bluetooth printers weren't searched, for a line beside the other results.
-func BLENote(err error) string {
-	if errors.Is(err, blecore.ErrNoBluetooth) {
-		return "Bluetooth printers not searched: Bluetooth is off or this computer has none (" + err.Error() + ")"
+// BT lists Bluetooth Classic printers known to the OS or found in an inquiry of o.Timeout (0 = 8 s):
+// devices whose name matches a model, and unknown ones whose class of device is imaging with the printer
+// bit or the serial port (SPP, Linux only). Phones, headphones and the like are dropped. Without a usable
+// adapter the error wraps blecore.ErrNoBluetooth.
+func BT(ctx context.Context, db *devicedb.DB, o Options) ([]Candidate, error) {
+	if o.Timeout == 0 {
+		o.Timeout = 8 * time.Second
 	}
-	return "Bluetooth printers not searched: " + err.Error()
+	if o.ScanBT == nil {
+		o.ScanBT = bt.Scan
+	}
+	devs, err := o.ScanBT(ctx, o.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	var out []Candidate
+	for _, d := range devs {
+		m, _ := db.ModelByBTName(d.Name)
+		imaging := d.Class>>8&0x1f == 0x06 // major device class imaging
+		if m == nil && !(imaging && (d.Class&0x80 != 0 || d.SPP)) {
+			continue
+		}
+		c := Candidate{Kind: "bt", Address: d.Address, BTName: d.Name}
+		c.setModel(m)
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// Bluetooth runs BLE and BT at once, in one scan window. A scan that fails is a note, not an error: note
+// says which printers weren't searched and why ("" = all were), err has the scans' errors for a report.
+func Bluetooth(ctx context.Context, db *devicedb.DB, o Options) (cs []Candidate, note string, err error) {
+	var classic []Candidate
+	var classicErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		classic, classicErr = BT(ctx, db, o)
+	}()
+	cs, bleErr := BLE(ctx, db, o)
+	<-done
+	return append(cs, classic...), notes(bleErr, classicErr), errors.Join(bleErr, classicErr)
+}
+
+// notes: one note when both scans found no usable Bluetooth, else one per failed scan.
+func notes(bleErr, btErr error) string {
+	switch {
+	case errors.Is(bleErr, blecore.ErrNoBluetooth) && errors.Is(btErr, blecore.ErrNoBluetooth):
+		return note("Bluetooth printers", bleErr)
+	case bleErr != nil && btErr != nil:
+		return note("Bluetooth LE printers", bleErr) + "\n" + note("Bluetooth Classic printers", btErr)
+	case bleErr != nil:
+		return note("Bluetooth LE printers", bleErr)
+	case btErr != nil:
+		return note("Bluetooth Classic printers", btErr)
+	}
+	return ""
+}
+
+// note says why what wasn't searched, for a line beside the other results.
+func note(what string, err error) string {
+	if errors.Is(err, blecore.ErrNoBluetooth) {
+		return what + " not searched: Bluetooth is off or this computer has none (" + err.Error() + ")"
+	}
+	return what + " not searched: " + err.Error()
 }
 
 // LocalSubnets are the host's non-loopback IPv4 subnets, each at most a /24.
@@ -296,6 +359,9 @@ func capTo24(ps []netip.Prefix) []netip.Prefix {
 func TransportLine(c Candidate) string {
 	if c.Kind == "ble" {
 		return fmt.Sprintf("transport: {kind: ble, name: %q, address: %q}", c.BLEName, c.Address)
+	}
+	if c.Kind == "bt" {
+		return fmt.Sprintf("transport: {kind: bt, name: %q, address: %q}", c.BTName, c.Address)
 	}
 	if c.Kind == "usb" {
 		if c.Serial != "" {

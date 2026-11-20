@@ -5,6 +5,7 @@ package ble
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,13 @@ func init() {
 			GapMS:   q("ble_gap_ms", 10),
 		}}, nil
 	})
+	// Bluetooth Classic (Serial Port Profile) goes through the same helper on macOS: IOBluetooth also asks
+	// for Bluetooth permission. Package bt registers kind bt on the other systems.
+	transport.Register("bt", func(c config.Transport, _ *devicedb.Model) (driver.Transport, error) {
+		return &Transport{kind: "bt", req: blebridge.OpenRequest{
+			Kind: blebridge.KindRFCOMM, Name: c.Name, Address: c.Address, Channel: c.Channel,
+		}}, nil
+	})
 }
 
 // helperPath finds the helper; tests replace it so they never pick up a real one.
@@ -86,12 +94,16 @@ func findHelper() (string, error) {
 	return "", errNoHelper
 }
 
-// helperError turns the helper's error text back into an error, keeping ErrNoBluetooth recognisable.
-func helperError(msg string) error {
+// helperError turns the helper's error text back into an error for transport kind, keeping ErrNoBluetooth
+// recognisable.
+func helperError(kind, msg string) error {
 	if rest, ok := strings.CutPrefix(msg, blecore.ErrNoBluetooth.Error()); ok {
-		return fmt.Errorf("%w%s", blecore.ErrNoBluetooth, rest)
+		if kind == "ble" {
+			return fmt.Errorf("%w%s", blecore.ErrNoBluetooth, rest)
+		}
+		return fmt.Errorf("%s: %w%s", kind, blecore.ErrNoBluetooth, rest)
 	}
-	return fmt.Errorf("ble: %s", msg)
+	return fmt.Errorf("%s: %s", kind, msg)
 }
 
 // Scan runs the helper's scan mode. Without a usable adapter (powered off, Bluetooth not allowed) the
@@ -99,6 +111,17 @@ func helperError(msg string) error {
 // prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
+	return scanLines[blecore.Advert](ctx, "ble", "scan", timeout)
+}
+
+// ScanClassic lists the paired Bluetooth Classic devices and those an inquiry finds within timeout, through
+// the helper's scan-classic mode; errors as for Scan.
+func ScanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.ClassicDevice, error) {
+	return scanLines[blebridge.ClassicDevice](ctx, "bt", "scan-classic", timeout)
+}
+
+// scanLines runs a scan mode of the helper and decodes its JSON lines; errors start with kind.
+func scanLines[T any](ctx context.Context, kind, mode string, timeout time.Duration) ([]T, error) {
 	helper, err := helperPath()
 	if err != nil {
 		return nil, err
@@ -106,7 +129,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	// The helper's enable may take EnableWait plus one more library Enable (10 s) before the scan starts.
 	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, helper, "scan", "--timeout", timeout.String())
+	cmd := exec.CommandContext(ctx, helper, mode, "--timeout", timeout.String())
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
@@ -115,28 +138,28 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
 		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
-			return nil, fmt.Errorf("ble: %w; the helper exited: %w", errDenied, err)
+			return nil, fmt.Errorf("%s: %w; the helper exited: %w", kind, errDenied, err)
 		}
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
 		// ended a first-run permission prompt's wait).
 		if msg := fatalLine(stderr.String()); msg != "" {
-			return nil, helperError(msg)
+			return nil, helperError(kind, msg)
 		}
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("ble: %s scan: %w", helperName, err)
+		return nil, fmt.Errorf("%s: %s %s: %w", kind, helperName, mode, err)
 	}
-	var ads []blecore.Advert
+	var found []T
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
-		var ad blecore.Advert
-		if err := json.Unmarshal(sc.Bytes(), &ad); err != nil {
-			return nil, fmt.Errorf("ble: %s scan output: %w", helperName, err)
+		var v T
+		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
+			return nil, fmt.Errorf("%s: %s %s output: %w", kind, helperName, mode, err)
 		}
-		ads = append(ads, ad)
+		found = append(found, v)
 	}
-	return ads, nil
+	return found, nil
 }
 
 // fatalMark starts the helper's fatal stderr line (its other lines are log output).
@@ -152,9 +175,12 @@ func fatalLine(s string) string {
 	return msg
 }
 
-// Transport is one BLE connection to a cat printer, through a pdb-print-ble process.
+// Transport is one BLE connection to a cat printer (or, kind bt, one RFCOMM link), through a
+// pdb-print-ble process.
 type Transport struct {
-	req blebridge.OpenRequest
+	kind   string // "" = ble
+	req    blebridge.OpenRequest
+	readTO time.Duration // per Read; 0 = readTimeout (SetReadTimeout)
 
 	reqMu sync.Mutex // one request (Open, Write, Close) at a time
 
@@ -173,7 +199,7 @@ type reply struct {
 	payload []byte
 }
 
-func (t *Transport) Kind() string { return "ble" }
+func (t *Transport) Kind() string { return cmp.Or(t.kind, "ble") }
 
 func (t *Transport) Open(ctx context.Context) error {
 	t.reqMu.Lock()
@@ -195,7 +221,7 @@ func (t *Transport) Open(ctx context.Context) error {
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("ble: start %s: %w", helper, err)
+		return fmt.Errorf("%s: start %s: %w", t.Kind(), helper, err)
 	}
 	done := make(chan struct{})
 	t.mu.Lock()
@@ -249,15 +275,15 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	t.mu.Lock()
 	switch {
 	case !exiting:
-		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
+		t.dead = fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
 	case killedByPrivacy(cmd.ProcessState):
-		t.dead = fmt.Errorf("ble: %w; the helper exited: %w", errDenied, werr)
+		t.dead = fmt.Errorf("%s: %w; the helper exited: %w", t.Kind(), errDenied, werr)
 	case msg != "" && werr != nil:
-		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
+		t.dead = fmt.Errorf("%s: %s: %s (%w)", t.Kind(), helperName, msg, werr)
 	case werr != nil:
-		t.dead = fmt.Errorf("ble: %s exited: %w", helperName, werr)
+		t.dead = fmt.Errorf("%s: %s exited: %w", t.Kind(), helperName, werr)
 	default:
-		t.dead = fmt.Errorf("ble: %s exited", helperName)
+		t.dead = fmt.Errorf("%s: %s exited", t.Kind(), helperName)
 	}
 	t.mu.Unlock()
 	close(done)
@@ -269,14 +295,14 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	stdin, replies, done := t.stdin, t.replies, t.done
 	t.mu.Unlock()
 	if stdin == nil {
-		return nil, errors.New("ble: not open")
+		return nil, fmt.Errorf("%s: not open", t.Kind())
 	}
 	if err := blebridge.Write(stdin, typ, payload); err != nil {
 		select { // a failed pipe write means the helper is gone, or about to be
 		case <-done:
 			return nil, t.deadErr()
 		case <-time.After(closeGrace):
-			return nil, fmt.Errorf("ble: %s: %w", helperName, err)
+			return nil, fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
 		}
 	}
 	var r reply
@@ -295,9 +321,9 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	case blebridge.TypeOK:
 		return r.payload, nil
 	case blebridge.TypeError:
-		return nil, helperError(string(r.payload))
+		return nil, helperError(t.Kind(), string(r.payload))
 	}
-	return nil, fmt.Errorf("ble: %s: unexpected reply %q", helperName, r.typ)
+	return nil, fmt.Errorf("%s: %s: unexpected reply %q", t.Kind(), helperName, r.typ)
 }
 
 func (t *Transport) deadErr() error {
@@ -318,15 +344,20 @@ func (t *Transport) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Read returns buffered notification bytes; with nothing for 2 s, an error wrapping os.ErrDeadlineExceeded.
+// SetReadTimeout changes Read's wait (driver.ReadTimeoutSetter); 0 = 2 s. Call it from the goroutine that reads.
+func (t *Transport) SetReadTimeout(d time.Duration) { t.readTO = d }
+
+// Read returns buffered notification bytes; with nothing for 2 s (see SetReadTimeout), an error wrapping
+// os.ErrDeadlineExceeded.
 func (t *Transport) Read(p []byte) (int, error) {
-	timer := time.NewTimer(readTimeout)
+	to := cmp.Or(t.readTO, readTimeout)
+	timer := time.NewTimer(to)
 	defer timer.Stop()
 	for {
 		t.mu.Lock()
 		if t.cmd == nil {
 			t.mu.Unlock()
-			return 0, errors.New("ble: not open")
+			return 0, fmt.Errorf("%s: not open", t.Kind())
 		}
 		if len(t.buf) > 0 {
 			n := copy(p, t.buf)
@@ -346,7 +377,11 @@ func (t *Transport) Read(p []byte) (int, error) {
 				return 0, t.deadErr()
 			}
 		case <-timer.C:
-			return 0, fmt.Errorf("ble: no notification within %v: %w", readTimeout, os.ErrDeadlineExceeded)
+			what := "notification"
+			if t.Kind() == "bt" {
+				what = "answer"
+			}
+			return 0, fmt.Errorf("%s: no %s within %v: %w", t.Kind(), what, to, os.ErrDeadlineExceeded)
 		}
 	}
 }

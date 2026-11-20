@@ -223,6 +223,8 @@ func TestValidateModelTransport(t *testing.T) {
 		"ql by usb id":         "printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"04f9:209c\", serial: 000G5G313834}}]",
 		"ql-800 by usb path":   "printers: [{id: a, model: QL-800, transport: {kind: usb, device: /dev/usb/lp0}}]",
 		"pt media":             "printers: [{id: a, model: PT-9500PC, transport: {kind: usb, usb_id: \"04f9:200f\"}, media: tze-24}]",
+		"bt by address":        "printers: [{id: a, model: RG-MLP80B, transport: {kind: bt, address: \"aa:bb:cc:dd:ee:ff\"}}]",
+		"bt by name":           "printers: [{id: a, model: RG-MLP80B, transport: {kind: bt, name: RG-MLP80B, channel: 30}}]",
 		"ble by name":          "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: dark}]",
 		"ble address and name": "printers: [{id: a, model: MX10, transport: {kind: ble, address: \"AA:BB:CC:DD:EE:FF\", name: MX10}}]",
 		"darkness light":       "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: light}]",
@@ -242,6 +244,9 @@ func TestValidateModelTransport(t *testing.T) {
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, usb_id: \"04f9:209c\"}}]":         {"device", "usb_id"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"4f9:209c\"}}]":                                {"usb_id", "4f9:209c"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, serial: X1}}]":                    {"serial", "usb_id"},
+		"printers: [{id: a, model: RG-MLP80B, transport: {kind: bt}}]":                                                     {"bt", "address", "name"},
+		"printers: [{id: a, model: RG-MLP80B, transport: {kind: bt, address: \"AA:BB\"}}]":                                 {"address", "AA:BB"},
+		"printers: [{id: a, model: RG-MLP80B, transport: {kind: bt, name: X, channel: 31}}]":                               {"channel", "31"},
 		"printers: [{id: a, model: MX10, transport: {kind: ble}}]":                                                         {"ble", "address", "name"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: ble, name: MX10}}]":                                          {"QL-810W", "ble"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, darkness: dark}]":                             {"darkness", "QL-810W"},
@@ -258,6 +263,14 @@ func TestValidateModelTransport(t *testing.T) {
 			if !strings.Contains(err.Error(), w) {
 				t.Errorf("%s: error %q doesn't name %q", y, err, w)
 			}
+		}
+	}
+}
+
+func TestBluetooth(t *testing.T) {
+	for kind, want := range map[string]bool{"ble": true, "bt": true, "tcp": false, "usb": false, "": false} {
+		if got := Bluetooth(kind); got != want {
+			t.Errorf("Bluetooth(%q) = %v", kind, got)
 		}
 	}
 }

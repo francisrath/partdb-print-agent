@@ -1,0 +1,18 @@
+# Bluetooth Classic (SPP) ESC/POS receipt printers (driver escpos, dialect raster): GS v 0 raster
+# bitmaps at 203 dpi. RG-MLP80B (REGO) is recognised by its paired name; the generic models are picked by
+# hand. feed_lines is the paper fed after a label, confirm_timeout_ms how long to wait for the
+# printer's completion byte.
+models:
+  - &escpos
+    id: RG-MLP80B
+    vendor: REGO
+    driver: escpos
+    dialect: raster
+    dpi: 203
+    head_pins: 576
+    transports: [bt]
+    match: {bt_name: "^RG-MLP80B"}
+    quirks: {feed_lines: 80, confirm_timeout_ms: 20000}
+    media: [paper-80]
+  - {<<: *escpos, id: ESCPOS-80, vendor: Generic, match: {}}
+  - {<<: *escpos, id: ESCPOS-58, vendor: Generic, match: {}, head_pins: 384, media: [paper-57]}

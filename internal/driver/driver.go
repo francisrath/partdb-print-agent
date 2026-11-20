@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 )
@@ -93,6 +94,12 @@ type Transport interface {
 	Kind() string
 }
 
+// ReadTimeoutSetter is a Transport whose per-Read timeout can be changed (0 = its default again), e.g. to drop
+// stale bytes quickly without shortening the wait for a real answer.
+type ReadTimeoutSetter interface {
+	SetReadTimeout(time.Duration)
+}
+
 var ErrNoReadback = errors.New("transport has no read-back")
 
 // Media and its kinds live in the device database; these aliases keep driver.Media working.
@@ -168,7 +175,10 @@ type Status struct {
 type Error struct {
 	Code   Code
 	Detail string
+	Err    error // the underlying cause, if any
 }
+
+func (e *Error) Unwrap() error { return e.Err }
 
 func (e *Error) Error() string {
 	if e.Detail == "" {

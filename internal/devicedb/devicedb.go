@@ -56,6 +56,7 @@ type Match struct {
 	SNMPDescr     string   `yaml:"snmp_descr"`     // regexp on sysDescr
 	HIModel       string   `yaml:"hi_model"`       // regexp on the model part of a Zebra ~HI reply
 	BLEName       string   `yaml:"ble_name"`       // regexp on the BLE advertised name
+	BTName        string   `yaml:"bt_name"`        // regexp on the Bluetooth Classic device name
 }
 
 type Model struct {
@@ -72,6 +73,7 @@ type Model struct {
 	snmpRe     *regexp.Regexp    // Match.SNMPDescr, compiled at load
 	hiRe       *regexp.Regexp    // Match.HIModel, compiled at load
 	bleRe      *regexp.Regexp    // Match.BLEName, compiled at load
+	btRe       *regexp.Regexp    // Match.BTName, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
 }
 
@@ -193,8 +195,18 @@ func Load(fsys fs.FS) (*DB, error) {
 				}
 				m.bleRe = re
 			}
+			if m.Match.BTName != "" {
+				re, err := regexp.Compile(m.Match.BTName)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: model %s: bad bt_name pattern: %w", base, m.ID, err))
+				}
+				m.btRe = re
+			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))
+			}
+			if m.Driver == "escpos" && m.HeadPins <= 0 {
+				errs = append(errs, fmt.Errorf("%s: model %s needs head_pins > 0", base, m.ID))
 			}
 			for _, u := range m.Match.USB {
 				if other, dup := usb[u]; dup {
@@ -336,6 +348,17 @@ func (db *DB) ModelByBLEName(name string) (*Model, bool) {
 	for _, id := range db.ModelIDs() {
 		m := db.models[id]
 		if m.bleRe != nil && name != "" && m.bleRe.MatchString(name) {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// ModelByBTName finds a model from the name a Bluetooth Classic printer is paired as ("RG-MLP80B").
+func (db *DB) ModelByBTName(name string) (*Model, bool) {
+	for _, id := range db.ModelIDs() {
+		m := db.models[id]
+		if m.btRe != nil && name != "" && m.btRe.MatchString(name) {
 			return m, true
 		}
 	}

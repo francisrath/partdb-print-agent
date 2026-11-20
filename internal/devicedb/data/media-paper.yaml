@@ -1,3 +1,4 @@
 # Continuous thermal paper rolls.
 media:
   - {id: paper-57, name: 57 mm thermal paper, kind: continuous, width_mm: 57, printable_width_dots: 384, dpi: 203}
+  - {id: paper-80, name: 80 mm thermal paper, kind: continuous, width_mm: 80, printable_width_dots: 576, dpi: 203}

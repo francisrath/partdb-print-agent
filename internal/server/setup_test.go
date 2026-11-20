@@ -473,3 +473,72 @@ func TestWizardScanMarksBLEOnline(t *testing.T) {
 		t.Error("offline after the scan found it")
 	}
 }
+
+// A Bluetooth Classic printer is a "Bluetooth" row, and picking it sets up a bt transport.
+func TestWizardBTRow(t *testing.T) {
+	h := newHarness(t)
+	m, _ := devicedb.Default().Model("RG-MLP80B")
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", BTName: "RG-MLP80B-1", Model: m, ModelID: "RG-MLP80B", Status: discovery.Supported}}, nil
+	}
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "<strong>RG-MLP80B</strong> · Bluetooth AA:BB:CC:DD:EE:01") {
+		t.Fatalf("printer page: %d %s", w.Code, w.Body)
+	}
+	wantRedirect(t, h.post("/setup/printer", url.Values{"choice": {"0"}}), "/setup/test")
+	want := config.Transport{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B-1"}
+	if p := h.srv.local.Draft.Printer; p.Model != "RG-MLP80B" || p.Transport != want {
+		t.Errorf("picked %+v", p)
+	}
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
+		t.Errorf("the picked Bluetooth printer isn't marked current")
+	}
+	h.srv.local.Draft.Printer.Transport.Address = "aa:bb:cc:dd:ee:01" // config doesn't normalise the case
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
+		t.Errorf("the picked Bluetooth printer (lower-case address) isn't marked current")
+	}
+}
+
+// A configured bt printer is recognised by its address (any case) or, configured by name only, by its
+// name; a ble printer of the same name is not the bt one.
+func TestWizardBTExisting(t *testing.T) {
+	m, _ := devicedb.Default().Model("RG-MLP80B")
+	for _, tc := range []struct {
+		name string
+		t    config.Transport
+		want bool
+	}{
+		{"address", config.Transport{Kind: "bt", Address: "aa:bb:cc:dd:ee:01"}, true},
+		{"name", config.Transport{Kind: "bt", Name: "RG-MLP80B-1"}, true},
+		{"other address", config.Transport{Kind: "bt", Address: "AA:BB:CC:DD:EE:02", Name: "RG-MLP80B-1"}, false},
+		{"ble of that name", config.Transport{Kind: "ble", Name: "RG-MLP80B-1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "rego", Name: "Bench receipt", Model: "RG-MLP80B", Transport: tc.t})
+			h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+				return []discovery.Candidate{{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", BTName: "RG-MLP80B-1", Model: m, ModelID: "RG-MLP80B", Status: discovery.Supported}}, nil
+			}
+			w := h.do("GET", "/setup/printer", nil)
+			if got := strings.Contains(w.Body.String(), "already set up as “Bench receipt”"); got != tc.want {
+				t.Errorf("existing %v, want %v: %s", got, tc.want, w.Body)
+			}
+		})
+	}
+}
+
+// Unlike a BLE advert, a classic scan also lists paired printers that are switched off: finding one
+// doesn't make it online.
+func TestWizardScanLeavesBTOffline(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "rego", Model: "RG-MLP80B",
+		Transport: config.Transport{Kind: "bt", Address: "AA:BB:CC:DD:EE:01"}})
+	p := &h.srv.cfg.Printers[len(h.srv.cfg.Printers)-1]
+	m, _ := devicedb.Default().Model("RG-MLP80B")
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", BTName: "RG-MLP80B", Model: m, ModelID: "RG-MLP80B", Status: discovery.Supported}}, nil
+	}
+	h.do("GET", "/setup/printer", nil)
+	if h.srv.Svc.Online(p) {
+		t.Error("online after a scan listed it")
+	}
+}

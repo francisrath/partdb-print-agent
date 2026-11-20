@@ -25,8 +25,8 @@ type onlineState struct {
 
 // Online reports whether the printer is reachable: a printer busy with a job is; a USB
 // printer whose device is present and opens is; a network printer that accepts a connection
-// on its print port within 2 s is (nothing is sent); a BLE printer is while it was found
-// working in the last 10 minutes (see SeenBLE). Results are cached for 30 s; checks of
+// on its print port within 2 s is (nothing is sent); a Bluetooth printer (LE or Classic) is while it
+// was found working in the last 10 minutes (see SeenBluetooth). Results are cached for 30 s; checks of
 // one printer run one at a time and share their result.
 func (s *Service) Online(p *config.Printer) bool {
 	if s.isPrinting(p.ID) {
@@ -67,7 +67,7 @@ func (s *Service) Online(p *config.Printer) bool {
 		s.online = map[string]onlineState{}
 	}
 	if at, ok := s.seen[key]; ok && !at.Before(start) { // not After: Windows' clock can give both the same instant
-		up = true // SeenBLE during the check: newer than what the check found
+		up = true // SeenBluetooth during the check: newer than what the check found
 	}
 	s.online[key] = onlineState{time.Now(), up} // published before the lock is released
 	s.mu.Unlock()
@@ -112,18 +112,18 @@ func (s *Service) check(p *config.Printer) (bool, <-chan struct{}) {
 	return s.reachable(p)
 }
 
-// onlineKey keys the cache by printer and address, so an edited address is checked afresh.
+// onlineKey keys the cache by printer and route (address, RFCOMM channel, ...), so an edited route is checked afresh.
 func onlineKey(p *config.Printer) string {
 	t := p.Transport
-	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name)
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s|%d", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name, t.Channel)
 }
 
-// bleSeenFor is how long a BLE printer counts as online after it was last found working. Checking
+// bluetoothSeenFor is how long a Bluetooth printer counts as online after it was last found working. Checking
 // would take its only connection (and drop a phone's or a job's), so it is never connected just to ask.
-const bleSeenFor = 10 * time.Minute
+const bluetoothSeenFor = 10 * time.Minute
 
-// SeenBLE records that a BLE printer was found working (a status, a job, a discovery scan).
-func (s *Service) SeenBLE(p *config.Printer) {
+// SeenBluetooth records that a Bluetooth printer was found working (a status, a job, a BLE discovery scan).
+func (s *Service) SeenBluetooth(p *config.Printer) {
 	key := onlineKey(p)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,17 +134,19 @@ func (s *Service) SeenBLE(p *config.Printer) {
 	delete(s.online, key) // the next check sees it at once
 }
 
-// noteBLE records how a status or job on a BLE printer went: an answer means it's there; failing to
-// reach it means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach.
-func (s *Service) noteBLE(p *config.Printer, err error) {
-	if p.Transport.Kind != "ble" {
+// noteBluetooth records how a status or job on a Bluetooth printer went: an answer means it's there; failing to
+// reach it (a link failure) means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach, nor
+// does ErrNoReadback: a printer that prints but ignores status requests stays as seen.
+func (s *Service) noteBluetooth(p *config.Printer, err error) {
+	if !config.Bluetooth(p.Transport.Kind) {
 		return
 	}
 	var de *driver.Error
 	switch {
 	case err == nil:
-		s.SeenBLE(p)
-	case errors.Is(err, driver.ErrNoReadback) || errors.As(commsError(err), &de) && de.Code == driver.CommsError:
+		s.SeenBluetooth(p)
+	case errors.Is(err, driver.ErrNoReadback):
+	case errors.As(commsError(err), &de) && de.Code == driver.CommsError:
 		key := onlineKey(p)
 		s.mu.Lock()
 		delete(s.seen, key)
@@ -185,12 +187,12 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		case <-time.After(timeout):
 			return false, done
 		}
-	case "ble":
+	case "ble", "bt": // config.Bluetooth
 		close(done)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		at, ok := s.seen[onlineKey(p)]
-		return ok && time.Since(at) < bleSeenFor, done
+		return ok && time.Since(at) < bluetoothSeenFor, done
 	case "tcp":
 		defer close(done)
 		c, err := net.DialTimeout("tcp", net.JoinHostPort(t.Host, strconv.Itoa(t.Port)), 2*time.Second)

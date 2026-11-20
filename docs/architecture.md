@@ -432,13 +432,23 @@ The sketch in 7.1 was the starting point; the code now works like this:
   from its model and options and owns the whole flow after rendering: `Status`, `Print` (encode, send,
   pace, confirm) and `Encode` (for `--dry-run`). `internal/driver/brother` covers the QL (`ql`) and
   PT-9500PC (`pt-cbp`) dialects.
-* **Transport registry** (`internal/transport`): connection kinds (`tcp`, `usb`) register in `init`.
+* **Transport registry** (`internal/transport`): connection kinds (`tcp`, `usb`, `ble`, `bt`) register in `init`.
   The printing service hands drivers a connection that opens on first use, so a QL that answers over
   SNMP never gets a TCP connection just for a status check.
 * **Printing service** (`internal/printing`): per-printer lock, model and media resolution (the roll the
   printer reports, else the one it reported in the last 30 s, else the config's fallback; checked
   against `media_allowed` and, per page, against the label size via `devicedb.Media.Fits`), rendering
   (tape: full width, edges trimmed with a warning in the job result), dispatch to the driver.
+
+* **`bt` transport** (Bluetooth Classic SPP over RFCOMM): `transport: {kind: bt, address, name, channel}`.
+  Linux opens an RFCOMM socket (channel 1 unless set; BlueZ over D-Bus only for name lookup and scan),
+  Windows a Winsock Bluetooth socket (SDP lookup of the SPP service), macOS goes through the
+  `pdb-print-ble` helper (IOBluetooth; SDP lookup, channel 1 after 10 s without an answer). One
+  connection at a time; scans list Classic devices whose name matches a model or whose class says printer (on Linux also an imaging
+  device offering the serial port).
+* **`escpos` driver family** (`internal/driver/escpos`): ESC/POS raster (`GS v 0`) in bands for
+  RG-MLP80B (576 dots) and generic ESCPOS-80/-58; real-time status by `DLE EOT`; after a job `GS r 1`
+  confirms the paper state, and a printer that stays silent gives "sent (unconfirmed)" after 20 s.
 
 * **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,
   IEEE 1284 id) and network printers by a connect to port 9100 plus SNMP `sysDescr`, named from the

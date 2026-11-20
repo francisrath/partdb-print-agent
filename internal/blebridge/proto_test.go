@@ -2,6 +2,7 @@ package blebridge
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -49,5 +50,41 @@ func TestBridgeFraming(t *testing.T) {
 	}
 	if err := Write(io.Discard, TypeWrite, make([]byte, MaxFrame+1)); err == nil {
 		t.Error("oversized write accepted")
+	}
+}
+
+// Kind and Channel select an RFCOMM link; a request without them (an older client) is BLE.
+func TestOpenRequestKind(t *testing.T) {
+	in := OpenRequest{Kind: "rfcomm", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 3}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out OpenRequest
+	if err := json.Unmarshal(b, &out); err != nil || out != in {
+		t.Fatalf("round trip %s: %+v %v", b, out, err)
+	}
+	b, _ = json.Marshal(OpenRequest{Name: "MX10", Service: 0xae30})
+	if bytes.Contains(b, []byte("kind")) || bytes.Contains(b, []byte("channel")) {
+		t.Errorf("BLE request %s carries kind or channel", b)
+	}
+}
+
+// A paired device not yet seen in an inquiry may lack its name and class: the inquiry fills them in,
+// without overwriting what pairing already knows.
+func TestMergeClassic(t *testing.T) {
+	paired := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01"}, {Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}}
+	found := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
+		{Address: "AA:BB:CC:DD:EE:02", Name: "RG-MLP80B"}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
+	got := MergeClassic(paired, found)
+	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
+		{Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%d: got %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

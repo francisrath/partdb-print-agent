@@ -23,12 +23,14 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"  // registers kind bt (Linux/Windows; macOS: transport/ble)
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
@@ -281,6 +283,13 @@ func (l *lazyTransport) Kind() string               { return l.t.Kind() }
 // Unwrap returns the underlying transport, for driver-specific code.
 func (l *lazyTransport) Unwrap() driver.Transport { return l.t }
 
+// SetReadTimeout passes a driver's read timeout on when the transport takes one (driver.ReadTimeoutSetter).
+func (l *lazyTransport) SetReadTimeout(d time.Duration) {
+	if s, ok := l.t.(driver.ReadTimeoutSetter); ok {
+		s.SetReadTimeout(d)
+	}
+}
+
 func (l *lazyTransport) Write(p []byte) (int, error) {
 	if err := l.open(); err != nil {
 		return 0, err
@@ -340,16 +349,16 @@ func commsError(err error) error {
 }
 
 // Status queries the printer. Models that must not be asked while printing (PT) and printers on a
-// single connection (USB, BLE) answer BUSY during a job without being asked. driver.ErrNoReadback
+// single connection (USB, Bluetooth) answer BUSY during a job without being asked. driver.ErrNoReadback
 // if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Status, err error) {
 	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
-	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a BLE printer
-	// takes one connection, so a second one would drop the job's link
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || p.Transport.Kind == "ble" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a Bluetooth
+	// printer takes one connection, so a second one would drop the job's link
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || config.Bluetooth(p.Transport.Kind) {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil
@@ -362,7 +371,7 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Sta
 	}
 	defer t.Close()
 	st, err = drv.Status(ctx, t)
-	s.noteBLE(p, err)
+	s.noteBluetooth(p, err)
 	switch {
 	case err == nil:
 		s.observe(p, m, st)
@@ -402,14 +411,14 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	var t *lazyTransport
 	var st *driver.Status
 	if dryRun == "" {
-		// noteBLE only hears how talking to the printer went: a bad document says nothing about its reach
+		// noteBluetooth only hears how talking to the printer went: a bad document says nothing about its reach
 		if t, err = s.connect(ctx, p, model); err != nil {
-			s.noteBLE(p, err)
+			s.noteBluetooth(p, err)
 			return nil, err
 		}
 		defer t.Close()
 		st, err = drv.Status(ctx, t)
-		s.noteBLE(p, err)
+		s.noteBluetooth(p, err)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
 			detail := "printer sent no status reply"
@@ -429,7 +438,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		if err := t.open(); err != nil {
 			s.forgetMedia(p.ID)
 			err = &driver.Error{Code: driver.CommsError, Detail: err.Error()}
-			s.noteBLE(p, err)
+			s.noteBluetooth(p, err)
 			return nil, err
 		}
 		s.observe(p, model, st)
@@ -481,7 +490,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	job.PrevUnconfirmed = s.unconfirmed[p.ID]
 	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
-	s.noteBLE(p, err)
+	s.noteBluetooth(p, err)
 	s.mu.Lock()
 	if s.unconfirmed == nil {
 		s.unconfirmed = map[string]bool{}

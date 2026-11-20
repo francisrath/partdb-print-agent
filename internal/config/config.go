@@ -114,16 +114,18 @@ type Printer struct {
 type Adjust struct{ XDots, YDots, PrintWidthDots int }
 
 type Transport struct {
-	Kind   string `yaml:"kind"` // tcp | usb | ble (allowed kinds come from the model)
+	Kind   string `yaml:"kind"` // tcp | usb | ble | bt (allowed kinds come from the model)
 	Host   string `yaml:"host,omitempty"`
 	Port   int    `yaml:"port,omitempty"`   // tcp; default 9100
 	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux) …
 	USBID  string `yaml:"usb_id,omitempty"` // … or the printer's USB id ("04f9:209c"), found at each job
 	Serial string `yaml:"serial,omitempty"` // usb_id: tells two identical printers apart
 	// ble: the printer's address (a MAC on Linux/Windows, a CoreBluetooth UUID on macOS) or its
-	// advertised name; the address wins.
+	// advertised name; the address wins. bt (Bluetooth Classic SPP): a MAC (XX:XX:XX:XX:XX:XX) or
+	// the paired name, address wins; Channel is the RFCOMM channel (0 = look it up / default).
 	Address string `yaml:"address,omitempty"`
 	Name    string `yaml:"name,omitempty"`
+	Channel int    `yaml:"channel,omitempty"` // bt only, 0-30
 }
 
 // DefaultPath is <user config dir>/pdb-print/config.yaml.
@@ -333,6 +335,12 @@ func (p *Printer) DeviceModel() (*devicedb.Model, error) {
 	return m, nil
 }
 
+// Bluetooth: transport kinds ble and bt, whose printers take one connection at a time and are found by
+// a Bluetooth scan.
+func Bluetooth(kind string) bool { return kind == "ble" || kind == "bt" }
+
+var btAddrRe = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
+
 var usbIDRe = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{4}$`)
 
 func (p *Printer) validate() error {
@@ -368,6 +376,16 @@ func (p *Printer) validate() error {
 		}
 		if t.Port == 0 {
 			t.Port = 9100
+		}
+	case "bt":
+		if t.Address == "" && t.Name == "" {
+			return errors.New("transport kind bt needs an address or a name")
+		}
+		if t.Address != "" && !btAddrRe.MatchString(t.Address) {
+			return fmt.Errorf("bt address %q must look like AA:BB:CC:DD:EE:FF", t.Address)
+		}
+		if t.Channel < 0 || t.Channel > 30 {
+			return fmt.Errorf("bt channel %d must be 0-30", t.Channel)
 		}
 	case "ble":
 		if t.Address == "" && t.Name == "" {

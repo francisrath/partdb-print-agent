@@ -151,7 +151,7 @@ setup wizard can ask them what they are (a few bytes a non-Zebra might print).
 
 EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
 
-### Bluetooth label printers ("cat printers")
+### Bluetooth label printers ("cat printers" and Bluetooth Classic)
 
 `model:` GB01, GB02, GB03, GT01, YT01, MX05, MX06, MX08 or MX10: small Bluetooth LE thermal printers
 with 57 mm paper (384 dots at 203 dpi), continuous (sticker rolls without gaps). A printer is matched by
@@ -179,11 +179,13 @@ darkness changes little).
 
 A printer holds one connection at a time: disconnect it from phones and other apps first.
 
+Bluetooth LE printers, per OS:
+
 - **Linux:** through BlueZ over D-Bus. The `.deb` service runs with the groups `lp` and `bluetooth` (the
   package creates `bluetooth` if missing). The adapter must be on: `rfkill unblock bluetooth`,
   `bluetoothctl power on`. If BlueZ still holds the printer, `bluetoothctl disconnect <address>`.
 - **Windows:** in-process, needs a Bluetooth 4.0+ (LE) adapter; older Bluetooth 3.0 radios (e.g. Dell
-  Wireless 375) can't.
+  Wireless 375) can't do BLE.
 - **macOS:** Bluetooth goes through the helper `pdb-print-ble`, shipped next to `pdb-print` in the macOS
   archive and the Homebrew cask (if it's missing, the error says to install it). Only the helper asks for
   Bluetooth permission, once, the first time pdb-print uses Bluetooth; the prompt names the app that ran
@@ -192,6 +194,51 @@ A printer holds one connection at a time: disconnect it from phones and other ap
   that use Bluetooth start the helper: `discover`, `try`, the setup wizard and printing to a Bluetooth
   printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
+
+#### Bluetooth Classic receipt printers (`kind: bt`)
+
+`model:` RG-MLP80B (REGO, 80 mm paper, 576 dots; recognised by its Bluetooth name), ESCPOS-80 or ESCPOS-58
+(generic ESC/POS printers over Bluetooth Classic, 80 or 58 mm). They use the ESC/POS raster driver
+(`GS v 0`); `media:` is `paper-80` or `paper-57`.
+
+```yaml
+- id: rego
+  name: REGO
+  model: RG-MLP80B
+  transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MLP80B", channel: 1}
+  media: paper-80
+```
+
+The address wins; with only `name`, pdb-print picks among the paired or known devices and refuses two
+with the same name. On every OS the address is the MAC (also on macOS, unlike BLE, where macOS uses a UUID).
+`channel` is optional. Linux uses channel 1 unless you set it (no SDP lookup). Windows looks up the
+serial-port (SPP) service itself. macOS looks it up through the helper and, if the Mac gives no answer
+within 10 s, tries channel 1. Set `channel:` if a printer uses another one.
+
+Pairing: Windows and macOS connected to an unpaired printer fine in tests. On Linux, if the printer asks
+for a PIN, pair once with `bluetoothctl` (`pair <address>`, `trust <address>`; the PIN is often 0000 or
+1234). BlueZ may also finish "Just Works" pairing on the first connect; then the first attempt fails with
+"pair it" and the next one works.
+
+Status is real-time (`DLE EOT`: paper out, cover open). After a job pdb-print asks the printer for its
+paper status (`GS r 1`) and reports "printed" when it answers, otherwise "sent (unconfirmed)" after 20 s.
+Many cheap printers don't answer; that is not an error. Like BLE printers, a `bt` printer takes one
+connection at a time: a status check during a job answers Busy at once without connecting (ask again after
+the job for the printer's own status). It shows online after it has been used
+recently: scans don't count, because the OS lists paired printers even when they are off.
+
+`discover` and the setup wizard list Classic printers too (`try` names them but can't test ESC/POS
+printers yet): the same ~8 s search, run alongside the BLE search (`--no-ble` skips both). A device is listed when its name matches a model or its Bluetooth
+class says printer (on Linux also an imaging device offering the serial port); phones, headphones and the
+like are not shown.
+
+Bluetooth Classic, per OS:
+
+- **Linux:** an RFCOMM socket; printing needs no group. Name lookup and scan use BlueZ over D-Bus
+  (the `.deb` service's `bluetooth` group covers that).
+- **Windows:** in-process; any Bluetooth radio works for Classic, Bluetooth 3.0 included.
+- **macOS:** the same helper `pdb-print-ble` and the same Bluetooth permission rule as for BLE (see above).
+- **Docker:** no Bluetooth.
 
 ### Testing a printer: `pdb-print try`
 

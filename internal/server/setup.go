@@ -199,7 +199,7 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 			scanErr = err.Error()
 		}
 		bleNote = note
-		s.seenBLE(cs)
+		s.seenBluetooth(cs)
 		d.Candidates, d.Scanned = sortCandidates(cs), true
 	}
 	type row struct {
@@ -214,7 +214,7 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	var rows []row
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
-			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "ble" && d.Printer.Transport.Address == c.Address) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
+			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (d.Printer.Transport.Address != "" && btSame(d.Printer.Transport, c)) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
 		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr, "BLENote": bleNote})
@@ -232,10 +232,10 @@ func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
 }
 
 func where(c discovery.Candidate) string {
-	switch c.Kind {
-	case "usb":
+	switch {
+	case c.Kind == "usb":
 		return "USB"
-	case "ble":
+	case config.Bluetooth(c.Kind):
 		return "Bluetooth " + c.Address
 	}
 	return "network " + c.Host
@@ -245,7 +245,7 @@ func where(c discovery.Candidate) string {
 func (s *Server) existing(c discovery.Candidate) string {
 	for _, p := range s.config().Printers {
 		t := p.Transport
-		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) || (c.Kind == "ble" && t.Kind == "ble" && bleSame(t, c)) ||
+		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) || btSame(t, c) ||
 			(c.Kind == "usb" && t.Kind == "usb" && ((t.USBID != "" && t.USBID == c.USBID && t.Serial == c.Serial) || (t.Device != "" && t.Device == c.Device))) {
 			return cmp.Or(p.Name, p.ID)
 		}
@@ -253,25 +253,30 @@ func (s *Server) existing(c discovery.Candidate) string {
 	return ""
 }
 
-// seenBLE tells the print service which configured Bluetooth printers a scan found: they count as
-// online for a while (see printing.Service.SeenBLE).
-func (s *Server) seenBLE(cs []discovery.Candidate) {
+// seenBluetooth tells the print service which configured Bluetooth printers a scan found: they count as
+// online for a while (see printing.Service.SeenBluetooth).
+func (s *Server) seenBluetooth(cs []discovery.Candidate) {
 	ps := s.config().Printers
 	for _, c := range cs {
 		for i := range ps {
-			if c.Kind == "ble" && ps[i].Transport.Kind == "ble" && bleSame(ps[i].Transport, c) {
-				s.Svc.SeenBLE(&ps[i])
+			// a classic scan also lists paired printers that are off: only an LE advert means it's there
+			if c.Kind == "ble" && btSame(ps[i].Transport, c) {
+				s.Svc.SeenBluetooth(&ps[i])
 			}
 		}
 	}
 }
 
-// bleSame: the address wins; a printer configured by name only matches by the advertised name.
-func bleSame(t config.Transport, c discovery.Candidate) bool {
+// btSame: a Bluetooth printer of c's kind where the address wins (any case: config doesn't normalise it);
+// a printer configured by name only matches by the advertised or device name.
+func btSame(t config.Transport, c discovery.Candidate) bool {
+	if !config.Bluetooth(c.Kind) || t.Kind != c.Kind {
+		return false
+	}
 	if t.Address != "" {
 		return strings.EqualFold(t.Address, c.Address)
 	}
-	return t.Name != "" && t.Name == c.BLEName
+	return t.Name != "" && t.Name == cmp.Or(c.BLEName, c.BTName)
 }
 
 // discover finds printers at ip, or ("") on USB, the LAN and Bluetooth; note says why Bluetooth
@@ -291,18 +296,14 @@ func (s *Server) discover(ctx context.Context, ip string) (cs []discovery.Candid
 		return cs, "", err
 	}
 	var bt []discovery.Candidate
-	var btErr error
 	btDone := make(chan struct{})
 	go func() {
 		defer close(btDone)
-		bt, btErr = discovery.BLE(ctx, db, discovery.Options{})
+		bt, note, _ = discovery.Bluetooth(ctx, db, discovery.Options{})
 	}()
 	usb, _ := discovery.USB(db, "") // not on Linux: no USB printers, not an error here
 	lan, err := discovery.Network(ctx, db, discovery.Options{Timeout: 15 * time.Second})
 	<-btDone
-	if btErr != nil {
-		note = discovery.BLENote(btErr)
-	}
 	return append(append(usb, lan...), bt...), note, err
 }
 
@@ -319,8 +320,8 @@ func (s *Server) setupPrinterPost(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case c.Kind == "tcp":
 		p.Transport = config.Transport{Kind: "tcp", Host: c.Host, Port: c.Port}
-	case c.Kind == "ble":
-		p.Transport = config.Transport{Kind: "ble", Address: c.Address, Name: c.BLEName}
+	case config.Bluetooth(c.Kind):
+		p.Transport = config.Transport{Kind: c.Kind, Address: c.Address, Name: cmp.Or(c.BLEName, c.BTName)}
 	case c.USBID != "":
 		p.Transport = config.Transport{Kind: "usb", USBID: c.USBID, Serial: c.Serial}
 	default:
