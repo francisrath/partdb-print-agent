@@ -313,6 +313,31 @@ func TestDiscoverNoAdapter(t *testing.T) {
 	}
 }
 
+// A bad flag returns at once, not after the Bluetooth scan.
+func TestDiscoverBadSubnetFast(t *testing.T) {
+	slow := func(ctx context.Context, _ time.Duration) ([]blecore.Advert, error) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+		}
+		return nil, nil
+	}
+	start := time.Now()
+	err := discover(context.Background(), []string{"--no-usb", "--subnet", "nope"}, io.Discard, slow)
+	if err == nil || time.Since(start) > time.Second {
+		t.Errorf("err %v after %v", err, time.Since(start))
+	}
+}
+
+// report can't reach a Bluetooth device: no report hint for an unknown one.
+func TestPrintCandidatesUnknownBLE(t *testing.T) {
+	var b bytes.Buffer
+	printCandidates(&b, []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", BLEName: "XY99", Status: discovery.Unknown}})
+	if out := b.String(); strings.Contains(out, "pdb-print report") || !strings.Contains(out, "XY99") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
 func TestConfirmStopsOnCancel(t *testing.T) {
 	r, w := io.Pipe() // nothing is ever typed
 	defer w.Close()

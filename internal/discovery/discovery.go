@@ -108,11 +108,12 @@ func byUSB(db *devicedb.DB, usbID, mdl string) *devicedb.Model {
 	return byMDL
 }
 
-// Options for Network. Zero values: the host's subnets (each at most a /24), port 9100,
-// 300 ms per connect, 64 at a time, 30 s in all, real TCP and SNMP (community public).
+// Options for Network and BLE. Network's zero values: the host's subnets (each at most a /24), port
+// 9100, 300 ms per connect, 64 at a time, 30 s in all, real TCP and SNMP (community public). BLE uses
+// only Timeout (0 = 8 s) and ScanBLE.
 type Options struct {
 	Subnets     []netip.Prefix // IPv4, at most /22 each (1024 addresses)
-	Timeout     time.Duration  // the whole scan
+	Timeout     time.Duration  // the whole scan (BLE: how long to listen)
 	Port        int
 	DialTimeout time.Duration
 	Workers     int

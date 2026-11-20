@@ -235,7 +235,7 @@ func where(c discovery.Candidate) string {
 	case "usb":
 		return "USB"
 	case "ble":
-		return "Bluetooth"
+		return "Bluetooth " + c.Address
 	}
 	return "network " + c.Host
 }
@@ -244,12 +244,20 @@ func where(c discovery.Candidate) string {
 func (s *Server) existing(c discovery.Candidate) string {
 	for _, p := range s.config().Printers {
 		t := p.Transport
-		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) || (c.Kind == "ble" && t.Kind == "ble" && t.Address == c.Address) ||
+		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) || (c.Kind == "ble" && t.Kind == "ble" && bleSame(t, c)) ||
 			(c.Kind == "usb" && t.Kind == "usb" && ((t.USBID != "" && t.USBID == c.USBID && t.Serial == c.Serial) || (t.Device != "" && t.Device == c.Device))) {
 			return cmp.Or(p.Name, p.ID)
 		}
 	}
 	return ""
+}
+
+// bleSame: the address wins; a printer configured by name only matches by the advertised name.
+func bleSame(t config.Transport, c discovery.Candidate) bool {
+	if t.Address != "" {
+		return strings.EqualFold(t.Address, c.Address)
+	}
+	return t.Name != "" && t.Name == c.BLEName
 }
 
 // discover finds printers at ip, or ("") on USB, the LAN and Bluetooth; note says why Bluetooth

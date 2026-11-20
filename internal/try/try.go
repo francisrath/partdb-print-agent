@@ -259,7 +259,10 @@ func (s *session) find() (discovery.Candidate, bool) {
 	}
 	for i, c := range cs {
 		name := c.ModelID
-		if name == "" {
+		switch {
+		case name == "" && c.Kind == "ble":
+			name = "(Bluetooth device, not a known label printer)"
+		case name == "":
 			name = "(doesn't say what it is: could be the Zebra)"
 		}
 		s.say("  %d) %s %s\n", i+1, where(c), name)

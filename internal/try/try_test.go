@@ -409,3 +409,28 @@ func TestTryCatPrinter(t *testing.T) {
 		}
 	}
 }
+
+// An unknown Bluetooth device in the list isn't taken for the Zebra.
+func TestTryListsUnknownBLENeutrally(t *testing.T) {
+	m, _ := devicedb.Default().Model("MX10")
+	r, w := io.Pipe()
+	d := &dialog{t: t, in: w, done: make(chan struct{})}
+	svc := &printing.Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	t.Cleanup(svc.Close)
+	o := try.Options{In: r, Out: d, Dir: t.TempDir(), Svc: svc, Version: "test",
+		Discover: func(context.Context) ([]discovery.Candidate, error) {
+			return []discovery.Candidate{
+				{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", Status: discovery.Unknown},
+				{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported},
+			}, nil
+		}}
+	go func() {
+		defer close(d.done)
+		d.path, d.err = try.Run(context.Background(), o)
+	}()
+	d.answer("Which one is the printer to test?", "1")
+	d.finish()
+	if out := d.output(); strings.Contains(out, "Zebra)") || !strings.Contains(out, "Bluetooth device, not a known label printer") {
+		t.Errorf("output:\n%s", out)
+	}
+}

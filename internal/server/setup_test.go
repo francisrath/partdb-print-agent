@@ -427,7 +427,7 @@ func TestWizardBLERow(t *testing.T) {
 	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
 		return []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported}}, nil
 	}
-	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "<strong>MX10</strong> · Bluetooth") {
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "<strong>MX10</strong> · Bluetooth AA:BB:CC:DD:EE:01") {
 		t.Fatalf("printer page: %d %s", w.Code, w.Body)
 	}
 	wantRedirect(t, h.post("/setup/printer", url.Values{"choice": {"0"}}), "/setup/test")
@@ -435,7 +435,21 @@ func TestWizardBLERow(t *testing.T) {
 	if p := h.srv.local.Draft.Printer; p.Model != "MX10" || p.Transport != want {
 		t.Errorf("picked %+v", p)
 	}
-	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "checked") {
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), `value="0" checked`) {
 		t.Errorf("the picked Bluetooth printer isn't marked current")
+	}
+}
+
+// A Bluetooth printer configured by name only is recognised by its advertised name.
+func TestWizardBLEExistingByName(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers, config.Printer{ID: "cat", Name: "Bench cat", Model: "MX10",
+		Transport: config.Transport{Kind: "ble", Name: "MX10"}})
+	m, _ := devicedb.Default().Model("MX10")
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported}}, nil
+	}
+	if w := h.do("GET", "/setup/printer", nil); !strings.Contains(w.Body.String(), "already set up as “Bench cat”") {
+		t.Errorf("printer page: %s", w.Body)
 	}
 }

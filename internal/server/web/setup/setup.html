@@ -70,7 +70,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
   {{end}}
 </form>
 {{else}}
-<p>No printers found. Check the printer is switched on and connected by USB or to the same network.</p>
+<p>No printers found. Check the printer is switched on and connected by USB or to the same network, or that Bluetooth is on and the printer is nearby.</p>
 {{end}}
 {{range .Rows}}{{if and (not .Supported) (eq .C.Kind "tcp") (not .C.ModelID)}}<form method="post" action="/setup/printer/identify" id="identify-{{.Index}}" hidden>{{template "csrf" $}}<input type="hidden" name="candidate" value="{{.Index}}"><input type="hidden" name="host" value="{{.C.Host}}"></form>{{end}}{{end}}
 <form method="post" action="/setup/printer/probe" class="inline-form">
