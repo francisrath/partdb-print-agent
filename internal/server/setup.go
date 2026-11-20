@@ -190,14 +190,15 @@ func partDBError(err error) string {
 func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	_, d, unlock := lockDraft(r)
 	defer unlock()
-	var scanErr string
+	var scanErr, bleNote string
 	if !d.Scanned || r.URL.Query().Get("rescan") != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		cs, err := s.discover(ctx, "")
+		cs, note, err := s.discover(ctx, "")
 		cancel()
 		if err != nil && len(cs) == 0 {
 			scanErr = err.Error()
 		}
+		bleNote = note
 		d.Candidates, d.Scanned = sortCandidates(cs), true
 	}
 	type row struct {
@@ -212,10 +213,10 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	var rows []row
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
-			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
+			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "ble" && d.Printer.Transport.Address == c.Address) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
 		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
-	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr})
+	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr, "BLENote": bleNote})
 }
 
 func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
@@ -230,8 +231,11 @@ func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {
 }
 
 func where(c discovery.Candidate) string {
-	if c.Kind == "usb" {
+	switch c.Kind {
+	case "usb":
 		return "USB"
+	case "ble":
+		return "Bluetooth"
 	}
 	return "network " + c.Host
 }
@@ -240,7 +244,7 @@ func where(c discovery.Candidate) string {
 func (s *Server) existing(c discovery.Candidate) string {
 	for _, p := range s.config().Printers {
 		t := p.Transport
-		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) ||
+		if (c.Kind == "tcp" && t.Kind == "tcp" && t.Host == c.Host) || (c.Kind == "ble" && t.Kind == "ble" && t.Address == c.Address) ||
 			(c.Kind == "usb" && t.Kind == "usb" && ((t.USBID != "" && t.USBID == c.USBID && t.Serial == c.Serial) || (t.Device != "" && t.Device == c.Device))) {
 			return cmp.Or(p.Name, p.ID)
 		}
@@ -248,21 +252,36 @@ func (s *Server) existing(c discovery.Candidate) string {
 	return ""
 }
 
-func (s *Server) discover(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+// discover finds printers at ip, or ("") on USB, the LAN and Bluetooth; note says why Bluetooth
+// couldn't be searched (no adapter, Bluetooth off), which isn't an error.
+func (s *Server) discover(ctx context.Context, ip string) (cs []discovery.Candidate, note string, err error) {
 	if s.Discover != nil {
-		return s.Discover(ctx, ip)
+		cs, err = s.Discover(ctx, ip)
+		return cs, "", err
 	}
 	db := devicedb.Default()
 	if ip != "" {
 		a, err := netip.ParseAddr(ip)
 		if err != nil || !a.Unmap().Is4() {
-			return nil, errors.New("enter the printer's IPv4 address, like 192.168.1.50")
+			return nil, "", errors.New("enter the printer's IPv4 address, like 192.168.1.50")
 		}
-		return discovery.Network(ctx, db, discovery.Options{Subnets: []netip.Prefix{netip.PrefixFrom(a.Unmap(), 32)}})
+		cs, err = discovery.Network(ctx, db, discovery.Options{Subnets: []netip.Prefix{netip.PrefixFrom(a.Unmap(), 32)}})
+		return cs, "", err
 	}
+	var bt []discovery.Candidate
+	var btErr error
+	btDone := make(chan struct{})
+	go func() {
+		defer close(btDone)
+		bt, btErr = discovery.BLE(ctx, db, discovery.Options{})
+	}()
 	usb, _ := discovery.USB(db, "") // not on Linux: no USB printers, not an error here
 	lan, err := discovery.Network(ctx, db, discovery.Options{Timeout: 15 * time.Second})
-	return append(usb, lan...), err
+	<-btDone
+	if btErr != nil {
+		note = discovery.BLENote(btErr)
+	}
+	return append(append(usb, lan...), bt...), note, err
 }
 
 func (s *Server) setupPrinterPost(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +297,8 @@ func (s *Server) setupPrinterPost(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case c.Kind == "tcp":
 		p.Transport = config.Transport{Kind: "tcp", Host: c.Host, Port: c.Port}
+	case c.Kind == "ble":
+		p.Transport = config.Transport{Kind: "ble", Address: c.Address, Name: c.BLEName}
 	case c.USBID != "":
 		p.Transport = config.Transport{Kind: "usb", USBID: c.USBID, Serial: c.Serial}
 	default:
@@ -295,7 +316,7 @@ func (s *Server) setupProbe(w http.ResponseWriter, r *http.Request) {
 	ip := strings.TrimSpace(r.FormValue("ip"))
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	cs, err := s.discover(ctx, ip)
+	cs, _, err := s.discover(ctx, ip)
 	if err == nil && len(cs) == 0 {
 		err = fmt.Errorf("nothing answered at %s on the printer port (9100); check the address and that the printer is on", ip)
 	}

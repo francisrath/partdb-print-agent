@@ -55,6 +55,7 @@ You can still set up the printer.</p>{{end}}
 {{if .D.NoAgentAPI}}<p class="flash err">This Part-DB can't send print jobs to a print server yet (it has no print agent
 API). You can still set up the printer; printing from Part-DB needs a newer Part-DB.</p>{{end}}
 {{with .ScanErr}}<p class="flash err">Searching the network failed: {{.}}</p>{{end}}
+{{with .BLENote}}<p class="flash">{{.}}</p>{{end}}
 {{if .Rows}}
 <form method="post" action="/setup/printer" id="pick">
   {{template "csrf" .}}
@@ -64,7 +65,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <strong>{{if eq .Name "?"}}Unknown printer{{else}}{{.Name}}{{end}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>
-  {{if not .Supported}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}">Ask this printer what it is</button>
+  {{if and (not .Supported) (ne .C.Kind "ble")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}">Ask this printer what it is</button>
   <span class="muted">(a printer that isn't a Zebra may print a page with a few strange characters)</span> · {{end}}<a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
   {{end}}
 </form>
@@ -89,7 +90,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
 {{define "setup-test"}}{{template "setup-top" .}}
 {{$p := .D.Printer}}
 <h2>Test print</h2>
-<p class="muted">{{$p.Model}} · {{if eq $p.Transport.Kind "tcp"}}network {{$p.Transport.Host}}{{else}}USB{{end}}{{with $p.Media}} · {{.}}{{end}}</p>
+<p class="muted">{{$p.Model}} · {{if eq $p.Transport.Kind "tcp"}}network {{$p.Transport.Host}}{{else if eq $p.Transport.Kind "ble"}}Bluetooth{{else}}USB{{end}}{{with $p.Media}} · {{.}}{{end}}</p>
 {{with .D.Msg}}<p class="flash err" role="status">{{.}}</p>{{end}}
 {{if .D.AskMedia}}
   <form method="post" action="/setup/test">
