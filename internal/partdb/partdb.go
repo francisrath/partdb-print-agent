@@ -150,6 +150,26 @@ func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
 	return out, nil
 }
 
+// SampleID returns the id of some element of a label profile's element type
+// (part | part_lot | storelocation), for generating a sample label; 0 if there is none.
+func (c *Client) SampleID(ctx context.Context, element string) (int, error) {
+	path := map[string]string{"part": "/api/parts", "part_lot": "/api/part_lots", "storelocation": "/api/storage_locations"}[element]
+	if path == "" {
+		return 0, fmt.Errorf("unknown element type %q", element)
+	}
+	var res struct {
+		Member      []ldProfile `json:"hydra:member"`
+		MemberPlain []ldProfile `json:"member"`
+	}
+	if err := c.getJSON(ctx, path+"?itemsPerPage=1", "application/ld+json", &res); err != nil {
+		return 0, err
+	}
+	for _, m := range append(res.Member, res.MemberPlain...) {
+		return strconv.Atoi(m.ID[strings.LastIndexByte(m.ID, '/')+1:])
+	}
+	return 0, nil
+}
+
 type ldProfile struct {
 	ID      string `json:"@id"`
 	Name    string `json:"name"`

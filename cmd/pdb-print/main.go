@@ -576,14 +576,20 @@ func (a *app) printers(ctx context.Context, args []string) error {
 			return err
 		}
 		st, err := a.svc.Status(ctx, p)
-		if errors.Is(err, driver.ErrNoReadback) {
+		switch {
+		case errors.Is(err, driver.ErrNoReadback):
 			fmt.Println("connected, but the printer sent no status reply")
-			return nil
-		}
-		if err != nil {
+			st = nil
+		case err != nil:
 			return err
+		default:
+			fmt.Printf("model:  %s\nstatus: %s %s\n", st.Model, st.Code, st.Detail)
 		}
-		fmt.Printf("model:  %s\nstatus: %s %s\nmedia:  %s\n", st.Model, st.Code, st.Detail, printing.MediaName(st.Media))
+		m, media, _ := printing.MediaStatus(p, st)
+		fmt.Printf("media:  %s\n", media)
+		if fit := a.svc.FittingProfiles(ctx, a.cfg, m); fit != "" {
+			fmt.Println(fit)
+		}
 		return nil
 	case len(args) >= 2 && args[0] == "test":
 		fs := flag.NewFlagSet("printers test", flag.ContinueOnError)

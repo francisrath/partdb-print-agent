@@ -204,6 +204,21 @@ func (r *Renderer) Render(pdf []byte, o Options) ([]*image.Gray, error) {
 	return out, nil
 }
 
+// PageSizeMM returns the first page's size as displayed (mm).
+func (r *Renderer) PageSizeMM(pdf []byte) (w, h float64, err error) {
+	p := r.instance
+	doc, err := p.OpenDocument(&requests.OpenDocument{File: &pdf})
+	if err != nil {
+		return 0, 0, fmt.Errorf("open PDF: %w", err)
+	}
+	defer p.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	size, err := p.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc.Document, Index: 0})
+	if err != nil {
+		return 0, 0, err
+	}
+	return size.Width * mmPerPt, size.Height * mmPerPt, nil
+}
+
 func (r *Renderer) renderPage(doc references.FPDF_DOCUMENT, index int, o Options, budget *int) (*image.Gray, error) {
 	p := r.instance
 	size, err := p.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: doc, Index: index})

@@ -578,28 +578,26 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
 		text, ok := statusText(st, p)
+		if m, _, _ := printing.MediaStatus(p, st); m != nil {
+			pctx, cancel := context.WithTimeout(r.Context(), 20*time.Second) // first call measures each profile
+			defer cancel()
+			if fit := s.Svc.FittingProfiles(pctx, s.config(), m); fit != "" {
+				text += " · " + fit
+			}
+		}
 		writeJSON(w, map[string]any{"ok": ok, "text": text})
 	}
 }
 
-// statusText summarises a printer status for the UI; ok=false also when the loaded roll
-// differs from the configured media (jobs would be refused).
+// statusText summarises a printer status for the UI; ok=false also when jobs would be
+// refused or fail for the loaded roll.
 func statusText(st *driver.Status, p *config.Printer) (string, bool) {
-	text := fmt.Sprintf("%s · %s · %s loaded", st.Code, st.Model, printing.MediaName(st.Media))
+	_, media, ok := printing.MediaStatus(p, st)
+	text := fmt.Sprintf("%s · %s · media: %s", st.Code, st.Model, media)
 	if st.Detail != "" {
 		text += " · " + st.Detail
 	}
-	ok := st.Code == driver.OK
-	known := st.Media != nil && st.Media.ID != "unknown"
-	switch {
-	case known && p.Media != "" && st.Media.ID != p.Media:
-		text += fmt.Sprintf(" · jobs will be refused: config expects %s", p.Media)
-		ok = false
-	case !known && p.Media == "":
-		text += " · jobs will fail: the printer doesn't report a known roll, set media for this printer"
-		ok = false
-	}
-	return text, ok
+	return text, ok && st.Code == driver.OK
 }
 
 // PrintFile prints a PDF file from another job source (e.g. the hot folder) on printerID,
@@ -642,7 +640,10 @@ func (s *Server) AgentPrinters() []partdb.AgentPrinter {
 	var wg sync.WaitGroup
 	for i := range ps {
 		p := &ps[i]
-		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media}
+		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.FallbackMedia()}
+		if m, _, ok := s.Svc.LastMedia(p.ID); ok {
+			out[i].Media = m.ID // the roll it reported last
+		}
 		wg.Add(1)
 		go func() { defer wg.Done(); out[i].Online = s.Svc.Online(p) }() // checks take up to 2 s each
 	}
@@ -696,6 +697,9 @@ func resultText(res *printing.Result) string {
 		return "not printed"
 	}
 	s := fmt.Sprintf("%d page(s) on %s", res.Pages, res.Media)
+	if res.MediaFrom != "" {
+		s += " (" + res.MediaFrom + ")"
+	}
 	if !res.Confirmed {
 		s += ", sent (unconfirmed)"
 	}

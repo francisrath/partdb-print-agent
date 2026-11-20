@@ -23,6 +23,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
+	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
@@ -79,11 +80,13 @@ type Service struct {
 	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
 	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r, printers, online and media
+	mu       sync.Mutex // guards r, printers, online, media and profileSizes
 	online   map[string]onlineState
 	probes   map[string]*sync.Mutex // one online check per printer at a time
 	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
 	media    map[string]knownMedia  // last roll each printer reported
+	// label profile sizes measured by ProfilesFitting, by Part-DB URL and profile id
+	profileSizes map[string]profileSize
 
 	beforePublish   func()                               // tests: between an online check returning and its result being stored
 	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
@@ -430,7 +433,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		if err := drv.Encode(&b, job); err != nil {
 			return nil, err
 		}
-		res := &Result{Pages: len(pages), Media: media.ID, Bytes: b.Len(), Warnings: warnings}
+		res := &Result{Pages: len(pages), Media: media.ID, MediaFrom: from, Bytes: b.Len(), Warnings: warnings}
 		return res, os.WriteFile(dryRun, b.Bytes(), 0o644)
 	}
 	res, err := drv.Print(ctx, t, job)
@@ -441,7 +444,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	for _, w := range res.Warnings {
 		s.Log.Warn(w, "printer", p.ID)
 	}
-	res.Warnings = append(warnings, res.Warnings...)
+	res.Warnings, res.MediaFrom = append(warnings, res.Warnings...), from
 	s.Log.Info(res.Message, "printer", p.ID, "pages", res.Pages, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
 	return res, nil
 }
@@ -540,4 +543,50 @@ func MediaName(m *driver.Media) string {
 		return fmt.Sprintf("unknown %s %gx%g mm", m.Kind, m.WidthMM, m.LengthMM)
 	}
 	return m.ID
+}
+
+// MediaStatus says which media a job would use after status st: "dk-22214 (detected)" or
+// "dk-22210 (config fallback)"; ok is false when jobs would be refused or fail. m is that
+// media, nil if none.
+func MediaStatus(p *config.Printer, st *driver.Status) (m *driver.Media, text string, ok bool) {
+	var loaded *driver.Media
+	if st != nil {
+		loaded = st.Media
+	}
+	if loaded != nil && loaded.ID != "unknown" {
+		if model, err := p.DeviceModel(); err == nil && !slices.Contains(p.AllowedMedia(model), loaded.ID) {
+			return loaded, loaded.ID + " (detected; not in media_allowed: jobs will be refused)", false
+		}
+		return loaded, loaded.ID + " (detected)", true
+	}
+	if f := p.FallbackMedia(); f != "" {
+		if fm, ok := LookupMedia(p, f); ok {
+			return &fm, f + " (config fallback)", true
+		}
+	}
+	return nil, MediaName(loaded) + " reported; jobs will fail: set media for this printer as a fallback", false
+}
+
+// FittingProfiles lists the label profiles of the config's Part-DB instance whose labels fit m,
+// as "fits profiles: 2 part bag 29 mm, 4 drawer"; "" without an instance or on errors (logged).
+func (s *Service) FittingProfiles(ctx context.Context, cfg *config.Config, m *driver.Media) string {
+	in, err := cfg.Instance("")
+	if err != nil || m == nil {
+		return ""
+	}
+	ps, err := s.ProfilesFitting(ctx, partdb.FromInstance(in), m)
+	if err != nil {
+		s.Log.Warn("checking label profiles against the roll", "err", err)
+	}
+	if len(ps) == 0 {
+		if err != nil {
+			return ""
+		}
+		return "no Part-DB label profile fits " + m.Describe()
+	}
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		names[i] = fmt.Sprintf("%d %s", p.ID, p.Name)
+	}
+	return "fits profiles: " + strings.Join(names, ", ")
 }
