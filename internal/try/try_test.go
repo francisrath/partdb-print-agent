@@ -131,9 +131,8 @@ func TestTryHappyPath(t *testing.T) {
 	if f := fake.Formats(); len(f) != 4 {
 		t.Errorf("%d labels printed, want 4 (1, 2, 3a, 3b)", len(f))
 	}
-	all := fake.AllFormats()
-	if last := all[len(all)-1]; !strings.Contains(last, "^PW799^LL812^LH0,0^LS0") || strings.Contains(last, "^GF") {
-		t.Errorf("last thing sent isn't the settings restore: %.100q", last)
+	if !restored(fake) {
+		t.Errorf("the printer's settings weren't sent back")
 	}
 }
 
@@ -206,9 +205,8 @@ func TestTryEOFWritesReport(t *testing.T) {
 	d.answer("Print the test labels now?", "y")
 	d.answer("Did label 1/5 come out", "y")
 	got := d.finish()
-	all := fake.AllFormats()
-	if !strings.Contains(got, "Label 1/5: printed") || !strings.Contains(all[len(all)-1], "^PW799^LL812") {
-		t.Errorf("report:\n%s\nlast sent %.80q", got, all[len(all)-1])
+	if !strings.Contains(got, "Label 1/5: printed") || !restored(fake) {
+		t.Errorf("report:\n%s\nrestored %v", got, restored(fake))
 	}
 }
 
@@ -240,4 +238,16 @@ func TestTryNoPrintAfterInputEnds(t *testing.T) {
 	if n := len(fake.Formats()); n != 1 {
 		t.Errorf("%d labels sent, want only 1/5", n)
 	}
+}
+
+// restored reports whether the printer got its own settings back: a format without a graphic.
+// (Not "the last thing received": the fake reads connections concurrently, so on a busy machine
+// a label's last bytes can be read after the restore was sent.)
+func restored(fake *zpltest.Fake) bool {
+	for _, f := range fake.AllFormats() {
+		if strings.Contains(f, "^PW799^LL812^LH0,0^LS0^LT0^XZ") && !strings.Contains(f, "^GF") {
+			return true
+		}
+	}
+	return false
 }
