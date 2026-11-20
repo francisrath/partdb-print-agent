@@ -1,5 +1,5 @@
 # Bluetooth LE thermal "cat printers" (driver cat, dialect gb): GB01/02/03, GT01, YT01, MX05-MX10 and
-# clones speak the same 0x51/0x5a command set over GATT service 0xae30 (write 0xae01, notify 0xae02).
+# clones speak the same command set (frames start 51 78) over GATT service 0xae30 (write 0xae01, notify 0xae02).
 # They are recognised by their advertised name. 384 dots at 203 dpi across 57 mm paper. ble_gap_ms is
 # the pause between writes, feed_lines the paper fed after a label, darkness says the density command
 # works; needs_status: a silent printer is off, out of paper or covered, so don't queue blind.
