@@ -63,6 +63,8 @@ type reader struct {
 	replies int    // A3 replies taken
 	reply   []byte // the last A3 reply, whole frame as received
 	busy    bool   // an A3 reply said busy
+	idled   bool   // an A3 reply said idle after busy
+	strict  bool   // the previous job's AE 00 may still come: count only one after busy and then idle
 	emptied bool   // an AE 00 ("buffer empty") came after busy
 	paused  bool   // an AE 10 (pause) wasn't lifted yet: the next AE 00 is its resume, not "empty"
 }
@@ -81,11 +83,12 @@ func (r *reader) take(reply bool) (flags byte, ok bool) {
 			r.paused = true
 		case f.cmd == cmdFlow && len(f.payload) == 1 && f.payload[0] == 0x00:
 			// the tail of a write can pause after Write returned; its resume isn't the end of the job
-			r.emptied = r.emptied || r.busy && !r.paused
+			r.emptied = r.emptied || r.busy && !r.paused && (!r.strict || r.idled)
 			r.paused = false
 		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
 			r.replies++
 			r.reply = f.raw
+			r.idled = r.idled || r.busy && f.payload[0]&flagBusy == 0
 			r.busy = r.busy || f.payload[0]&flagBusy != 0
 			return f.payload[0], true
 		}
@@ -124,9 +127,12 @@ func (r *reader) read() error {
 	return nil
 }
 
-// drain reads until the previous job's AE 00 came or d passed, and drops everything.
-func (r *reader) drain(d time.Duration) error {
+// drain reads until the previous job's AE 00 came, d passed or ctx ended, and drops everything.
+func (r *reader) drain(ctx context.Context, d time.Duration) error {
 	for end := time.Now().Add(d); !r.emptied && time.Now().Before(end); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := r.read(); err != nil {
 			return err
 		}
@@ -193,7 +199,7 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	// A previous job still running, or one we stopped waiting for, may yet send its AE 00.
 	r := &reader{t: t, busy: !job.Status.Idle || job.PrevUnconfirmed}
 	if !job.Status.Idle {
-		st, err := c.poll(ctx, r, time.Now().Add(idleWait), func(st *driver.Status) bool { return st.Idle })
+		st, err := c.poll(ctx, r, time.Now().Add(idleWait), func(st *driver.Status) bool { return st != nil && st.Idle })
 		if err != nil {
 			return nil, err
 		}
@@ -208,23 +214,32 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		}
 	}
 	if r.busy {
-		if err := r.drain(drainWait); err != nil {
+		if err := r.drain(ctx, drainWait); err != nil {
+			if ctx.Err() != nil {
+				return nil, err
+			}
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if _, err := t.Write(b.Bytes()); err != nil {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len()}
-	r.busy, r.emptied, r.paused = false, false, false // only what comes after our Write counts
+	// Only what comes after our Write counts. A previous job's AE 00 that didn't come within the drain may
+	// still come while ours is busy, so then only one after our idle reply counts.
+	r.strict = r.busy && !r.emptied
+	r.busy, r.idled, r.emptied, r.paused = false, false, false, false
 	st, err := c.poll(ctx, r, time.Now().Add(confirmBase+confirmPerPage*time.Duration(len(job.Pages))), func(*driver.Status) bool {
 		return r.emptied
 	})
 	switch {
 	case err != nil:
 		return nil, err
-	case st != nil:
-		if st.Detail != "" {
+	case st != nil || r.emptied: // st is nil when the AE 00 came with an unanswered status request
+		if st != nil && st.Detail != "" {
 			res.Warnings = append(res.Warnings, st.Detail)
 		}
 		res.Confirmed, res.Message = true, "printed"
@@ -239,7 +254,8 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 }
 
 // poll asks for the status every pollEvery until until(status) holds and returns that status;
-// nil when the deadline passes or ctx ends first. A fault flag or a broken link is an error.
+// nil when the deadline passes or ctx ends first, or when until holds after a request went unanswered
+// (until then gets nil). A fault flag or a broken link is an error.
 func (c *cat) poll(ctx context.Context, r *reader, deadline time.Time, until func(*driver.Status) bool) (*driver.Status, error) {
 	for time.Now().Before(deadline) {
 		select {
@@ -249,6 +265,9 @@ func (c *cat) poll(ctx context.Context, r *reader, deadline time.Time, until fun
 		}
 		flags, err := r.status()
 		if errors.Is(err, driver.ErrNoReadback) {
+			if until(nil) { // e.g. the AE 00 came, but no status reply after it
+				return nil, nil
+			}
 			continue // no reply this time; keep asking
 		}
 		if err != nil {

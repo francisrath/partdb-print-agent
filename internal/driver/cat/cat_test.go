@@ -286,6 +286,8 @@ func TestPrintNeedsJobEvidence(t *testing.T) {
 		{"resume, then buffer empty", [][]byte{then(status(0x80), frame(0xAE, 0x10)), then(emptied, status(0x80)), status(0x00), then(emptied, status(0x00)), status(0x00)}, nil, true, "printed", 1},
 		// a stale idle reply already buffered behind the busy one must not answer the next request
 		{"stale idle", [][]byte{append(status(0x80), status(0x00)...)}, nil, false, notDone, 0},
+		// the AE 00 is recorded while a status request goes unanswered
+		{"AE 00, then silence", [][]byte{status(0x80), emptied}, nil, true, "printed", 0},
 	} {
 		d, m := mx10(t, "")
 		f := &fake{replies: tc.replies, onJob: tc.onJob}
@@ -310,7 +312,8 @@ func TestPrintWaitsForIdle(t *testing.T) {
 		return j
 	}
 	d, m := mx10(t, "")
-	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), append(append([]byte{}, emptied...), status(0x00)...)}}
+	// (the previous job's AE 00 doesn't come within the drain here, so ours counts only after an idle reply)
+	f := &fake{replies: [][]byte{status(0x80), status(0x00), status(0x80), status(0x00), append(append([]byte{}, emptied...), status(0x00)...)}}
 	if res, err := d.Print(context.Background(), f, busy(m)); err != nil || !res.Confirmed {
 		t.Errorf("busy, then idle: %+v, %v", res, err)
 	}
@@ -373,5 +376,49 @@ func TestPrintAfterUnconfirmedJob(t *testing.T) {
 	res, err := d.Print(context.Background(), f, j)
 	if err != nil || res.Confirmed || !f.lateBefore {
 		t.Errorf("late AE 00 of an unconfirmed job: %+v, %v, arrived before our write: %v", res, err, f.lateBefore)
+	}
+}
+
+func TestPrintDrainCancelled(t *testing.T) {
+	fastTimings(t)
+	drainWait = 5 * time.Second
+	d, m := mx10(t, "")
+	j := job(m, 1)
+	j.PrevUnconfirmed = true
+	f := &fake{}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := d.Print(ctx, f, j)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err %v, want context.Canceled", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("drain ignored the cancel (%v)", time.Since(start))
+	}
+	if f.written.Len() != bytes.Count(f.written.Bytes(), statusRequest)*len(statusRequest) {
+		t.Errorf("job sent after the cancel")
+	}
+}
+
+func TestPrintAfterDrainTimeout(t *testing.T) {
+	fastTimings(t)
+	then := func(a, b []byte) []byte { return append(append([]byte{}, a...), b...) }
+	// the previous job's AE 00 never came within the drain: one turning up while ours is busy is still its
+	for _, tc := range []struct {
+		name      string
+		replies   [][]byte
+		confirmed bool
+	}{
+		{"AE 00 while busy", [][]byte{status(0x80), then(emptied, status(0x80)), status(0x80), status(0x00), status(0x00)}, false},
+		{"busy, idle, AE 00", [][]byte{status(0x80), status(0x00), then(emptied, status(0x00))}, true},
+	} {
+		d, m := mx10(t, "")
+		j := job(m, 1)
+		j.PrevUnconfirmed = true
+		res, err := d.Print(context.Background(), &fake{replies: tc.replies}, j)
+		if err != nil || res.Confirmed != tc.confirmed {
+			t.Errorf("%s: %+v, %v; want confirmed %v", tc.name, res, err, tc.confirmed)
+		}
 	}
 }
