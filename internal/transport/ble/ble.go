@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -131,10 +130,7 @@ func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scan
 			if err == nil {
 				return results(), nil
 			}
-			if strings.Contains(err.Error(), "not powered") { // the library's error is unexported
-				return nil, fmt.Errorf("%w: %w", blecore.ErrNoBluetooth, err)
-			}
-			return nil, fmt.Errorf("ble: scan: %w", err)
+			return nil, scanError(err)
 		case <-ctx.Done():
 			stopScan(errc) // an error while stopping doesn't spoil what was found
 			return results(), nil
@@ -327,13 +323,16 @@ func (t *Transport) Write(p []byte) (int, error) {
 		return 0, errors.New("ble: not open")
 	}
 	ch := t.chunker
-	if t.mtu <= minMTU { // chunk = ATT MTU − 3 (floor 20, the chunker's); Windows says 23 at first
-		if mtu, err := t.tx.GetMTU(); err == nil {
+	reread, tx := t.mtu <= minMTU, t.tx // Windows says 23 until the MTU exchange is done
+	t.mu.Unlock()
+	if reread {
+		if mtu, err := tx.GetMTU(); err == nil {
+			t.mu.Lock()
 			t.mtu = int(mtu)
-			ch.Max = t.mtu - 3
+			ch.Max = t.mtu - 3 // chunk = ATT MTU − 3; the floor of 20 is the chunker's
+			t.mu.Unlock()
 		}
 	}
-	t.mu.Unlock()
 	if err := ch.Send(p); err != nil {
 		return 0, err
 	}

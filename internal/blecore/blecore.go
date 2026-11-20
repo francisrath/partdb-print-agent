@@ -67,9 +67,12 @@ var ErrClosed = errors.New("ble: connection closed")
 // Chunker splits a write into pieces of at most Max bytes, waits Gap between pieces, and holds back while
 // the printer has asked for a pause (fed in through OnNotify from the notification callback).
 type Chunker struct {
-	Max      int // bytes per write; below 20 counts as 20 (the smallest ATT payload)
-	Gap      time.Duration
-	MaxPause time.Duration // how long Send waits for the printer to lift a pause; 0 = 30 s
+	Max int // bytes per write; below 20 counts as 20 (the smallest ATT payload)
+	Gap time.Duration
+	// MaxPause is how long Send waits for the printer to lift a pause; 0 = 30 s. On Linux (tinygo
+	// bluetooth v0.17.0) a central gets no remote-disconnect events, so a link dropped during a pause
+	// surfaces only when this limit ends.
+	MaxPause time.Duration
 	Write    func([]byte) error
 
 	mu     sync.Mutex
