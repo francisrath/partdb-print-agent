@@ -61,18 +61,20 @@ func Pick(found []Advert, name, address string) (Advert, error) {
 		len(match), name, strings.Join(addrs, ", "))
 }
 
-// maxPause bounds how long Send waits for the printer to lift a pause.
-const maxPause = 30 * time.Second
+// ErrClosed: the connection was closed (or dropped) while Send was running.
+var ErrClosed = errors.New("ble: connection closed")
 
 // Chunker splits a write into pieces of at most Max bytes, waits Gap between pieces, and holds back while
 // the printer has asked for a pause (fed in through OnNotify from the notification callback).
 type Chunker struct {
-	Max   int // bytes per write; below 20 counts as 20 (the smallest ATT payload)
-	Gap   time.Duration
-	Write func([]byte) error
+	Max      int // bytes per write; below 20 counts as 20 (the smallest ATT payload)
+	Gap      time.Duration
+	MaxPause time.Duration // how long Send waits for the printer to lift a pause; 0 = 30 s
+	Write    func([]byte) error
 
 	mu     sync.Mutex
 	paused bool
+	closed bool
 }
 
 // Send returns once the last piece has been handed to Write.
@@ -92,21 +94,33 @@ func (c *Chunker) Send(b []byte) error {
 	return nil
 }
 
+// Close makes a running or later Send fail with ErrClosed.
+func (c *Chunker) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+}
+
 func (c *Chunker) waitResume() error {
-	deadline := time.Now().Add(maxPause)
-	for c.isPaused() {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("ble: printer paused the transfer for over %v", maxPause)
+	limit := c.MaxPause
+	if limit == 0 {
+		limit = 30 * time.Second
+	}
+	deadline := time.Now().Add(limit)
+	for {
+		c.mu.Lock()
+		paused, closed := c.paused, c.closed
+		c.mu.Unlock()
+		switch {
+		case closed:
+			return ErrClosed
+		case !paused:
+			return nil
+		case time.Now().After(deadline):
+			return fmt.Errorf("ble: printer paused the transfer for over %v", limit)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	return nil
-}
-
-func (c *Chunker) isPaused() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.paused
 }
 
 // OnNotify recognises the cat printers' flow-control notification 51 78 AE 01 01 00 10 (pause) / 00

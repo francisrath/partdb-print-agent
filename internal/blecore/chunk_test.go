@@ -2,6 +2,8 @@ package blecore
 
 import (
 	"bytes"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,8 +58,8 @@ func TestChunkerPausesOnFlowControl(t *testing.T) {
 	mu.Lock()
 	n := len(got)
 	mu.Unlock()
-	if n == len(data) {
-		t.Fatal("whole job sent despite the pause")
+	if n != 20 {
+		t.Fatalf("%d bytes out before the pause took hold, want exactly one chunk (20)", n)
 	}
 	select {
 	case err := <-done:
@@ -86,4 +88,56 @@ func equalInts(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+func TestChunkerMaxPause(t *testing.T) {
+	c := &Chunker{Max: 20, MaxPause: 50 * time.Millisecond, Write: func([]byte) error { return nil }}
+	c.OnNotify([]byte{0x51, 0x78, 0xAE, 0x01, 0x01, 0x00, 0x10, 0x70, 0xFF})
+	start := time.Now()
+	err := c.Send(make([]byte, 40))
+	if err == nil || !strings.Contains(err.Error(), "paused") {
+		t.Fatalf("err %v, want a pause timeout", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("gave up after %v", d)
+	}
+}
+
+func TestChunkerWriteError(t *testing.T) {
+	boom := errors.New("boom")
+	calls := 0
+	c := &Chunker{Max: 20, Write: func([]byte) error {
+		calls++
+		if calls == 2 {
+			return boom
+		}
+		return nil
+	}}
+	if err := c.Send(make([]byte, 100)); !errors.Is(err, boom) {
+		t.Fatalf("err %v, want boom", err)
+	}
+	if calls != 2 {
+		t.Fatalf("%d writes, want 2 (stop at the error)", calls)
+	}
+}
+
+func TestChunkerCloseUnblocksPausedSend(t *testing.T) {
+	c := &Chunker{Max: 20, Write: func([]byte) error { return nil }}
+	c.OnNotify([]byte{0x51, 0x78, 0xAE, 0x01, 0x01, 0x00, 0x10, 0x70, 0xFF})
+	done := make(chan error, 1)
+	go func() { done <- c.Send(make([]byte, 40)) }()
+	time.Sleep(30 * time.Millisecond)
+	c.Close()
+	c.Close() // twice is fine
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("err %v, want ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Send still blocked after Close")
+	}
+	if err := c.Send([]byte{1}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Send after Close: %v, want ErrClosed", err)
+	}
 }

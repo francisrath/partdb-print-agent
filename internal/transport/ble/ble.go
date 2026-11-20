@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	openScan       = 10 * time.Second // BlueZ forgets unpaired LE devices, so every Open scans first
 	connectTimeout = 10 * time.Second // Linux Connect ignores ConnectionParams.ConnectionTimeout
 	readTimeout    = 2 * time.Second
+	minMTU         = 23 // the ATT default; Windows reports it until the MTU exchange is done
 )
 
 func init() {
@@ -52,6 +54,9 @@ var (
 	enabled   bool
 	scanMu    sync.Mutex
 	connectMu sync.Mutex // Open's scan + connect, so two jobs don't race for the adapter
+
+	liveMu sync.Mutex
+	live   = map[string]*blecore.Chunker{} // open connections by address, for the disconnect handler
 )
 
 func enable() error {
@@ -63,104 +68,100 @@ func enable() error {
 	if err := adapter.Enable(); err != nil {
 		return fmt.Errorf("%w: %w", blecore.ErrNoBluetooth, err)
 	}
+	// A dropped link fails a paused Send at once. Windows reports remote drops here; v0.17.0's Linux
+	// central only reports our own Disconnect (a write to a dropped link fails there anyway).
+	adapter.SetConnectionStateHandler(func(d bluetooth.Device, s bluetooth.ConnectionState) {
+		if s.Connected {
+			return
+		}
+		liveMu.Lock()
+		c := live[d.Address.String()]
+		liveMu.Unlock()
+		if c != nil {
+			c.Close()
+		}
+	})
 	enabled = true
 	return nil
 }
 
-// Scan listens for adverts for up to timeout and returns every device seen once (by address, latest
-// advert wins). Without a usable adapter the error wraps blecore.ErrNoBluetooth.
+// Scan listens for adverts for up to timeout and returns every device seen once (by address). Without a
+// usable adapter (none, BlueZ down, powered off) the error wraps blecore.ErrNoBluetooth.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
 	return scan(ctx, timeout, nil)
 }
 
-// scan stops early once done reports true for the adverts so far.
-func scan(ctx context.Context, timeout time.Duration, done func([]blecore.Advert) bool) ([]blecore.Advert, error) {
+// scan stops early once settled reports true.
+func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scanned, time.Time) bool) ([]blecore.Advert, error) {
 	if err := enable(); err != nil {
 		return nil, err
 	}
 	scanMu.Lock()
+	defer scanMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var (
-		mu      sync.Mutex
-		found   []blecore.Advert
-		index   = map[string]int{}
-		stopped bool
+		mu   sync.Mutex
+		seen blecore.Scanned
 	)
 	errc := make(chan error, 1)
 	go func() {
-		errc <- adapter.Scan(func(a *bluetooth.Adapter, r bluetooth.ScanResult) {
-			mu.Lock()
-			defer mu.Unlock()
-			if stopped {
-				return
-			}
+		errc <- adapter.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
 			ad := blecore.Advert{Name: r.LocalName(), Address: r.Address.String(), RSSI: int(r.RSSI)}
 			for _, u := range r.ServiceUUIDs() {
 				ad.Services = append(ad.Services, u.String())
 			}
-			if i, ok := index[ad.Address]; ok {
-				if ad.Name == "" { // a scan response or RSSI update without the name
-					ad.Name = found[i].Name
-				}
-				if ad.Services == nil {
-					ad.Services = found[i].Services
-				}
-				found[i] = ad
-			} else {
-				index[ad.Address] = len(found)
-				found = append(found, ad)
-			}
-			if done != nil && done(found) {
-				stopped = true
-				_ = a.StopScan()
-			}
+			mu.Lock()
+			seen.Add(ad, time.Now())
+			mu.Unlock()
 		})
 	}()
+	results := func() []blecore.Advert {
+		mu.Lock()
+		defer mu.Unlock()
+		return seen.Adverts()
+	}
 
-	var err error
-	select {
-	case err = <-errc:
-		scanMu.Unlock()
-	case <-ctx.Done():
-		err = stopScan(&mu, &stopped, errc)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-errc: // the scan ended by itself
+			if err == nil {
+				return results(), nil
+			}
+			if strings.Contains(err.Error(), "not powered") { // the library's error is unexported
+				return nil, fmt.Errorf("%w: %w", blecore.ErrNoBluetooth, err)
+			}
+			return nil, fmt.Errorf("ble: scan: %w", err)
+		case <-ctx.Done():
+			stopScan(errc) // an error while stopping doesn't spoil what was found
+			return results(), nil
+		case <-tick.C:
+			mu.Lock()
+			done := settled != nil && settled(&seen, time.Now())
+			mu.Unlock()
+			if done {
+				stopScan(errc)
+				return results(), nil
+			}
+		}
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	stopped = true
-	if err != nil {
-		return nil, fmt.Errorf("%w: scan: %w", blecore.ErrNoBluetooth, err)
-	}
-	return append([]blecore.Advert(nil), found...), nil
 }
 
-// stopScan stops a running scan and unlocks scanMu once the library's Scan has returned. StopScan fails
-// while Scan is still starting, so it retries. BlueZ's Scan only notices the stop on its next D-Bus signal,
-// so after 2 s the results are returned anyway and the next scan waits for the old one in scanMu.
-func stopScan(mu *sync.Mutex, stopped *bool, errc <-chan error) error {
+// stopScan stops the scan and waits for the library's Scan to return. StopScan fails while Scan is still
+// starting and may be lost on Windows before the watcher has started, so it is repeated until Scan returns.
+// Once stopped, v0.17.0 returns promptly: BlueZ's loop sees the closed cancel channel at once, Windows
+// waits for the watcher's Stopped event.
+func stopScan(errc <-chan error) {
 	for {
-		mu.Lock()
-		*stopped = true
-		err := adapter.StopScan()
-		mu.Unlock()
-		if err == nil {
-			break
-		}
+		_ = adapter.StopScan()
 		select {
-		case err := <-errc:
-			scanMu.Unlock()
-			return err
-		case <-time.After(100 * time.Millisecond):
+		case <-errc:
+			return
+		case <-time.After(200 * time.Millisecond):
 		}
-	}
-	select {
-	case err := <-errc:
-		scanMu.Unlock()
-		return err
-	case <-time.After(2 * time.Second):
-		go func() { <-errc; scanMu.Unlock() }()
-		return nil
 	}
 }
 
@@ -170,15 +171,15 @@ type Transport struct {
 	service, write, notify bluetooth.UUID
 	gap                    time.Duration
 
+	mu      sync.Mutex // guards everything below; onNotify runs on the library's goroutine
 	dev     bluetooth.Device
+	addr    string
 	tx, rx  bluetooth.DeviceCharacteristic
 	chunker *blecore.Chunker
-	sized   bool // chunk size read from the MTU (Windows reports 23 right after connecting)
+	mtu     int  // last ATT MTU read; re-read while it is still the default
 	open    bool // the chunker outlives Close: a late notification may still reach onNotify
-
-	mu    sync.Mutex
-	buf   []byte
-	ready chan struct{} // signalled when buf gains bytes
+	buf     []byte
+	ready   chan struct{} // signalled when buf gains bytes
 }
 
 func (t *Transport) Kind() string { return "ble" }
@@ -189,9 +190,8 @@ func (t *Transport) Open(ctx context.Context) error {
 	if _, err := blecore.Pick(nil, t.Name, t.Address); !errors.Is(err, blecore.ErrNotFound) {
 		return err // neither name nor address set
 	}
-	found, err := scan(ctx, openScan, func(ads []blecore.Advert) bool {
-		_, err := blecore.Pick(ads, t.Name, t.Address)
-		return !errors.Is(err, blecore.ErrNotFound) // stop at the first match (or an ambiguous name)
+	found, err := scan(ctx, openScan, func(s *blecore.Scanned, now time.Time) bool {
+		return s.Settled(t.Name, t.Address, now)
 	})
 	if err != nil {
 		return err
@@ -213,18 +213,24 @@ func (t *Transport) Open(ctx context.Context) error {
 	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 
 	dev, err := connect(ctx, addr)
-	if err != nil { // BlueZ sometimes aborts the first attempt (le-connection-abort-by-local); retry once
+	// BlueZ sometimes aborts the first attempt at once (le-connection-abort-by-local): retry once. Not after
+	// a timeout – the first Connect may still be running on the same device, and its late Disconnect would
+	// drop the retry's link.
+	if err != nil && !errors.Is(err, errConnectTimeout) && ctx.Err() == nil {
 		time.Sleep(500 * time.Millisecond)
-		if dev, err = connect(ctx, addr); err != nil {
-			return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
-		}
+		dev, err = connect(ctx, addr)
 	}
-	if err := t.setup(dev); err != nil {
+	if err != nil {
+		return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
+	}
+	if err := t.setup(dev, addr.String()); err != nil {
 		_ = dev.Disconnect()
 		return err
 	}
 	return nil
 }
+
+var errConnectTimeout = fmt.Errorf("no connection within %v", connectTimeout)
 
 // connect gives up after connectTimeout; a connection that still comes up later is dropped.
 func connect(ctx context.Context, addr bluetooth.Address) (bluetooth.Device, error) {
@@ -237,22 +243,26 @@ func connect(ctx context.Context, addr bluetooth.Address) (bluetooth.Device, err
 		d, err := adapter.Connect(addr, bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
 		res <- result{d, err}
 	}()
-	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
-	defer cancel()
+	timer := time.NewTimer(connectTimeout)
+	defer timer.Stop()
 	select {
 	case r := <-res:
 		return r.dev, r.err
+	case <-timer.C:
 	case <-ctx.Done():
-		go func() {
-			if r := <-res; r.err == nil {
-				_ = r.dev.Disconnect()
-			}
-		}()
-		return bluetooth.Device{}, fmt.Errorf("no connection within %v: %w", connectTimeout, ctx.Err())
 	}
+	go func() {
+		if r := <-res; r.err == nil {
+			_ = r.dev.Disconnect()
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return bluetooth.Device{}, err
+	}
+	return bluetooth.Device{}, errConnectTimeout
 }
 
-func (t *Transport) setup(dev bluetooth.Device) error {
+func (t *Transport) setup(dev bluetooth.Device, addr string) error {
 	svcs, err := dev.DiscoverServices([]bluetooth.UUID{t.service})
 	if err != nil || len(svcs) == 0 {
 		return fmt.Errorf("ble: printer has no service %s: %v", t.service, err)
@@ -261,54 +271,70 @@ func (t *Transport) setup(dev bluetooth.Device) error {
 	if err != nil {
 		return fmt.Errorf("ble: characteristics: %w", err)
 	}
-	var haveTx, haveRx bool
-	for _, c := range chars {
-		switch c.UUID() {
+	var tx, rx *bluetooth.DeviceCharacteristic
+	for i := range chars {
+		switch chars[i].UUID() {
 		case t.write:
-			t.tx, haveTx = c, true
+			tx = &chars[i]
 		case t.notify:
-			t.rx, haveRx = c, true
+			rx = &chars[i]
 		}
 	}
-	if !haveTx || !haveRx {
+	if tx == nil || rx == nil {
 		return fmt.Errorf("ble: printer lacks characteristic %s or %s", t.write, t.notify)
 	}
-	t.dev, t.open = dev, true
-	t.buf, t.ready, t.sized = nil, make(chan struct{}, 1), false
-	t.chunker = &blecore.Chunker{Max: 20, Gap: t.gap, Write: func(b []byte) error {
-		_, err := t.tx.WriteWithoutResponse(b)
+	write := *tx
+	ch := &blecore.Chunker{Max: 20, Gap: t.gap, Write: func(b []byte) error {
+		_, err := write.WriteWithoutResponse(b)
 		return err
 	}}
+	t.mu.Lock()
+	t.dev, t.addr, t.tx, t.rx = dev, addr, *tx, *rx
+	t.chunker, t.mtu, t.buf, t.ready = ch, 0, nil, make(chan struct{}, 1)
+	t.mu.Unlock()
+	// t.rx keeps the subscription's state (Linux), so enable it on the field, not a copy. Nothing else
+	// touches t.rx until open is set.
 	if err := t.rx.EnableNotifications(t.onNotify); err != nil {
 		return fmt.Errorf("ble: enable notifications: %w", err)
 	}
+	liveMu.Lock()
+	live[addr] = ch
+	liveMu.Unlock()
+	t.mu.Lock()
+	t.open = true
+	t.mu.Unlock()
 	return nil
 }
 
 // onNotify drives the flow control and buffers every notification (flow control included) for Read.
 func (t *Transport) onNotify(b []byte) {
-	t.chunker.OnNotify(b)
 	t.mu.Lock()
+	ch, ready := t.chunker, t.ready
 	t.buf = append(t.buf, b...)
 	t.mu.Unlock()
+	ch.OnNotify(b)
 	select {
-	case t.ready <- struct{}{}:
+	case ready <- struct{}{}:
 	default:
 	}
 }
 
 // Write returns once the last chunk has gone out.
 func (t *Transport) Write(p []byte) (int, error) {
+	t.mu.Lock()
 	if !t.open {
+		t.mu.Unlock()
 		return 0, errors.New("ble: not open")
 	}
-	if !t.sized { // chunk = ATT MTU − 3; the floor of 20 is the chunker's
+	ch := t.chunker
+	if t.mtu <= minMTU { // chunk = ATT MTU − 3 (floor 20, the chunker's); Windows says 23 at first
 		if mtu, err := t.tx.GetMTU(); err == nil {
-			t.chunker.Max = int(mtu) - 3
+			t.mtu = int(mtu)
+			ch.Max = t.mtu - 3
 		}
-		t.sized = true
 	}
-	if err := t.chunker.Send(p); err != nil {
+	t.mu.Unlock()
+	if err := ch.Send(p); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -316,22 +342,24 @@ func (t *Transport) Write(p []byte) (int, error) {
 
 // Read returns buffered notification bytes; with nothing for 2 s, an error wrapping os.ErrDeadlineExceeded.
 func (t *Transport) Read(p []byte) (int, error) {
-	if !t.open {
-		return 0, errors.New("ble: not open")
-	}
 	timer := time.NewTimer(readTimeout)
 	defer timer.Stop()
 	for {
 		t.mu.Lock()
+		if !t.open {
+			t.mu.Unlock()
+			return 0, errors.New("ble: not open")
+		}
 		if len(t.buf) > 0 {
 			n := copy(p, t.buf)
 			t.buf = t.buf[n:]
 			t.mu.Unlock()
 			return n, nil
 		}
+		ready := t.ready
 		t.mu.Unlock()
 		select {
-		case <-t.ready:
+		case <-ready:
 		case <-timer.C:
 			return 0, fmt.Errorf("ble: no notification within %v: %w", readTimeout, os.ErrDeadlineExceeded)
 		}
@@ -339,10 +367,20 @@ func (t *Transport) Read(p []byte) (int, error) {
 }
 
 func (t *Transport) Close() error {
+	t.mu.Lock()
 	if !t.open {
+		t.mu.Unlock()
 		return nil
 	}
 	t.open = false
-	_ = t.rx.EnableNotifications(nil)
-	return t.dev.Disconnect()
+	ch, dev, addr := t.chunker, t.dev, t.addr
+	t.mu.Unlock()
+	ch.Close()
+	liveMu.Lock()
+	if live[addr] == ch {
+		delete(live, addr)
+	}
+	liveMu.Unlock()
+	_ = t.rx.EnableNotifications(nil) // open is false, so nothing else touches t.rx
+	return dev.Disconnect()
 }
