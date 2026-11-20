@@ -451,15 +451,17 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(formModels(), p.Model) {
 			return fmt.Errorf("unknown Brother QL model %s", p.Model)
 		}
-		if _, ok := printing.LookupMedia(&p, p.Media); p.Media != "" && !ok {
-			return fmt.Errorf("unknown media %q", p.Media)
+		if f := p.FallbackMedia(); f != "" {
+			if _, ok := printing.LookupMedia(&p, f); !ok {
+				return fmt.Errorf("unknown media %q", f)
+			}
 		}
 		for i := range c.Printers {
 			if c.Printers[i].ID == p.ID {
 				// keep settings the form doesn't show
 				old := c.Printers[i]
 				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
-				p.Mirror, p.UpsideDown = old.Mirror, old.UpsideDown
+				p.Mirror, p.UpsideDown, p.MediaAllowed = old.Mirror, old.UpsideDown, old.MediaAllowed
 				c.Printers[i] = p
 				return nil
 			}

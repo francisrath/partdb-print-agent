@@ -174,3 +174,16 @@ func TestMediaCache(t *testing.T) {
 		t.Error("forgetMedia kept the roll")
 	}
 }
+
+func TestMediaAllowed(t *testing.T) {
+	f := &fakeQL{width: 12}
+	s := qlService(t, f)
+	p := qlUSB("auto")
+	p.MediaAllowed = []string{"dk-22210", "dk-11204"}
+	_, err := s.Print(context.Background(), p, "", label(12, 16))
+	wantMismatch(t, err, "printer has dk-22214 (12 mm tape) loaded; this printer takes dk-22210, dk-11204")
+	f.load(29, 0)
+	if _, err := s.Print(context.Background(), p, "", label(29, 46)); err != nil {
+		t.Fatal(err)
+	}
+}
