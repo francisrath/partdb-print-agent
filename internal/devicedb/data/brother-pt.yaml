@@ -24,3 +24,5 @@ models:
         none: [0x00, 0x00]
         half: [0x00, 0x04]
     defaults: {cut: chain}
+    tested: maintainer
+    tested_note: USB on a Raspberry Pi, 2026-11

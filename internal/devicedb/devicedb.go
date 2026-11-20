@@ -75,6 +75,10 @@ type Model struct {
 	bleRe      *regexp.Regexp    // Match.BLEName, compiled at load
 	btRe       *regexp.Regexp    // Match.BTName, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
+	// Tested says who printed with this model on real hardware: "maintainer", "community" or ""
+	// (implemented from the documentation, not tested yet). TestedNote says how and when.
+	Tested     string `yaml:"tested"`
+	TestedNote string `yaml:"tested_note"`
 }
 
 // MatchesSNMP reports whether an SNMP device description names this model.
@@ -204,6 +208,12 @@ func Load(fsys fs.FS) (*DB, error) {
 			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))
+			}
+			if !slices.Contains([]string{"", "maintainer", "community"}, m.Tested) {
+				errs = append(errs, fmt.Errorf("%s: model %s: tested is %q, want maintainer, community or empty", base, m.ID, m.Tested))
+			}
+			if m.TestedNote != "" && m.Tested == "" {
+				errs = append(errs, fmt.Errorf("%s: model %s: tested_note needs tested", base, m.ID))
 			}
 			if m.Driver == "escpos" && m.HeadPins <= 0 {
 				errs = append(errs, fmt.Errorf("%s: model %s needs head_pins > 0", base, m.ID))
