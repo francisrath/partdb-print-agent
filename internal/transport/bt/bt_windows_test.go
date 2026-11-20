@@ -38,3 +38,10 @@ func TestWinLookupErrs(t *testing.T) {
 		t.Errorf("WSAEINVAL: %v, want ErrNoBluetooth", err)
 	}
 }
+
+// BTH_QUERY_DEVICE is packed to 5 bytes and its LAP is reserved: zero.
+func TestInquiryBlob(t *testing.T) {
+	if got, want := inquiryBlob(8), [5]byte{0, 0, 0, 0, 8}; got != want {
+		t.Errorf("% x, want % x", got, want)
+	}
+}

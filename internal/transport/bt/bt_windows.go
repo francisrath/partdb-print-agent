@@ -97,14 +97,9 @@ func waitDone(done <-chan error) {
 // pairedDevices lists the devices Windows remembers (paired or remembered), without an inquiry.
 func pairedDevices() ([]Device, error) { return lookupDevices(0) }
 
-// bthQueryDevice is BTH_QUERY_DEVICE: the inquiry's access code and length in seconds.
-type bthQueryDevice struct {
-	LAP    uint32
-	Length uint8
-}
-
-// giac is the general inquiry access code (every discoverable device answers).
-const giac = 0x9E8B33
+// inquiryBlob is BTH_QUERY_DEVICE as ws2bth.h lays it out (packed: 5 bytes): ULONG LAP, reserved and zero
+// (Windows runs a general inquiry only), then UCHAR length, the inquiry's length in seconds.
+func inquiryBlob(secs int) [5]byte { return [5]byte{4: byte(secs)} }
 
 // lookupDevices lists the devices Windows knows; inquiry > 0 first runs an inquiry of that many seconds
 // (LUP_FLUSHCACHE), which WSALookupServiceBegin blocks for.
@@ -114,8 +109,8 @@ func lookupDevices(inquiry int) ([]Device, error) {
 	q.Size = uint32(unsafe.Sizeof(q))
 	begin := uint32(flags)
 	if inquiry > 0 {
-		qd := bthQueryDevice{LAP: giac, Length: uint8(inquiry)}
-		q.Blob = &windows.BLOB{Size: uint32(unsafe.Sizeof(qd)), BlobData: (*byte)(unsafe.Pointer(&qd))}
+		qd := inquiryBlob(inquiry)
+		q.Blob = &windows.BLOB{Size: uint32(len(qd)), BlobData: &qd[0]}
 		begin |= windows.LUP_FLUSHCACHE
 	}
 	var h windows.Handle
@@ -142,10 +137,19 @@ func lookupDevices(inquiry int) ([]Device, error) {
 			}
 			return devs, nil // another end-of-list code keeps what came before
 		}
-		if r.ServiceInstanceName == nil || r.NumberOfCsAddrs == 0 || r.SaBuffer == nil || r.SaBuffer.RemoteAddr.Sockaddr == nil {
+		if r.ServiceInstanceName == nil || r.NumberOfCsAddrs == 0 || r.SaBuffer == nil {
 			continue
 		}
-		raw := (*windows.RawSockaddrBth)(unsafe.Pointer(r.SaBuffer.RemoteAddr.Sockaddr))
+		// LUP_RETURN_ADDR: the peer's SOCKADDR_BTH. Microsoft's samples (and Windows 11 here) put it in
+		// RemoteAddr; the docs don't name the field, so LocalAddr is the fallback.
+		sa := r.SaBuffer.RemoteAddr.Sockaddr
+		if sa == nil {
+			sa = r.SaBuffer.LocalAddr.Sockaddr
+		}
+		if sa == nil {
+			continue
+		}
+		raw := (*windows.RawSockaddrBth)(unsafe.Pointer(sa))
 		v := binary.LittleEndian.Uint64(raw.BtAddr[:])
 		d := Device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))}
 		if r.ServiceClassId != nil {
