@@ -15,7 +15,9 @@ printers:
     transport: {kind: tcp, host: 192.168.1.50, port: 9100}
     # over USB (Linux) instead: {kind: usb, usb_id: "04f9:209c"} – add serial: … to tell two
     # identical printers apart; or a fixed path: {kind: usb, device: /dev/usb/lp0}
-    media: dk-22210             # see `pdb-print media`; omit to use what the printer reports
+    media: auto                 # the roll the printer reports decides; a media id (dk-22210, see
+                                # `pdb-print media`) is a fallback for when it reports none
+    # media_allowed: [dk-22210, dk-22214, dk-11204]   # refuse other rolls (default: any the model takes)
     rotate: auto                # auto | 0 | 90 | 180 | 270 (clockwise)
     cut: per_label              # per_label | last | none
     # SNMP (UDP 161, on by default) reports the loaded roll, errors and finished prints.
@@ -44,7 +46,7 @@ printers:
   #   name: Brother PT-9500PC
   #   model: PT-9500PC
   #   transport: {kind: usb, usb_id: "04f9:200f"}
-  #   media: tze-24             # tze-6 … tze-36; omit to use the tape the printer reports
+  #   media: auto               # the tape the printer reports; tze-6 … tze-36 = fallback
   #   cut: chain                # default: chain (single labels) / half (batches on laminated tape):
   #                             # the last label waits in the printer until the next print or the
   #                             # cut button, so no blank leader is wasted. per_label: feed and cut

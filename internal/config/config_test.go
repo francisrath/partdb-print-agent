@@ -228,22 +228,26 @@ func TestValidateModelTransport(t *testing.T) {
 		"darkness light":       "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: light}]",
 		"darkness normal":      "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: normal}]",
 		"ble by address":       "printers: [{id: a, model: MX10, transport: {kind: ble, address: \"AA:BB:CC:DD:EE:FF\"}, media: paper-57}]",
+		"media auto":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: auto}]",
+		"allow-list":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: dk-22210, media_allowed: [dk-22210, dk-22214, dk-11204]}]",
 	} {
 		if _, err := Load(write(y), true); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	for y, want := range map[string][]string{
-		"printers: [{id: a, model: QL-9000, transport: {kind: tcp, host: x}}]":                                     {"QL-9000", "QL-810W", "PT-9500PC"},
-		"printers: [{id: a, model: QL-800, transport: {kind: tcp, host: x}}]":                                      {"QL-800", "tcp"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: tze-24}]":                      {"tze-24", "QL-810W"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, usb_id: \"04f9:209c\"}}]": {"device", "usb_id"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"4f9:209c\"}}]":                        {"usb_id", "4f9:209c"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, serial: X1}}]":            {"serial", "usb_id"},
-		"printers: [{id: a, model: MX10, transport: {kind: ble}}]":                                                 {"ble", "address", "name"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: ble, name: MX10}}]":                                  {"QL-810W", "ble"},
-		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, darkness: dark}]":                     {"darkness", "QL-810W"},
-		"printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: extra}]":                    {"darkness", "extra"},
+		"printers: [{id: a, model: QL-9000, transport: {kind: tcp, host: x}}]":                                             {"QL-9000", "QL-810W", "PT-9500PC"},
+		"printers: [{id: a, model: QL-800, transport: {kind: tcp, host: x}}]":                                              {"QL-800", "tcp"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: tze-24}]":                              {"tze-24", "QL-810W"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, usb_id: \"04f9:209c\"}}]":         {"device", "usb_id"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"4f9:209c\"}}]":                                {"usb_id", "4f9:209c"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, serial: X1}}]":                    {"serial", "usb_id"},
+		"printers: [{id: a, model: MX10, transport: {kind: ble}}]":                                                         {"ble", "address", "name"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: ble, name: MX10}}]":                                          {"QL-810W", "ble"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, darkness: dark}]":                             {"darkness", "QL-810W"},
+		"printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: extra}]":                            {"darkness", "extra"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media_allowed: [dk-22210, tze-24]}]":          {"tze-24", "QL-810W"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: dk-22205, media_allowed: [dk-22210]}]": {"dk-22205", "media_allowed"},
 	} {
 		_, err := Load(write(y), true)
 		if err == nil {

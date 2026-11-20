@@ -39,6 +39,7 @@ type Options struct {
 type Result struct {
 	Pages     int
 	Media     string
+	MediaFrom string // where the media came from: detected, config fallback (set by printing)
 	Bytes     int
 	Confirmed bool   // the printer reported completion
 	Message   string // e.g. "printed", "sent (unconfirmed: …)"

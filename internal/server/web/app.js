@@ -25,7 +25,7 @@ if (modelSel && mediaSel) {
     for (const o of mediaSel.options) {
       if (!o.dataset.models) continue; // "as reported by the printer"
       o.hidden = !o.dataset.models.split(' ').includes(modelSel.value);
-      if (o.hidden && o.selected) mediaSel.value = '';
+      if (o.hidden && o.selected) mediaSel.value = 'auto';
     }
   };
   modelSel.addEventListener('change', filter);
