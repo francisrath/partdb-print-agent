@@ -474,6 +474,20 @@ func TestPTStatusWithoutReplyIsNotOK(t *testing.T) {
 	}
 }
 
+// The hint for a silent printer fits how it is connected.
+func TestStatusWithoutReplyHint(t *testing.T) {
+	h := newHarness(t)
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers,
+		config.Printer{ID: "pt", Model: "PT-9500PC", Media: "tze-24", Transport: config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}},
+		config.Printer{ID: "cat", Model: "MX10", Media: "paper-57", Transport: config.Transport{Kind: "ble", Name: "MX10"}})
+	h.srv.Svc.OpenTransport = func(*config.Printer) driver.Transport { return silentPT{} }
+	for id, want := range map[string]string{"pt": "USB cable", "cat": "switched on, in range and not connected to a phone"} {
+		if body := h.do("GET", "/printers/"+id+"/status", nil).Body.String(); !strings.Contains(body, want) {
+			t.Errorf("%s: %s, want %q", id, body, want)
+		}
+	}
+}
+
 func TestResultTextCarriesWarnings(t *testing.T) {
 	got := resultText(&printing.Result{Pages: 1, Media: "tze-36", Confirmed: true,
 		Warnings: []string{"label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"}})

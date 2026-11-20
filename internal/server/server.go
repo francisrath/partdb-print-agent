@@ -567,7 +567,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Svc.Status(ctx, p)
 	switch {
 	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
-		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
+		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: " + checkHint(p.Transport.Kind)})
 	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
@@ -856,6 +856,17 @@ func formModels() []string {
 }
 
 // needsStatus: printers that can't print without a status reply (PT) are not OK when silent.
+// checkHint says what to check on a printer that doesn't answer.
+func checkHint(kind string) string {
+	switch kind {
+	case "ble":
+		return "check that it's switched on, in range and not connected to a phone"
+	case "usb":
+		return "check the printer's power and USB cable"
+	}
+	return "check the printer's power and network connection"
+}
+
 func needsStatus(p *config.Printer) bool {
 	m, err := p.DeviceModel()
 	return err == nil && m.QuirkBool("needs_status")
