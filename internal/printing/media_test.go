@@ -187,3 +187,39 @@ func TestMediaAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Review fixes: a rejected roll replaces the remembered one, the cache honours the allow-list,
+// explicit status reads update it, and MediaStatus sees what pickMedia would use.
+func TestMediaCacheFollowsObservations(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeQL{width: 29}
+	s := qlService(t, f)
+	p := qlUSB("auto")
+	p.MediaAllowed = []string{"dk-22210", "dk-22214"}
+	if _, err := s.Print(ctx, p, "", label(29, 46)); err != nil {
+		t.Fatal(err)
+	}
+	f.load(17, 54) // not allowed: refused, and dk-22210 is no longer assumed
+	_, err := s.Print(ctx, p, "", label(29, 46))
+	wantMismatch(t, err, "this printer takes")
+	f.silent = true
+	if _, err := s.Print(ctx, p, "", label(29, 46)); err == nil {
+		t.Error("silent printer after a rejected roll printed on the old one")
+	}
+
+	f.silent = false
+	f.load(12, 0)
+	if _, err := s.Status(ctx, p); err != nil { // an explicit status read records the roll
+		t.Fatal(err)
+	}
+	if m, _, ok := s.LastMedia("ql"); !ok || m.ID != "dk-22214" {
+		t.Fatalf("status read not recorded: %v %v", m.ID, ok)
+	}
+	if _, text, ok := s.MediaStatus(p, &driver.Status{Code: driver.OK}); !ok || text != "dk-22214 (detected earlier)" {
+		t.Errorf("MediaStatus without a reported roll: %q %v", text, ok)
+	}
+	p.MediaAllowed = []string{"dk-22210"} // allow-list edited: the cached roll no longer counts
+	if _, _, ok := s.MediaStatus(p, &driver.Status{Code: driver.OK}); ok {
+		t.Error("cached roll outside media_allowed still offered")
+	}
+}

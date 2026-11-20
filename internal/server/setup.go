@@ -452,7 +452,7 @@ func (s *Server) statusLine(ctx context.Context, d *Draft) string {
 	case err != nil:
 		return "The printer says: " + err.Error() + "."
 	}
-	text, _ := statusText(st, &d.Printer)
+	text, _ := statusText(s.Svc, st, &d.Printer)
 	return "The printer says: " + text + "."
 }
 

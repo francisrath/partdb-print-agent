@@ -585,7 +585,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 		default:
 			fmt.Printf("model:  %s\nstatus: %s %s\n", st.Model, st.Code, st.Detail)
 		}
-		m, media, _ := printing.MediaStatus(p, st)
+		m, media, _ := a.svc.MediaStatus(p, st)
 		fmt.Printf("media:  %s\n", media)
 		if fit := a.svc.FittingProfiles(ctx, a.cfg, m); fit != "" {
 			fmt.Println(fit)

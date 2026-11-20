@@ -348,7 +348,26 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 	}
 	defer t.Close()
 	st, err := drv.Status(ctx, t)
+	switch {
+	case err == nil:
+		s.observe(p, m, st)
+	case !errors.Is(err, driver.ErrNoReadback):
+		s.forgetMedia(p.ID)
+	}
 	return st, commsError(err)
+}
+
+// observe records the roll a status read reports: an allowed, known roll is remembered;
+// any other report replaces what was remembered (the roll changed or the printer is unhappy).
+func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.Status) {
+	switch {
+	case st == nil || st.Media == nil && st.Code == driver.OK:
+		// says nothing about the roll: keep what we know
+	case st.Code == driver.OK && st.Media.ID != "unknown" && slices.Contains(p.AllowedMedia(model), st.Media.ID):
+		s.rememberMedia(p.ID, *st.Media)
+	default:
+		s.forgetMedia(p.ID)
+	}
 }
 
 // Print checks the printer, settles the media (what the printer reports, else the config's), gets the
@@ -379,6 +398,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 			if err != driver.ErrNoReadback { // the driver says more (Zebra: what silence usually means)
 				detail = err.Error()
 			}
+			s.forgetMedia(p.ID)
 			return nil, &driver.Error{Code: driver.CommsError, Detail: detail}
 		case errors.Is(err, driver.ErrNoReadback):
 			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
@@ -389,12 +409,13 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		}
 		// connect now, before fetching and rendering, even if the status came over SNMP
 		if err := t.open(); err != nil {
+			s.forgetMedia(p.ID)
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
+		s.observe(p, model, st)
 		if st != nil {
 			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "type", st.MediaType, "via", st.Via)
 			if st.Code != driver.OK {
-				s.forgetMedia(p.ID)
 				return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 			}
 		}
@@ -518,10 +539,9 @@ func (s *Service) pickMedia(p *config.Printer, model *devicedb.Model, st *driver
 			return driver.Media{}, "", &driver.Error{Code: driver.MediaMismatch,
 				Detail: fmt.Sprintf("printer has %s (%s) loaded; this printer takes %s", loaded.ID, loaded.Describe(), strings.Join(allowed, ", "))}
 		}
-		s.rememberMedia(p.ID, *loaded)
 		return *loaded, FromPrinter, nil
 	}
-	if k, ok := s.recentMedia(p.ID); ok {
+	if k, ok := s.recentMedia(p, model); ok {
 		return k, FromCache, nil
 	}
 	if hasFallback {
@@ -530,9 +550,10 @@ func (s *Service) pickMedia(p *config.Printer, model *devicedb.Model, st *driver
 	return driver.Media{}, "", errors.New("media unknown: the printer doesn't report its roll; set `media:` for this printer as a fallback")
 }
 
-func (s *Service) recentMedia(id string) (driver.Media, bool) {
-	m, at, ok := s.LastMedia(id)
-	return m, ok && time.Since(at) < mediaTTL
+// recentMedia is the roll the printer reported in the last 30 s, if this printer may print on it.
+func (s *Service) recentMedia(p *config.Printer, model *devicedb.Model) (driver.Media, bool) {
+	m, at, ok := s.LastMedia(p.ID)
+	return m, ok && time.Since(at) < mediaTTL && slices.Contains(p.AllowedMedia(model), m.ID)
 }
 
 func MediaName(m *driver.Media) string {
@@ -545,19 +566,28 @@ func MediaName(m *driver.Media) string {
 	return m.ID
 }
 
-// MediaStatus says which media a job would use after status st: "dk-22214 (detected)" or
+// MediaStatus says which media a job would use after status st (the same choice as pickMedia, without changing anything): "dk-22214 (detected)" or
 // "dk-22210 (config fallback)"; ok is false when jobs would be refused or fail. m is that
 // media, nil if none.
-func MediaStatus(p *config.Printer, st *driver.Status) (m *driver.Media, text string, ok bool) {
+func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *driver.Media, text string, ok bool) {
 	var loaded *driver.Media
 	if st != nil {
 		loaded = st.Media
 	}
+	model, err := p.DeviceModel()
+	if err != nil {
+		return nil, err.Error(), false
+	}
 	if loaded != nil && loaded.ID != "unknown" {
-		if model, err := p.DeviceModel(); err == nil && !slices.Contains(p.AllowedMedia(model), loaded.ID) {
+		if !slices.Contains(p.AllowedMedia(model), loaded.ID) {
 			return loaded, loaded.ID + " (detected; not in media_allowed: jobs will be refused)", false
 		}
 		return loaded, loaded.ID + " (detected)", true
+	}
+	if loaded == nil { // like pickMedia: a roll seen lately stands in for a status that names none
+		if r, ok := s.recentMedia(p, model); ok {
+			return &r, r.ID + " (" + FromCache + ")", true
+		}
 	}
 	if f := p.FallbackMedia(); f != "" {
 		if fm, ok := LookupMedia(p, f); ok {

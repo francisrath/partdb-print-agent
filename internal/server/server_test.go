@@ -300,20 +300,20 @@ func TestStatusText(t *testing.T) {
 		return &config.Printer{Model: "QL-810W", Media: media, MediaAllowed: allowed}
 	}
 	ready := &driver.Status{Code: driver.OK, Model: "QL-810W", Detail: "READY", Media: loaded}
-	if text, ok := statusText(ready, ql("dk-22210")); !ok || text != "OK · QL-810W · media: dk-11201 (detected) · READY" {
+	if text, ok := statusText(&printing.Service{}, ready, ql("dk-22210")); !ok || text != "OK · QL-810W · media: dk-11201 (detected) · READY" {
 		t.Errorf("detected beats config: %q %v", text, ok)
 	}
-	if text, ok := statusText(ready, ql("", "dk-22210")); ok || !strings.Contains(text, "not in media_allowed") {
+	if text, ok := statusText(&printing.Service{}, ready, ql("", "dk-22210")); ok || !strings.Contains(text, "not in media_allowed") {
 		t.Errorf("not allowed: %q %v", text, ok)
 	}
 	unknown := &driver.Status{Code: driver.OK, Model: "QL-810W", Media: &driver.Media{ID: "unknown"}}
-	if text, ok := statusText(unknown, ql("auto")); ok || !strings.Contains(text, "set media") {
+	if text, ok := statusText(&printing.Service{}, unknown, ql("auto")); ok || !strings.Contains(text, "set media") {
 		t.Errorf("unknown roll, no configured media: %q %v", text, ok)
 	}
-	if _, ok := statusText(&driver.Status{Code: driver.OK}, ql("")); ok {
+	if _, ok := statusText(&printing.Service{}, &driver.Status{Code: driver.OK}, ql("")); ok {
 		t.Error("no roll reported, no configured media: jobs would fail")
 	}
-	if text, ok := statusText(unknown, ql("dk-22210")); !ok || !strings.Contains(text, "dk-22210 (config fallback)") {
+	if text, ok := statusText(&printing.Service{}, unknown, ql("dk-22210")); !ok || !strings.Contains(text, "dk-22210 (config fallback)") {
 		t.Errorf("unknown roll with configured media: %q %v", text, ok)
 	}
 }

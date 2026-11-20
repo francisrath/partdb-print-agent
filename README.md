@@ -128,8 +128,8 @@ Before each job the agent reads the printer over SNMP (UDP 161): the loaded roll
 
 **The loaded roll decides the media.** Swap a 29 mm roll for 12 mm and the next 12 mm label prints, with
 no config change or restart. Each job's label size is checked against the roll: continuous tape needs one
-side of the label to match the tape width (±0.6 mm, any length), die-cut labels both sides (±1 mm), turned
-if needed. A label that doesn't fit is refused, and Part-DB shows why on its agents page, e.g.
+side of the label to match the tape width (±0.6 mm, any length), die-cut labels both sides (width ±0.6 mm,
+length ±1 mm), turned if needed. A label that doesn't fit is refused, and Part-DB shows why on its agents page, e.g.
 `MEDIA_MISMATCH: label is 29×46 mm (needs 29 mm tape), printer has dk-22214 (12 mm tape) loaded`
 (`allow_scaling: true` prints it scaled instead). `media:` in the config is only a fallback for when the
 printer doesn't report its roll (SNMP off, no status reply); `auto`, the default, means no fallback.

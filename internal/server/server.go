@@ -570,15 +570,15 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
 		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
-	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
+	case errors.Is(err, driver.ErrNoReadback) && p.FallbackMedia() == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
 		writeJSON(w, map[string]any{"ok": true, "text": "reachable (no status over TCP)"})
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
-		text, ok := statusText(st, p)
-		if m, _, _ := printing.MediaStatus(p, st); m != nil {
+		text, ok := statusText(s.Svc, st, p)
+		if m, _, _ := s.Svc.MediaStatus(p, st); m != nil {
 			pctx, cancel := context.WithTimeout(r.Context(), 20*time.Second) // first call measures each profile
 			defer cancel()
 			if fit := s.Svc.FittingProfiles(pctx, s.config(), m); fit != "" {
@@ -591,8 +591,8 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 
 // statusText summarises a printer status for the UI; ok=false also when jobs would be
 // refused or fail for the loaded roll.
-func statusText(st *driver.Status, p *config.Printer) (string, bool) {
-	_, media, ok := printing.MediaStatus(p, st)
+func statusText(svc *printing.Service, st *driver.Status, p *config.Printer) (string, bool) {
+	_, media, ok := svc.MediaStatus(p, st)
 	text := fmt.Sprintf("%s · %s · media: %s", st.Code, st.Model, media)
 	if st.Detail != "" {
 		text += " · " + st.Detail
