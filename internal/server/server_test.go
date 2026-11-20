@@ -488,6 +488,12 @@ func TestStatusWithoutReplyHint(t *testing.T) {
 	}
 }
 
+func TestCheckHintBT(t *testing.T) {
+	if got := checkHint("bt"); !strings.Contains(got, "paired with this computer") {
+		t.Errorf("bt hint %q", got)
+	}
+}
+
 func TestResultTextCarriesWarnings(t *testing.T) {
 	got := resultText(&printing.Result{Pages: 1, Media: "tze-36", Confirmed: true,
 		Warnings: []string{"label has ink on the tape's unprintable edges (4.5 mm); it was trimmed"}})

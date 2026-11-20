@@ -30,7 +30,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
@@ -108,7 +107,7 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	if cmd == "discover" { // needs no config: it's how you find what to put in it
-		return discover(ctx, rest, os.Stdout, nil)
+		return discover(ctx, rest, os.Stdout, discovery.Options{})
 	}
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
@@ -624,14 +623,14 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-// discover lists printers on w; scanBLE is for tests (nil = the real Bluetooth scan).
-func discover(ctx context.Context, args []string, w io.Writer, scanBLE func(context.Context, time.Duration) ([]blecore.Advert, error)) error {
+// discover lists printers on w; scans' ScanBLE and ScanBT are for tests (nil = the real Bluetooth scans).
+func discover(ctx context.Context, args []string, w io.Writer, scans discovery.Options) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	var subnets multiFlag
 	fs.Var(&subnets, "subnet", "network to scan, e.g. 192.168.1.0/24 (repeatable; default: this computer's networks, each at most a /24)")
 	noUSB := fs.Bool("no-usb", false, "skip USB")
 	noNet := fs.Bool("no-network", false, "skip the network")
-	noBLE := fs.Bool("no-ble", false, "skip Bluetooth LE (its scan adds about 8 s)")
+	noBLE := fs.Bool("no-ble", false, "skip the Bluetooth search (~8 s)")
 	port := fs.Int("port", 9100, "print port to look for")
 	timeout := fs.Duration("timeout", 300*time.Millisecond, "connect timeout per address")
 	if _, err := parse(fs, args); err != nil {
@@ -648,7 +647,7 @@ func discover(ctx context.Context, args []string, w io.Writer, scanBLE func(cont
 	db := devicedb.Default()
 	// Bluetooth listens for 8 s alongside the network scan; an early return stops it
 	var bleFound []discovery.Candidate
-	var bleErr error
+	var bleNote string
 	bleDone := make(chan struct{})
 	if *noBLE {
 		close(bleDone)
@@ -658,7 +657,7 @@ func discover(ctx context.Context, args []string, w io.Writer, scanBLE func(cont
 		defer func() { cancel(); <-bleDone }()
 		go func() {
 			defer close(bleDone)
-			bleFound, bleErr = discovery.BLE(bctx, db, discovery.Options{ScanBLE: scanBLE})
+			bleFound, bleNote, _ = discovery.Bluetooth(bctx, db, scans)
 		}()
 	}
 	var found []discovery.Candidate
@@ -683,8 +682,8 @@ func discover(ctx context.Context, args []string, w io.Writer, scanBLE func(cont
 	} else {
 		printCandidates(w, found)
 	}
-	if bleErr != nil {
-		fmt.Fprintln(w, "\n"+discovery.BLENote(bleErr))
+	if bleNote != "" {
+		fmt.Fprintln(w, "\n"+bleNote)
 	}
 	return nil
 }
@@ -699,7 +698,7 @@ func printCandidates(w io.Writer, found []discovery.Candidate) {
 		switch c.Kind {
 		case "tcp":
 			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
-		case "ble":
+		case "ble", "bt":
 			addr = c.Address
 		}
 		fmt.Fprintf(w, "%-4s %-22s %-28s %s\n", c.Kind, addr, c.Name(), c.Status)
@@ -707,7 +706,9 @@ func printCandidates(w io.Writer, found []discovery.Candidate) {
 			fmt.Fprintf(w, "     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
 		}
 	}
-	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown && c.Kind != "ble" }) {
+	if slices.ContainsFunc(found, func(c discovery.Candidate) bool {
+		return c.Status == discovery.Unknown && c.Kind != "ble" && c.Kind != "bt"
+	}) {
 		fmt.Fprintln(w, "\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
 }

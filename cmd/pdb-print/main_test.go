@@ -21,6 +21,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/server"
+	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
 	"github.com/zalando/go-keyring"
 )
 
@@ -304,11 +305,36 @@ func TestDiscoverNoAdapter(t *testing.T) {
 	noAdapter := func(context.Context, time.Duration) ([]blecore.Advert, error) {
 		return nil, fmt.Errorf("%w: adaptor is not powered", blecore.ErrNoBluetooth)
 	}
+	noClassic := func(context.Context, time.Duration) ([]bt.Device, error) {
+		return nil, fmt.Errorf("bt: %w: adaptor is not powered", blecore.ErrNoBluetooth)
+	}
 	var out bytes.Buffer
-	if err := discover(context.Background(), []string{"--no-usb", "--subnet", "127.0.0.1/32", "--port", port}, &out, noAdapter); err != nil {
+	if err := discover(context.Background(), []string{"--no-usb", "--subnet", "127.0.0.1/32", "--port", port}, &out,
+		discovery.Options{ScanBLE: noAdapter, ScanBT: noClassic}); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.Contains(got, "tcp  127.0.0.1:"+port) || !strings.Contains(got, "Bluetooth printers not searched") {
+	if got := out.String(); !strings.Contains(got, "tcp  127.0.0.1:"+port) || strings.Count(got, "Bluetooth printers not searched") != 1 {
+		t.Errorf("output:\n%s", got)
+	}
+}
+
+// A Bluetooth Classic printer is listed with its config line.
+func TestDiscoverBT(t *testing.T) {
+	noBLE := func(context.Context, time.Duration) ([]blecore.Advert, error) { return nil, nil }
+	rego := func(context.Context, time.Duration) ([]bt.Device, error) {
+		return []bt.Device{{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:01"}, {Name: "Phone", Address: "AA:BB:CC:DD:EE:02", Class: 0x5a020c}}, nil
+	}
+	var out bytes.Buffer
+	if err := discover(context.Background(), []string{"--no-usb", "--no-network"}, &out, discovery.Options{ScanBLE: noBLE, ScanBT: rego}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"bt   AA:BB:CC:DD:EE:01", `transport: {kind: bt, name: "RG-MLP80B", address: "AA:BB:CC:DD:EE:01"}`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Phone") || strings.Contains(got, "not searched") {
 		t.Errorf("output:\n%s", got)
 	}
 }
@@ -322,19 +348,28 @@ func TestDiscoverBadSubnetFast(t *testing.T) {
 		}
 		return nil, nil
 	}
+	slowBT := func(ctx context.Context, _ time.Duration) ([]bt.Device, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	start := time.Now()
-	err := discover(context.Background(), []string{"--no-usb", "--subnet", "nope"}, io.Discard, slow)
+	err := discover(context.Background(), []string{"--no-usb", "--subnet", "nope"}, io.Discard, discovery.Options{ScanBLE: slow, ScanBT: slowBT})
 	if err == nil || time.Since(start) > time.Second {
 		t.Errorf("err %v after %v", err, time.Since(start))
 	}
 }
 
 // report can't reach a Bluetooth device: no report hint for an unknown one.
-func TestPrintCandidatesUnknownBLE(t *testing.T) {
-	var b bytes.Buffer
-	printCandidates(&b, []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", BLEName: "XY99", Status: discovery.Unknown}})
-	if out := b.String(); strings.Contains(out, "pdb-print report") || !strings.Contains(out, "XY99") {
-		t.Errorf("output:\n%s", out)
+func TestPrintCandidatesUnknownBluetooth(t *testing.T) {
+	for _, c := range []discovery.Candidate{
+		{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", BLEName: "XY99", Status: discovery.Unknown},
+		{Kind: "bt", Address: "AA:BB:CC:DD:EE:04", BTName: "XY99", Status: discovery.Unknown},
+	} {
+		var b bytes.Buffer
+		printCandidates(&b, []discovery.Candidate{c})
+		if out := b.String(); strings.Contains(out, "pdb-print report") || !strings.Contains(out, "XY99") || !strings.Contains(out, c.Address) {
+			t.Errorf("%s output:\n%s", c.Kind, out)
+		}
 	}
 }
 

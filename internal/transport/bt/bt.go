@@ -108,7 +108,12 @@ func (t *Transport) Close() error {
 }
 
 // Device is one Bluetooth device the OS knows by name (BlueZ lists Name and Alias as two entries).
-type Device struct{ Name, Address string }
+// Scan also fills Class (the class of device) and SPP (it offers the serial port; Linux only).
+type Device struct {
+	Name, Address string
+	Class         uint32
+	SPP           bool
+}
 
 // Resolve finds the address of the device called name. The same address listed twice (alias, a second
 // adapter) is one device; two addresses are refused.

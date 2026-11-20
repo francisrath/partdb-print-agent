@@ -114,18 +114,11 @@ func waitConnected(ctx context.Context, fd int, timeout time.Duration) error {
 func bluezDevices(ctx context.Context) ([]Device, error) {
 	bus, err := dbus.SystemBus() // shared connection: not closed here
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("bt: %w: D-Bus: %w", blecore.ErrNoBluetooth, err)
+		return nil, bluezErr(ctx, "D-Bus", err)
 	}
-	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
-	err = bus.Object("org.bluez", "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
+	objs, err := managedObjects(ctx, bus)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("bt: %w: BlueZ: %w", blecore.ErrNoBluetooth, err)
+		return nil, err
 	}
 	var devs []Device
 	for _, ifaces := range objs {
@@ -141,4 +134,23 @@ func bluezDevices(ctx context.Context) ([]Device, error) {
 		}
 	}
 	return devs, nil
+}
+
+type bluezObjects = map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+
+func managedObjects(ctx context.Context, bus *dbus.Conn) (bluezObjects, error) {
+	var objs bluezObjects
+	err := bus.Object("org.bluez", "/").CallWithContext(ctx, "org.freedesktop.DBus.ObjectManager.GetManagedObjects", 0).Store(&objs)
+	if err != nil {
+		return nil, bluezErr(ctx, "BlueZ", err)
+	}
+	return objs, nil
+}
+
+// bluezErr: the context's error when it ended the call, else no usable Bluetooth.
+func bluezErr(ctx context.Context, what string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return fmt.Errorf("bt: %w: %s: %w", blecore.ErrNoBluetooth, what, err)
 }

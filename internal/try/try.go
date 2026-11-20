@@ -217,17 +217,18 @@ func (s *session) find() (discovery.Candidate, bool) {
 	if discover == nil {
 		discover = func(ctx context.Context) ([]discovery.Candidate, error) {
 			var bt []discovery.Candidate
+			var note string
 			var btErr error
 			btDone := make(chan struct{})
 			go func() {
 				defer close(btDone)
-				bt, btErr = discovery.BLE(ctx, s.o.DB, discovery.Options{})
+				bt, note, btErr = discovery.Bluetooth(ctx, s.o.DB, discovery.Options{})
 			}()
 			usb, _ := discovery.USB(s.o.DB, "")
 			lan, err := discovery.Network(ctx, s.o.DB, discovery.Options{Timeout: 15 * time.Second, Port: s.o.Port})
 			<-btDone
 			if btErr != nil { // a note, not a failure
-				s.say("%s\n", discovery.BLENote(btErr))
+				s.say("%s\n", note)
 				s.rep.Notes = append(s.rep.Notes, "bluetooth: "+btErr.Error())
 			}
 			return append(append(usb, lan...), bt...), err
@@ -260,7 +261,7 @@ func (s *session) find() (discovery.Candidate, bool) {
 	for i, c := range cs {
 		name := c.ModelID
 		switch {
-		case name == "" && c.Kind == "ble":
+		case name == "" && (c.Kind == "ble" || c.Kind == "bt"):
 			name = "(Bluetooth device, not a known label printer)"
 		case name == "":
 			name = "(doesn't say what it is: could be the Zebra)"
@@ -284,7 +285,7 @@ func where(c discovery.Candidate) string {
 	switch c.Kind {
 	case "usb":
 		return "USB " + c.Device
-	case "ble":
+	case "ble", "bt":
 		return "Bluetooth " + c.Address
 	}
 	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
@@ -292,7 +293,7 @@ func where(c discovery.Candidate) string {
 
 // identify asks the printer what it is (after a yes) and reads its setup (read-only queries).
 func (s *session) identify(c discovery.Candidate) bool {
-	if c.Kind == "ble" { // the advertised name says what it is: no ~HI, no Zebra setup reads
+	if c.Kind == "ble" || c.Kind == "bt" { // the Bluetooth name says what it is: no ~HI, no Zebra setup reads
 		return s.identifyCat(c)
 	}
 	asked := false

@@ -25,8 +25,8 @@ type onlineState struct {
 
 // Online reports whether the printer is reachable: a printer busy with a job is; a USB
 // printer whose device is present and opens is; a network printer that accepts a connection
-// on its print port within 2 s is (nothing is sent); a BLE printer is while it was found
-// working in the last 10 minutes (see SeenBLE). Results are cached for 30 s; checks of
+// on its print port within 2 s is (nothing is sent); a Bluetooth printer (LE or Classic) is while it
+// was found working in the last 10 minutes (see SeenBLE). Results are cached for 30 s; checks of
 // one printer run one at a time and share their result.
 func (s *Service) Online(p *config.Printer) bool {
 	if s.isPrinting(p.ID) {
@@ -118,11 +118,14 @@ func onlineKey(p *config.Printer) string {
 	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name)
 }
 
-// bleSeenFor is how long a BLE printer counts as online after it was last found working. Checking
+// bleSeenFor is how long a Bluetooth printer counts as online after it was last found working. Checking
 // would take its only connection (and drop a phone's or a job's), so it is never connected just to ask.
 const bleSeenFor = 10 * time.Minute
 
-// SeenBLE records that a BLE printer was found working (a status, a job, a discovery scan).
+// oneConnection: printers on a transport that takes one connection at a time (Bluetooth LE and Classic).
+func oneConnection(kind string) bool { return kind == "ble" || kind == "bt" }
+
+// SeenBLE records that a Bluetooth printer was found working (a status, a job, a BLE discovery scan).
 func (s *Service) SeenBLE(p *config.Printer) {
 	key := onlineKey(p)
 	s.mu.Lock()
@@ -134,10 +137,10 @@ func (s *Service) SeenBLE(p *config.Printer) {
 	delete(s.online, key) // the next check sees it at once
 }
 
-// noteBLE records how a status or job on a BLE printer went: an answer means it's there; failing to
+// noteBLE records how a status or job on a Bluetooth printer went: an answer means it's there; failing to
 // reach it means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach.
 func (s *Service) noteBLE(p *config.Printer, err error) {
-	if p.Transport.Kind != "ble" {
+	if !oneConnection(p.Transport.Kind) {
 		return
 	}
 	var de *driver.Error
@@ -185,7 +188,7 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		case <-time.After(timeout):
 			return false, done
 		}
-	case "ble":
+	case "ble", "bt": // see oneConnection
 		close(done)
 		s.mu.Lock()
 		defer s.mu.Unlock()

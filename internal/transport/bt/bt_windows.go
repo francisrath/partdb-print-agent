@@ -87,12 +87,31 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 }
 
 // pairedDevices lists the devices Windows remembers (paired or remembered), without an inquiry.
-func pairedDevices() ([]Device, error) {
-	const flags = windows.LUP_CONTAINERS | windows.LUP_RETURN_NAME | windows.LUP_RETURN_ADDR
+func pairedDevices() ([]Device, error) { return lookupDevices(0) }
+
+// bthQueryDevice is BTH_QUERY_DEVICE: the inquiry's access code and length in seconds.
+type bthQueryDevice struct {
+	LAP    uint32
+	Length uint8
+}
+
+// giac is the general inquiry access code (every discoverable device answers).
+const giac = 0x9E8B33
+
+// lookupDevices lists the devices Windows knows; inquiry > 0 first runs an inquiry of that many seconds
+// (LUP_FLUSHCACHE), which WSALookupServiceBegin blocks for.
+func lookupDevices(inquiry int) ([]Device, error) {
+	const flags = windows.LUP_CONTAINERS | windows.LUP_RETURN_NAME | windows.LUP_RETURN_ADDR | windows.LUP_RETURN_TYPE
 	q := windows.WSAQUERYSET{NameSpace: windows.NS_BTH}
 	q.Size = uint32(unsafe.Sizeof(q))
+	begin := uint32(flags)
+	if inquiry > 0 {
+		qd := bthQueryDevice{LAP: giac, Length: uint8(inquiry)}
+		q.Blob = &windows.BLOB{Size: uint32(unsafe.Sizeof(qd)), BlobData: (*byte)(unsafe.Pointer(&qd))}
+		begin |= windows.LUP_FLUSHCACHE
+	}
 	var h windows.Handle
-	if err := windows.WSALookupServiceBegin(&q, flags, &h); err != nil {
+	if err := windows.WSALookupServiceBegin(&q, begin, &h); err != nil {
 		return lookupErr(err, winErrnos)
 	}
 	defer func() { _ = windows.WSALookupServiceEnd(h) }()
@@ -120,7 +139,32 @@ func pairedDevices() ([]Device, error) {
 		}
 		raw := (*windows.RawSockaddrBth)(unsafe.Pointer(r.SaBuffer.RemoteAddr.Sockaddr))
 		v := binary.LittleEndian.Uint64(raw.BtAddr[:])
-		devs = append(devs, Device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))})
+		d := Device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))}
+		if r.ServiceClassId != nil {
+			d.Class = r.ServiceClassId.Data1 // LUP_RETURN_TYPE: the class of device
+		}
+		devs = append(devs, d)
+	}
+}
+
+// Scan runs an inquiry of about timeout (whole seconds, 1–48) and lists the devices it found and those
+// Windows remembers. The inquiry can't be cancelled: on ctx's end Scan returns and it finishes alone.
+func Scan(ctx context.Context, timeout time.Duration) ([]Device, error) {
+	secs := min(max(int((timeout+time.Second-1)/time.Second), 1), 48)
+	type result struct {
+		devs []Device
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		devs, err := lookupDevices(secs)
+		done <- result{devs, err}
+	}()
+	select {
+	case r := <-done:
+		return r.devs, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

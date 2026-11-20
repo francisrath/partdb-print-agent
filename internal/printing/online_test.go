@@ -244,47 +244,52 @@ type opens struct {
 
 func (o *opens) Open(context.Context) error { *o.n++; return nil }
 
-// A BLE printer takes one connection, so the online check never connects: the printer is online while a
-// status, a job or a discovery scan found it working in the last 10 minutes.
-func TestOnlineBLE(t *testing.T) {
-	f := &fakeCat{}
-	s, p := catService(t, f)
-	n := 0
-	s.OpenTransport = func(*config.Printer) driver.Transport { return &opens{silent{kind: "ble"}, &n} }
-	online := func(want bool, when string) {
-		t.Helper()
-		before := n
-		if got := s.Online(p); got != want {
-			t.Errorf("%s: online %v, want %v", when, got, want)
-		}
-		if n != before {
-			t.Errorf("%s: the online check connected", when)
-		}
-	}
-	online(false, "never seen")
-	if _, err := s.Status(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-	online(true, "after a status")
+// A Bluetooth printer (LE or Classic) takes one connection, so the online check never connects: the
+// printer is online while a status, a job or a discovery scan found it working in the last 10 minutes.
+func TestOnlineBluetooth(t *testing.T) {
+	for _, kind := range []string{"ble", "bt"} {
+		t.Run(kind, func(t *testing.T) {
+			f := &fakeCat{}
+			s, p := catService(t, f)
+			p.Transport.Kind = kind
+			n := 0
+			s.OpenTransport = func(*config.Printer) driver.Transport { return &opens{silent{kind: kind}, &n} }
+			online := func(want bool, when string) {
+				t.Helper()
+				before := n
+				if got := s.Online(p); got != want {
+					t.Errorf("%s: online %v, want %v", when, got, want)
+				}
+				if n != before {
+					t.Errorf("%s: the online check connected", when)
+				}
+			}
+			online(false, "never seen")
+			if _, err := s.Status(context.Background(), p); err != nil {
+				t.Fatal(err)
+			}
+			online(true, "after a status")
 
-	s.mu.Lock()
-	s.seen[onlineKey(p)] = time.Now().Add(-11 * time.Minute)
-	s.online = nil
-	s.mu.Unlock()
-	online(false, "seen 11 minutes ago")
+			s.mu.Lock()
+			s.seen[onlineKey(p)] = time.Now().Add(-11 * time.Minute)
+			s.online = nil
+			s.mu.Unlock()
+			online(false, "seen 11 minutes ago")
 
-	if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
-		t.Fatal(err)
-	}
-	online(true, "after a job")
-	f.results = []error{errors.New("link dropped")}
-	if _, err := s.Print(context.Background(), p, "", labels(1)); err == nil {
-		t.Fatal("job didn't fail")
-	}
-	online(false, "after a job lost the printer")
+			if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
+				t.Fatal(err)
+			}
+			online(true, "after a job")
+			f.results = []error{errors.New("link dropped")}
+			if _, err := s.Print(context.Background(), p, "", labels(1)); err == nil {
+				t.Fatal("job didn't fail")
+			}
+			online(false, "after a job lost the printer")
 
-	s.SeenBLE(p)
-	online(true, "found in a scan")
+			s.SeenBLE(p)
+			online(true, "found in a scan")
+		})
+	}
 }
 
 // A sighting recorded while a check runs beats the check's older "offline".

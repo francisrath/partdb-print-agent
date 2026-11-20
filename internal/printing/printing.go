@@ -30,7 +30,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"  // registers kind bt (Linux/Windows; macOS in a later step)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"  // registers kind bt (Linux/Windows; macOS: transport/ble)
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
@@ -342,16 +342,16 @@ func commsError(err error) error {
 }
 
 // Status queries the printer. Models that must not be asked while printing (PT) and printers on a
-// single connection (USB, BLE) answer BUSY during a job without being asked. driver.ErrNoReadback
+// single connection (USB, Bluetooth) answer BUSY during a job without being asked. driver.ErrNoReadback
 // if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Status, err error) {
 	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
-	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a BLE printer
-	// takes one connection, so a second one would drop the job's link
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || p.Transport.Kind == "ble" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a Bluetooth
+	// printer takes one connection, so a second one would drop the job's link
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || oneConnection(p.Transport.Kind) {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil

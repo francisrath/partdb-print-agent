@@ -866,6 +866,8 @@ func checkHint(kind string) string {
 	switch kind {
 	case "ble":
 		return "check that it's switched on, in range and not connected to a phone"
+	case "bt":
+		return "check that it's switched on, paired with this computer and in range"
 	case "usb":
 		return "check the printer's power and USB cable"
 	}

@@ -17,12 +17,12 @@ import (
 
 func TestResolve(t *testing.T) {
 	devs := []Device{
-		{"RG-MLP80B", "AA:BB:CC:00:00:01"},
-		{"MLP", "AA:BB:CC:00:00:01"}, // the alias of the same device
-		{"Twin", "AA:BB:CC:00:00:02"},
-		{"Twin", "aa:bb:cc:00:00:03"},
-		{"Solo", "AA:BB:CC:00:00:04"},
-		{"Solo", "aa:bb:cc:00:00:04"}, // the same device seen by two adapters
+		{Name: "RG-MLP80B", Address: "AA:BB:CC:00:00:01"},
+		{Name: "MLP", Address: "AA:BB:CC:00:00:01"}, // the alias of the same device
+		{Name: "Twin", Address: "AA:BB:CC:00:00:02"},
+		{Name: "Twin", Address: "aa:bb:cc:00:00:03"},
+		{Name: "Solo", Address: "AA:BB:CC:00:00:04"},
+		{Name: "Solo", Address: "aa:bb:cc:00:00:04"}, // the same device seen by two adapters
 	}
 	tests := []struct {
 		name, want, errHas string
