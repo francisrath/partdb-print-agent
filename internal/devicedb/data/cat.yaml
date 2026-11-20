@@ -1,0 +1,26 @@
+# Bluetooth LE thermal "cat printers" (driver cat, dialect gb): GB01/02/03, GT01, YT01, MX05-MX10 and
+# clones speak the same command set (frames start 51 78) over GATT service 0xae30 (write 0xae01, notify 0xae02).
+# They are recognised by their advertised name. 384 dots at 203 dpi across 57 mm paper. ble_gap_ms is
+# the pause between writes, feed_lines the paper fed after a label, darkness says the density command
+# works; needs_status: a silent printer is off, out of paper or covered, so don't queue blind.
+# GB01 carries the fields every model shares (anchor); the others override id and match.
+models:
+  - &cat
+    id: GB01
+    vendor: Generic
+    driver: cat
+    dialect: gb
+    dpi: 203
+    head_pins: 384
+    transports: [ble]
+    match: {ble_name: "^GB01$"}
+    quirks: {ble_service: 0xae30, ble_write: 0xae01, ble_notify: 0xae02, ble_gap_ms: 10, feed_lines: 80, darkness: true, needs_status: true}
+    media: [paper-57]
+  - {<<: *cat, id: GB02, match: {ble_name: "^GB02$"}}
+  - {<<: *cat, id: GB03, match: {ble_name: "^GB03$"}}
+  - {<<: *cat, id: GT01, match: {ble_name: "^GT01$"}}
+  - {<<: *cat, id: YT01, match: {ble_name: "^YT01$"}}
+  - {<<: *cat, id: MX05, match: {ble_name: "^MX05$"}}
+  - {<<: *cat, id: MX06, match: {ble_name: "^MX06$"}}
+  - {<<: *cat, id: MX08, match: {ble_name: "^MX08$"}}
+  - {<<: *cat, id: MX10, match: {ble_name: "^MX10$"}}

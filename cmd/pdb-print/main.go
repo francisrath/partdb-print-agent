@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/blecore"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
@@ -107,7 +108,7 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	if cmd == "discover" { // needs no config: it's how you find what to put in it
-		return discover(ctx, rest)
+		return discover(ctx, rest, os.Stdout, nil)
 	}
 	if cmd == "report" {
 		return reportCmd(ctx, rest)
@@ -623,18 +624,43 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-func discover(ctx context.Context, args []string) error {
+// discover lists printers on w; scanBLE is for tests (nil = the real Bluetooth scan).
+func discover(ctx context.Context, args []string, w io.Writer, scanBLE func(context.Context, time.Duration) ([]blecore.Advert, error)) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	var subnets multiFlag
 	fs.Var(&subnets, "subnet", "network to scan, e.g. 192.168.1.0/24 (repeatable; default: this computer's networks, each at most a /24)")
 	noUSB := fs.Bool("no-usb", false, "skip USB")
 	noNet := fs.Bool("no-network", false, "skip the network")
+	noBLE := fs.Bool("no-ble", false, "skip Bluetooth LE (its scan adds about 8 s)")
 	port := fs.Int("port", 9100, "print port to look for")
 	timeout := fs.Duration("timeout", 300*time.Millisecond, "connect timeout per address")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
+	o := discovery.Options{Port: *port, DialTimeout: *timeout}
+	for _, s := range subnets {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return fmt.Errorf("--subnet %s: %w", s, err)
+		}
+		o.Subnets = append(o.Subnets, p)
+	}
 	db := devicedb.Default()
+	// Bluetooth listens for 8 s alongside the network scan; an early return stops it
+	var bleFound []discovery.Candidate
+	var bleErr error
+	bleDone := make(chan struct{})
+	if *noBLE {
+		close(bleDone)
+	} else {
+		fmt.Fprintln(os.Stderr, "Searching for Bluetooth printers (8 s)…")
+		bctx, cancel := context.WithCancel(ctx)
+		defer func() { cancel(); <-bleDone }()
+		go func() {
+			defer close(bleDone)
+			bleFound, bleErr = discovery.BLE(bctx, db, discovery.Options{ScanBLE: scanBLE})
+		}()
+	}
 	var found []discovery.Candidate
 	if !*noUSB {
 		cs, err := discovery.USB(db, "")
@@ -644,25 +670,22 @@ func discover(ctx context.Context, args []string) error {
 		found = append(found, cs...)
 	}
 	if !*noNet {
-		o := discovery.Options{Port: *port, DialTimeout: *timeout}
-		for _, s := range subnets {
-			p, err := netip.ParsePrefix(s)
-			if err != nil {
-				return fmt.Errorf("--subnet %s: %w", s, err)
-			}
-			o.Subnets = append(o.Subnets, p)
-		}
 		cs, err := discovery.Network(ctx, db, o)
 		if err != nil {
 			return err
 		}
 		found = append(found, cs...)
 	}
+	<-bleDone
+	found = append(found, bleFound...)
 	if len(found) == 0 {
-		fmt.Println("no printers found")
-		return nil
+		fmt.Fprintln(w, "no printers found")
+	} else {
+		printCandidates(w, found)
 	}
-	printCandidates(os.Stdout, found)
+	if bleErr != nil {
+		fmt.Fprintln(w, "\n"+discovery.BLENote(bleErr))
+	}
 	return nil
 }
 
@@ -673,15 +696,18 @@ func printCandidates(w io.Writer, found []discovery.Candidate) {
 			fmt.Fprintln(w)
 		}
 		addr := c.Device
-		if c.Kind == "tcp" {
+		switch c.Kind {
+		case "tcp":
 			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+		case "ble":
+			addr = c.Address
 		}
 		fmt.Fprintf(w, "%-4s %-22s %-28s %s\n", c.Kind, addr, c.Name(), c.Status)
 		if c.Status != discovery.Unknown {
 			fmt.Fprintf(w, "     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
 		}
 	}
-	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
+	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown && c.Kind != "ble" }) {
 		fmt.Fprintln(w, "\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
 }

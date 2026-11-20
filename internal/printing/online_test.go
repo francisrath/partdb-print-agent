@@ -2,6 +2,7 @@ package printing
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -233,4 +234,83 @@ func TestOnlineSlowUSBProbe(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	lock.Unlock()
+}
+
+// opens counts connections to a BLE printer.
+type opens struct {
+	silent
+	n *int
+}
+
+func (o *opens) Open(context.Context) error { *o.n++; return nil }
+
+// A BLE printer takes one connection, so the online check never connects: the printer is online while a
+// status, a job or a discovery scan found it working in the last 10 minutes.
+func TestOnlineBLE(t *testing.T) {
+	f := &fakeCat{}
+	s, p := catService(t, f)
+	n := 0
+	s.OpenTransport = func(*config.Printer) driver.Transport { return &opens{silent{kind: "ble"}, &n} }
+	online := func(want bool, when string) {
+		t.Helper()
+		before := n
+		if got := s.Online(p); got != want {
+			t.Errorf("%s: online %v, want %v", when, got, want)
+		}
+		if n != before {
+			t.Errorf("%s: the online check connected", when)
+		}
+	}
+	online(false, "never seen")
+	if _, err := s.Status(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	online(true, "after a status")
+
+	s.mu.Lock()
+	s.seen[onlineKey(p)] = time.Now().Add(-11 * time.Minute)
+	s.online = nil
+	s.mu.Unlock()
+	online(false, "seen 11 minutes ago")
+
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
+		t.Fatal(err)
+	}
+	online(true, "after a job")
+	f.results = []error{errors.New("link dropped")}
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err == nil {
+		t.Fatal("job didn't fail")
+	}
+	online(false, "after a job lost the printer")
+
+	s.SeenBLE(p)
+	online(true, "found in a scan")
+}
+
+// A sighting recorded while a check runs beats the check's older "offline".
+func TestOnlineBLESightingDuringCheck(t *testing.T) {
+	s, p := catService(t, &fakeCat{})
+	s.beforePublish = func() { s.beforePublish = nil; s.SeenBLE(p) }
+	if !s.Online(p) {
+		t.Error("check reported offline over a newer sighting")
+	}
+	if !s.Online(p) {
+		t.Error("stale offline cached over a newer sighting")
+	}
+}
+
+// A job that fails on its document (or rendering) still reached the printer: the sighting stays.
+func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
+	s, p := catService(t, &fakeCat{})
+	s.SeenBLE(p)
+	noDoc := func(*driver.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
+	if _, err := s.Print(context.Background(), p, "", noDoc); err == nil {
+		t.Fatal("job didn't fail")
+	}
+	if _, err := s.Print(context.Background(), p, "", PDF([]byte("not a pdf"))); err == nil {
+		t.Fatal("job didn't fail")
+	}
+	if !s.Online(p) {
+		t.Error("a document error cleared the sighting")
+	}
 }

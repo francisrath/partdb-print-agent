@@ -9,16 +9,17 @@ import (
 	"sync"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 )
 
 var (
 	mu    sync.Mutex
-	kinds = map[string]func(config.Transport) (driver.Transport, error){}
+	kinds = map[string]func(config.Transport, *devicedb.Model) (driver.Transport, error){}
 )
 
 // Register makes a transport kind available.
-func Register(kind string, open func(config.Transport) (driver.Transport, error)) {
+func Register(kind string, open func(config.Transport, *devicedb.Model) (driver.Transport, error)) {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, dup := kinds[kind]; dup {
@@ -27,8 +28,8 @@ func Register(kind string, open func(config.Transport) (driver.Transport, error)
 	kinds[kind] = open
 }
 
-// New returns an unopened transport for a printer's config.
-func New(c config.Transport) (driver.Transport, error) {
+// New returns an unopened transport for a printer's config. The model may be nil.
+func New(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
 	mu.Lock()
 	open, ok := kinds[c.Kind]
 	names := make([]string, 0, len(kinds))
@@ -40,5 +41,5 @@ func New(c config.Transport) (driver.Transport, error) {
 		sort.Strings(names)
 		return nil, fmt.Errorf("unknown transport kind %q (known: %s)", c.Kind, strings.Join(names, ", "))
 	}
-	return open(c)
+	return open(c, m)
 }

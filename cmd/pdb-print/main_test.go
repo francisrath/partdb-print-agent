@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/blecore"
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/server"
@@ -270,7 +271,7 @@ func TestDiscoverWithoutConfig(t *testing.T) {
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	cfg := filepath.Join(t.TempDir(), "none.yaml")
-	if err := run(context.Background(), []string{"--config", cfg, "discover", "--no-usb", "--subnet", "127.0.0.1/32", "--port", port}); err != nil {
+	if err := run(context.Background(), []string{"--config", cfg, "discover", "--no-usb", "--no-ble", "--subnet", "127.0.0.1/32", "--port", port}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -280,6 +281,60 @@ func TestDiscoverWithoutConfig(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("discover didn't connect")
+	}
+}
+
+// No Bluetooth adapter is a note: the network printers are still listed.
+func TestDiscoverNoAdapter(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	noAdapter := func(context.Context, time.Duration) ([]blecore.Advert, error) {
+		return nil, fmt.Errorf("%w: adaptor is not powered", blecore.ErrNoBluetooth)
+	}
+	var out bytes.Buffer
+	if err := discover(context.Background(), []string{"--no-usb", "--subnet", "127.0.0.1/32", "--port", port}, &out, noAdapter); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "tcp  127.0.0.1:"+port) || !strings.Contains(got, "Bluetooth printers not searched") {
+		t.Errorf("output:\n%s", got)
+	}
+}
+
+// A bad flag returns at once, not after the Bluetooth scan.
+func TestDiscoverBadSubnetFast(t *testing.T) {
+	slow := func(ctx context.Context, _ time.Duration) ([]blecore.Advert, error) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(5 * time.Second):
+		}
+		return nil, nil
+	}
+	start := time.Now()
+	err := discover(context.Background(), []string{"--no-usb", "--subnet", "nope"}, io.Discard, slow)
+	if err == nil || time.Since(start) > time.Second {
+		t.Errorf("err %v after %v", err, time.Since(start))
+	}
+}
+
+// report can't reach a Bluetooth device: no report hint for an unknown one.
+func TestPrintCandidatesUnknownBLE(t *testing.T) {
+	var b bytes.Buffer
+	printCandidates(&b, []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", BLEName: "XY99", Status: discovery.Unknown}})
+	if out := b.String(); strings.Contains(out, "pdb-print report") || !strings.Contains(out, "XY99") {
+		t.Errorf("output:\n%s", out)
 	}
 }
 

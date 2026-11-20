@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 )
 
 func init() {
-	transport.Register("tcp", func(c config.Transport) (driver.Transport, error) {
+	transport.Register("tcp", func(c config.Transport, _ *devicedb.Model) (driver.Transport, error) {
 		return New(net.JoinHostPort(c.Host, strconv.Itoa(c.Port))), nil
 	})
 }

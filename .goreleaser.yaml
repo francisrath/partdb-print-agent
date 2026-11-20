@@ -1,5 +1,7 @@
-# GoReleaser v2 config. Release: push a tag vX.Y.Z (see .github/workflows/release.yml).
-# Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.19.0 release --snapshot --clean
+# GoReleaser v2 config for Linux, Windows, .debs and Docker. Release: push a tag vX.Y.Z (see
+# .github/workflows/release.yml); macOS is .goreleaser-darwin.yaml on a macOS runner, which
+# adds its assets to this config's draft release; release.yml then publishes it.
+# Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean
 version: 2
 project_name: pdb-print
 
@@ -12,7 +14,7 @@ builds:
     main: ./cmd/pdb-print
     binary: pdb-print
     env: [CGO_ENABLED=0]
-    goos: [linux, darwin]
+    goos: [linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
@@ -39,15 +41,12 @@ builds:
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-universal_binaries:
-  - replace: true
-
 archives:
   - id: default
     ids: [pdb-print, pdb-print-arm]
     formats: [tar.gz]
     name_template: &archive_name >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}{{ with .Arm }}v{{ . }}{{ end }}
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}
     files: [LICENSE, README.md, config.example.yaml]
   # Windows: a zip with the guided printer test (double-click try-printer.cmd, see TRY.md)
   - id: windows
@@ -95,6 +94,9 @@ nfpms:
     dependencies: [init-system-helpers, poppler-utils]
 
 release:
+  draft: true # release-darwin adds the macOS assets, then publishes it
+  use_existing_draft: true # a re-run reuses this draft (a draft isn't found by its tag)
+  replace_existing_artifacts: true # … and overwrites what the first run uploaded
   extra_files:
     - glob: scripts/install.sh
 
@@ -114,23 +116,3 @@ dockers_v2:
       org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
-
-homebrew_casks:
-  - name: pdb-print
-    binaries: [pdb-print]
-    skip_upload: auto # pre-releases don't update the tap
-    homepage: https://github.com/francisrath/partdb-print-agent
-    description: Direct label printing for Part-DB
-    license: MIT
-    repository:
-      owner: francisrath
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    # ponytail: the binary isn't signed/notarised yet, so clear the quarantine flag
-    # (GoReleaser docs, homebrew_casks); drop this once Developer ID signing is in place.
-    hooks:
-      post:
-        install_steps: |
-          on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pdb-print"]
-          end

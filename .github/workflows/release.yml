@@ -2,6 +2,10 @@ name: Release
 
 # Push a tag like v0.1.0 to build and publish: GitHub release with archives and
 # checksums, multi-arch image on ghcr.io, and the Homebrew cask in francisrath/homebrew-tap.
+# release (Linux) makes a draft release with everything but macOS; release-darwin adds the
+# macOS archive (it needs cgo for the Bluetooth helper) and pushes the cask, then its last step
+# publishes the draft once it carries every archive, so a failed macOS build leaves a draft,
+# never a half release.
 on:
   push:
     tags: ["v*"]
@@ -21,6 +25,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false # this job publishes: don't restore a cache another run wrote
       - run: go test ./...
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -32,9 +37,82 @@ jobs:
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.19.0
+          version: v2.20.3
           args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-darwin:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write # add to and publish the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser reads the tags
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job publishes: don't restore a cache another run wrote
+      # GoReleaser only looks for a draft (use_existing_draft); on a re-run after it already
+      # published (e.g. the cask push failed), turn the release back into a draft so it's found
+      # instead of a second release being made
+      - name: re-run - turn the published release back into a draft
+        run: |
+          if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/gh-err"); then
+            if [ "$draft" = false ]; then
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=true
+            fi
+          elif ! grep -q "release not found" "$RUNNER_TEMP/gh-err"; then # only "no release" is left to the next step
+            cat "$RUNNER_TEMP/gh-err" >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Without a draft GoReleaser would create and publish a macOS-only release
+      - name: require the Linux job's draft
+        run: |
+          if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::error::no draft release for $GITHUB_REF_NAME; the release job makes it"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --clean --config .goreleaser-darwin.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # fine-grained token with Contents: read/write on francisrath/homebrew-tap only
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      # The only release for the tag must be a draft with every archive; then publish it. The cask
+      # pushed by GoReleaser points at it from here on.
+      - name: publish the draft
+        run: |
+          rels=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | \"\(.id) \(.draft)\"")
+          if [ "$(grep -c . <<<"$rels")" != 1 ]; then
+            echo "::error::$(grep -c . <<<"$rels") releases for $GITHUB_REF_NAME (want one draft); delete the extra draft (docs/releasing.md)"
+            exit 1
+          fi
+          read -r id draft <<<"$rels"
+          if [ "$draft" != true ]; then
+            echo "::error::the release for $GITHUB_REF_NAME is not a draft"
+            exit 1
+          fi
+          assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$id/assets" --jq '.[].name')
+          v=${GITHUB_REF_NAME#v}
+          for a in checksums.txt checksums-darwin.txt "pdb-print_${v}_darwin_universal.tar.gz" \
+            "pdb-print_${v}_linux_amd64.tar.gz" "pdb-print_${v}_linux_arm64.tar.gz" \
+            "pdb-print_${v}_linux_armv6.tar.gz" "pdb-print_${v}_windows_amd64.zip"; do
+            if ! grep -qxF "$a" <<<"$assets"; then
+              echo "::error::draft $GITHUB_REF_NAME lacks $a; not publishing"
+              exit 1
+            fi
+          done
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

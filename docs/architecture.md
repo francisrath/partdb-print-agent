@@ -509,7 +509,7 @@ type Transport interface {
 | OS queue | CUPS via IPP to `localhost:631` (or `lp`) | CUPS | Win32 spooler: `OpenPrinter/StartDocPrinter("RAW" or XPS/PDF)/WritePrinter`, GDI for sheet imposition | `golang.org/x/sys/windows` (no cgo) | MVP |
 | USB printer class | `/dev/usb/lpN` (usblp, read-back works) → no libusb needed. libusb fallback for devices without usblp | IOKit (cgo) or libusb (dynamic) | `usbprint.sys` interface `GUID_DEVINTERFACE_USBPRINT` via SetupAPI + `CreateFile/WriteFile/ReadFile`, **no Zadig/WinUSB swap needed** | own thin wrappers; google/gousb (Apache-2.0 wrapper, libusb LGPL-2.1, dynamic) only as fallback | MVP (Linux/Win), P2 (macOS) |
 | USB vendor-class/HID (DYMO LM, some Niimbot) | libusb / hidraw | IOKit HID | HID API (x/sys) | per device | P3 |
-| BLE GATT | BlueZ D-Bus | CoreBluetooth (cgo, needs app bundle + `NSBluetoothAlwaysUsageDescription`) | WinRT | tinygo.org/x/bluetooth (BSD-3; scan/connect/write/notify on all three) | P2 |
+| BLE GATT | BlueZ D-Bus | CoreBluetooth in the cgo helper `pdb-print-ble` (embedded Info.plist with `NSBluetoothAlwaysUsageDescription`; `pdb-print` stays cgo-free and talks to it over pipes) | WinRT | tinygo.org/x/bluetooth (BSD-3; scan/connect/write/notify on all three) | Phase 6 |
 | Serial / RS-232 | ✓ | ✓ | ✓ | go.bug.st/serial (BSD-3) | P2 |
 | Bluetooth classic SPP | OS-paired → `/dev/rfcommN` (or BlueZ Profile API [P3]) | paired → `/dev/tty.*` | paired → virtual COM | treated as serial | P2 |
 
@@ -764,6 +764,8 @@ gantt
 **Phase 2**: upstream PR1+PR2, PrintJob client with polling, status reporting, discovery (mDNS/USB/BLE/OS), tray app, signed installers + winget/brew/apt, auto-update, two-colour Brother, more drivers (PT, EPL, ESC/POS, DYMO LW 4xx, Niimbot, Phomemo, IPP, exec plugins), macOS USB, BLE/serial/SPP transports, sheet calibration wizard, QR self-check, OAuth loopback pairing.
 
 **Phase 3**: PR3 Mercure push (+ long-poll opt-in), PR4 print hints/default printer, device-code pairing, SNMP, DYMO LabelManager, BlueZ SPP profile, printer sharing by groups, per-user per-profile defaults, devices-DB OTA updates, TrueNAS/Unraid/HA add-on packaging.
+
+**Phase 6 (Bluetooth LE cat printers)**: driver `cat` (dialect `gb`: GB01/02/03, GT01, YT01, MX05/06/08/10, 57 mm, 384 dots at 203 dpi, GATT service 0xae30) and transport `ble`, matched by exact advertised name; `address` is the platform device id and wins over `name`; two printers with one name are refused. Linux talks to BlueZ over D-Bus, Windows uses WinRT in-process (BLE adapter needed). macOS needs cgo for CoreBluetooth, so it lives in a separate helper `pdb-print-ble` that `pdb-print` runs and talks to over pipes: `pdb-print` stays cgo-free and only the helper asks for Bluetooth permission. Docker has no Bluetooth. The macOS release is built on a macOS runner after the Linux job's draft release (see `docs/releasing.md`).
 
 **Later**: agent as **IPP Everywhere printer** (LPrint style, so any app/OS dialog can print through the agent's correct rasteriser) · printer-native barcodes (ZPL `^BQ`/TSPL `QRCODE` from element data, for 203 dpi purists) · live job status in the Part-DB UI via Turbo Streams over the same Mercure hub · agentless WebBluetooth/WebUSB print for Niimbot from the Part-DB page (browser-only, Chrome) · Android agent (phone as BLE bridge) · printer groups with media-aware fail-over · media usage counters/low-stock alerts (tie-in: labels are inventory too) · Home Assistant add-on.
 

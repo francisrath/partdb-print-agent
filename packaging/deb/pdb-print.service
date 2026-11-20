@@ -7,8 +7,8 @@ Wants=network-online.target
 [Service]
 User=pdb-print
 Group=pdb-print
-# lp: access to USB printers (/dev/usb/lp*)
-SupplementaryGroups=lp
+# lp: access to USB printers (/dev/usb/lp*); bluetooth: Bluetooth LE printers via BlueZ
+SupplementaryGroups=lp bluetooth
 # /var/lib/pdb-print (config) and /var/cache/pdb-print (PDFium compile cache)
 StateDirectory=pdb-print
 StateDirectoryMode=0700

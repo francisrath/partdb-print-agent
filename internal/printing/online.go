@@ -1,6 +1,7 @@
 package printing
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
 )
 
@@ -23,7 +25,8 @@ type onlineState struct {
 
 // Online reports whether the printer is reachable: a printer busy with a job is; a USB
 // printer whose device is present and opens is; a network printer that accepts a connection
-// on its print port within 2 s is (nothing is sent). Results are cached for 30 s; checks of
+// on its print port within 2 s is (nothing is sent); a BLE printer is while it was found
+// working in the last 10 minutes (see SeenBLE). Results are cached for 30 s; checks of
 // one printer run one at a time and share their result.
 func (s *Service) Online(p *config.Printer) bool {
 	if s.isPrinting(p.ID) {
@@ -54,6 +57,7 @@ func (s *Service) Online(p *config.Printer) bool {
 		defer s.mu.Unlock()
 		return s.online[key].ok
 	}
+	start := time.Now()
 	up, done := s.check(p) // under the printer lock: a USB open can't collide with a starting job
 	if s.beforePublish != nil {
 		s.beforePublish()
@@ -61,6 +65,9 @@ func (s *Service) Online(p *config.Printer) bool {
 	s.mu.Lock()
 	if s.online == nil {
 		s.online = map[string]onlineState{}
+	}
+	if at, ok := s.seen[key]; ok && !at.Before(start) { // not After: Windows' clock can give both the same instant
+		up = true // SeenBLE during the check: newer than what the check found
 	}
 	s.online[key] = onlineState{time.Now(), up} // published before the lock is released
 	s.mu.Unlock()
@@ -108,7 +115,42 @@ func (s *Service) check(p *config.Printer) (bool, <-chan struct{}) {
 // onlineKey keys the cache by printer and address, so an edited address is checked afresh.
 func onlineKey(p *config.Printer) string {
 	t := p.Transport
-	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial)
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name)
+}
+
+// bleSeenFor is how long a BLE printer counts as online after it was last found working. Checking
+// would take its only connection (and drop a phone's or a job's), so it is never connected just to ask.
+const bleSeenFor = 10 * time.Minute
+
+// SeenBLE records that a BLE printer was found working (a status, a job, a discovery scan).
+func (s *Service) SeenBLE(p *config.Printer) {
+	key := onlineKey(p)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen == nil {
+		s.seen = map[string]time.Time{}
+	}
+	s.seen[key] = time.Now()
+	delete(s.online, key) // the next check sees it at once
+}
+
+// noteBLE records how a status or job on a BLE printer went: an answer means it's there; failing to
+// reach it means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach.
+func (s *Service) noteBLE(p *config.Printer, err error) {
+	if p.Transport.Kind != "ble" {
+		return
+	}
+	var de *driver.Error
+	switch {
+	case err == nil:
+		s.SeenBLE(p)
+	case errors.Is(err, driver.ErrNoReadback) || errors.As(commsError(err), &de) && de.Code == driver.CommsError:
+		key := onlineKey(p)
+		s.mu.Lock()
+		delete(s.seen, key)
+		delete(s.online, key)
+		s.mu.Unlock()
+	}
 }
 
 func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
@@ -143,6 +185,12 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		case <-time.After(timeout):
 			return false, done
 		}
+	case "ble":
+		close(done)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		at, ok := s.seen[onlineKey(p)]
+		return ok && time.Since(at) < bleSeenFor, done
 	case "tcp":
 		defer close(done)
 		c, err := net.DialTimeout("tcp", net.JoinHostPort(t.Host, strconv.Itoa(t.Port)), 2*time.Second)

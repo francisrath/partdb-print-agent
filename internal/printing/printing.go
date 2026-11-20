@@ -22,11 +22,13 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
@@ -80,18 +82,21 @@ type Service struct {
 	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
 	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r, printers, online, media and profileSizes
-	online   map[string]onlineState
-	probes   map[string]*sync.Mutex // one online check per printer at a time
-	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
-	media    map[string]knownMedia  // last roll each printer reported
+	mu          sync.Mutex // guards r, printers, online, unconfirmed, seen, media and profileSizes
+	online      map[string]onlineState
+	probes      map[string]*sync.Mutex // one online check per printer at a time
+	printing    map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
+	unconfirmed map[string]bool        // printers whose last job was sent but not confirmed (see driver.Job.PrevUnconfirmed)
+	seen        map[string]time.Time   // BLE printers (by onlineKey): when a status, job or scan last found them working
+	media       map[string]knownMedia  // last roll each printer reported
 	// label profile sizes measured by ProfilesFitting, by Part-DB URL and profile id
 	profileSizes map[string]profileSize
 
-	beforePublish   func()                               // tests: between an online check returning and its result being stored
-	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
-	openDevice      func(path string) (io.Closer, error) // USB online check; nil = open read/write
-	waitingForCheck func()                               // tests: an online call is about to wait for a running check
+	beforePublish   func()                                                       // tests: between an online check returning and its result being stored
+	probeTimeout    time.Duration                                                // USB online check; 0 = 2 s
+	openDevice      func(path string) (io.Closer, error)                         // USB online check; nil = open read/write
+	waitingForCheck func()                                                       // tests: an online call is about to wait for a running check
+	newDriver       func(*devicedb.Model, driver.Options) (driver.Driver, error) // tests: a fake driver; nil = driver.New
 	r               *render.Renderer
 	printers        map[string]*sync.Mutex
 }
@@ -250,7 +255,7 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP,
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness,
 		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 
@@ -272,6 +277,9 @@ func (l *lazyTransport) open() error {
 
 func (l *lazyTransport) Open(context.Context) error { return l.open() }
 func (l *lazyTransport) Kind() string               { return l.t.Kind() }
+
+// Unwrap returns the underlying transport, for driver-specific code.
+func (l *lazyTransport) Unwrap() driver.Transport { return l.t }
 
 func (l *lazyTransport) Write(p []byte) (int, error) {
 	if err := l.open(); err != nil {
@@ -297,11 +305,11 @@ func (l *lazyTransport) Close() error {
 	return nil
 }
 
-func (s *Service) connect(ctx context.Context, p *config.Printer) (*lazyTransport, error) {
+func (s *Service) connect(ctx context.Context, p *config.Printer, m *devicedb.Model) (*lazyTransport, error) {
 	if s.OpenTransport != nil {
 		return &lazyTransport{ctx: ctx, t: s.OpenTransport(p)}, nil
 	}
-	t, err := transport.New(p.Transport)
+	t, err := transport.New(p.Transport, m)
 	if err != nil {
 		return nil, err
 	}
@@ -309,12 +317,16 @@ func (s *Service) connect(ctx context.Context, p *config.Printer) (*lazyTranspor
 }
 
 // printer resolves the printer's model and builds its driver.
-func printer(p *config.Printer) (*devicedb.Model, driver.Driver, error) {
+func (s *Service) printer(p *config.Printer) (*devicedb.Model, driver.Driver, error) {
 	m, err := p.DeviceModel()
 	if err != nil {
 		return nil, nil, err
 	}
-	d, err := driver.New(m, options(p))
+	newDriver := driver.New
+	if s.newDriver != nil {
+		newDriver = s.newDriver
+	}
+	d, err := newDriver(m, options(p))
 	return m, d, err
 }
 
@@ -327,27 +339,30 @@ func commsError(err error) error {
 	return &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 }
 
-// Status queries the printer. Models that must not be asked while printing (PT) answer BUSY
-// during a job without being asked. driver.ErrNoReadback if the printer doesn't answer.
-func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
-	m, drv, err := printer(p)
+// Status queries the printer. Models that must not be asked while printing (PT) and printers on a
+// single connection (USB, BLE) answer BUSY during a job without being asked. driver.ErrNoReadback
+// if the printer doesn't answer.
+func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Status, err error) {
+	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
-	// a printing PT must not be asked; a USB device opens only once at a time (usblp)
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a BLE printer
+	// takes one connection, so a second one would drop the job's link
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || p.Transport.Kind == "ble" {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil
 		}
 		defer lock.Unlock()
 	}
-	t, err := s.connect(ctx, p)
+	t, err := s.connect(ctx, p, m)
 	if err != nil {
 		return nil, err
 	}
 	defer t.Close()
-	st, err := drv.Status(ctx, t)
+	st, err = drv.Status(ctx, t)
+	s.noteBLE(p, err)
 	switch {
 	case err == nil:
 		s.observe(p, m, st)
@@ -373,25 +388,28 @@ func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.S
 // Print checks the printer, settles the media (what the printer reports, else the config's), gets the
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
-func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (*Result, error) {
+func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (_ *Result, err error) {
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
 	s.setPrinting(p.ID, true)
 	defer s.setPrinting(p.ID, false)
 
-	model, drv, err := printer(p)
+	model, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
 	var t *lazyTransport
 	var st *driver.Status
 	if dryRun == "" {
-		if t, err = s.connect(ctx, p); err != nil {
+		// noteBLE only hears how talking to the printer went: a bad document says nothing about its reach
+		if t, err = s.connect(ctx, p, model); err != nil {
+			s.noteBLE(p, err)
 			return nil, err
 		}
 		defer t.Close()
 		st, err = drv.Status(ctx, t)
+		s.noteBLE(p, err)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
 			detail := "printer sent no status reply"
@@ -410,7 +428,9 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		// connect now, before fetching and rendering, even if the status came over SNMP
 		if err := t.open(); err != nil {
 			s.forgetMedia(p.ID)
-			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+			err = &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+			s.noteBLE(p, err)
+			return nil, err
 		}
 		s.observe(p, model, st)
 		if st != nil {
@@ -457,7 +477,17 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		res := &Result{Pages: len(pages), Media: media.ID, MediaFrom: from, Bytes: b.Len(), Warnings: warnings}
 		return res, os.WriteFile(dryRun, b.Bytes(), 0o644)
 	}
+	s.mu.Lock()
+	job.PrevUnconfirmed = s.unconfirmed[p.ID]
+	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
+	s.noteBLE(p, err)
+	s.mu.Lock()
+	if s.unconfirmed == nil {
+		s.unconfirmed = map[string]bool{}
+	}
+	s.unconfirmed[p.ID] = err != nil || res == nil || !res.Confirmed // a failed job may still be printing
+	s.mu.Unlock()
 	if err != nil {
 		s.forgetMedia(p.ID) // the roll may be out or swapped: ask again next time
 		return nil, err

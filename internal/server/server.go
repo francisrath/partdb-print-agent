@@ -84,7 +84,7 @@ type Server struct {
 	local       *Session       // the wizard's session on loopback (no code needed there)
 	finishGrace time.Duration  // after Finish the window stays open this long (the page\'s stylesheet)
 	setupPrints sync.WaitGroup // wizard test prints in progress
-	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
+	// Discover finds printers for the wizard (ip "" = USB, the LAN and Bluetooth); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
@@ -569,7 +569,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Svc.Status(ctx, p)
 	switch {
 	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
-		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
+		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: " + checkHint(p.Transport.Kind)})
 	case errors.Is(err, driver.ErrNoReadback) && p.FallbackMedia() == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
@@ -859,6 +859,17 @@ func formModels() []string {
 		}
 	}
 	return out
+}
+
+// checkHint says what to check on a printer that doesn't answer.
+func checkHint(kind string) string {
+	switch kind {
+	case "ble":
+		return "check that it's switched on, in range and not connected to a phone"
+	case "usb":
+		return "check the printer's power and USB cable"
+	}
+	return "check the printer's power and network connection"
 }
 
 // needsStatus: printers that can't print without a status reply (PT) are not OK when silent.

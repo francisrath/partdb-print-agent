@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 )
 
 func init() {
-	transport.Register("usb", func(c config.Transport) (driver.Transport, error) {
+	transport.Register("usb", func(c config.Transport, _ *devicedb.Model) (driver.Transport, error) {
 		return &Transport{Device: c.Device, USBID: c.USBID, Serial: c.Serial}, nil
 	})
 }

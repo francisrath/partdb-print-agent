@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -15,8 +16,10 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/blecore"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"
 	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 )
@@ -254,5 +257,47 @@ func TestCandidateName(t *testing.T) {
 		if got := c.Name(); got != want {
 			t.Errorf("%+v → %q, want %q", *c, got, want)
 		}
+	}
+}
+
+func TestBLECandidates(t *testing.T) {
+	scan := func(context.Context, time.Duration) ([]blecore.Advert, error) {
+		return []blecore.Advert{
+			{Name: "MX10", Address: "AA:BB:CC:DD:EE:01", RSSI: -50},
+			{Name: "Phone", Address: "AA:BB:CC:DD:EE:02", Services: []string{"0000180f-0000-1000-8000-00805f9b34fb"}},
+			{Name: "XY99", Address: "AA:BB:CC:DD:EE:03", Services: []string{"0000ae30-0000-1000-8000-00805f9b34fb"}},
+			{Address: "AA:BB:CC:DD:EE:04", Services: []string{"AE30"}}, // short form, no name
+		}, nil
+	}
+	cs, err := BLE(context.Background(), devicedb.Default(), Options{ScanBLE: scan})
+	if err != nil || len(cs) != 3 {
+		t.Fatalf("%+v %v", cs, err)
+	}
+	for i, want := range []struct{ addr, name, model, status string }{
+		{"AA:BB:CC:DD:EE:01", "MX10", "MX10", Supported},
+		{"AA:BB:CC:DD:EE:03", "XY99", "", Unknown},
+		{"AA:BB:CC:DD:EE:04", "?", "", Unknown},
+	} {
+		c := cs[i]
+		if c.Kind != "ble" || c.Address != want.addr || c.Name() != want.name || c.ModelID != want.model || c.Status != want.status {
+			t.Errorf("%d: %+v, want %+v", i, c, want)
+		}
+	}
+	if got := TransportLine(cs[0]); got != `transport: {kind: ble, name: "MX10", address: "AA:BB:CC:DD:EE:01"}` {
+		t.Errorf("transport line %q", got)
+	}
+}
+
+// No adapter (or Bluetooth off) comes back as ErrNoBluetooth, for the caller to show as a note.
+func TestBLENoAdapter(t *testing.T) {
+	scan := func(context.Context, time.Duration) ([]blecore.Advert, error) {
+		return nil, fmt.Errorf("%w: adaptor is not powered", blecore.ErrNoBluetooth)
+	}
+	_, err := BLE(context.Background(), devicedb.Default(), Options{ScanBLE: scan})
+	if !errors.Is(err, blecore.ErrNoBluetooth) {
+		t.Fatalf("err %v", err)
+	}
+	if n := BLENote(err); !strings.Contains(n, "Bluetooth printers not searched") || !strings.Contains(n, "off") {
+		t.Errorf("note %q", n)
 	}
 }

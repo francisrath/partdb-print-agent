@@ -29,6 +29,7 @@ type Options struct {
 	Host          string // network printers: for side channels such as SNMP
 	SNMPCommunity string
 	NoSNMP        bool
+	Darkness      string // cat: light | normal | dark ("" = normal)
 	// zpl: move the print (dots; x > 0 right, y > 0 down) or widen it (0 = the media's width).
 	// Set by `pdb-print try` while it looks for what fixes a cut-off label.
 	OffsetXDots, OffsetYDots, PrintWidthDots int
@@ -123,6 +124,9 @@ type Job struct {
 	Media  *Media
 	Cut    string  // "" = the model's default
 	Status *Status // the status read before printing; nil if the printer gave none
+	// PrevUnconfirmed: the last job this process sent to the printer wasn't confirmed, so its end
+	// may still be reported (cat printers wait for it before sending).
+	PrevUnconfirmed bool
 }
 
 // Code is a normalised status code (architecture §9).
@@ -157,6 +161,7 @@ type Status struct {
 	Done      bool   // a "printing completed" notification
 	Idle      bool   // idle when read (QL over SNMP: confirms a job only if it was idle before)
 	Via       string // where the status came from: the driver's own protocol ("" ), or e.g. "snmp", "tcp"
+	Raw       string // the status reply as received, in hex, where the driver keeps it (cat), for reports
 }
 
 // Error is a printer-side failure with a normalised code.

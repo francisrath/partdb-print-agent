@@ -6,6 +6,9 @@ if [ "$1" != configure ]; then exit 0; fi
 if ! getent passwd pdb-print > /dev/null; then
   useradd --system --user-group --home-dir /var/lib/pdb-print --no-create-home --shell /usr/sbin/nologin pdb-print
 fi
+# bluetooth: access to Bluetooth LE printers through BlueZ (its D-Bus policy allows this group);
+# created if BlueZ isn't installed yet, so the unit's SupplementaryGroups= never fails
+getent group bluetooth >/dev/null || groupadd --system bluetooth
 # an empty config the first time, readable only by the service; the setup wizard fills it in
 if [ ! -e /var/lib/pdb-print/config.yaml ]; then
   install -d -o pdb-print -g pdb-print -m 0700 /var/lib/pdb-print

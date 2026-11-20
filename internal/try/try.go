@@ -5,6 +5,7 @@ package try
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -178,6 +179,10 @@ func (s *session) run() {
 	if !s.identify(c) || s.stopped {
 		return
 	}
+	if s.model.Driver == "cat" {
+		s.runCat()
+		return
+	}
 	if !s.pickMedia() || s.stopped {
 		return
 	}
@@ -207,13 +212,25 @@ func (s *session) find() (discovery.Candidate, bool) {
 	if s.o.Host != "" {
 		return cand(s.o.Host), true
 	}
-	s.say("Looking for printers on your network (about 10 seconds) …\n")
+	s.say("Looking for printers on USB, your network and Bluetooth (about 15 seconds) …\n")
 	discover := s.o.Discover
 	if discover == nil {
 		discover = func(ctx context.Context) ([]discovery.Candidate, error) {
+			var bt []discovery.Candidate
+			var btErr error
+			btDone := make(chan struct{})
+			go func() {
+				defer close(btDone)
+				bt, btErr = discovery.BLE(ctx, s.o.DB, discovery.Options{})
+			}()
 			usb, _ := discovery.USB(s.o.DB, "")
 			lan, err := discovery.Network(ctx, s.o.DB, discovery.Options{Timeout: 15 * time.Second, Port: s.o.Port})
-			return append(usb, lan...), err
+			<-btDone
+			if btErr != nil { // a note, not a failure
+				s.say("%s\n", discovery.BLENote(btErr))
+				s.rep.Notes = append(s.rep.Notes, "bluetooth: "+btErr.Error())
+			}
+			return append(append(usb, lan...), bt...), err
 		}
 	}
 	cs, err := discover(s.ctx)
@@ -242,7 +259,10 @@ func (s *session) find() (discovery.Candidate, bool) {
 	}
 	for i, c := range cs {
 		name := c.ModelID
-		if name == "" {
+		switch {
+		case name == "" && c.Kind == "ble":
+			name = "(Bluetooth device, not a known label printer)"
+		case name == "":
 			name = "(doesn't say what it is: could be the Zebra)"
 		}
 		s.say("  %d) %s %s\n", i+1, where(c), name)
@@ -261,14 +281,20 @@ func (s *session) find() (discovery.Candidate, bool) {
 }
 
 func where(c discovery.Candidate) string {
-	if c.Kind == "usb" {
+	switch c.Kind {
+	case "usb":
 		return "USB " + c.Device
+	case "ble":
+		return "Bluetooth " + c.Address
 	}
 	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // identify asks the printer what it is (after a yes) and reads its setup (read-only queries).
 func (s *session) identify(c discovery.Candidate) bool {
+	if c.Kind == "ble" { // the advertised name says what it is: no ~HI, no Zebra setup reads
+		return s.identifyCat(c)
+	}
 	asked := false
 	if c.Kind == "tcp" && c.Status != discovery.Supported {
 		asked = true
@@ -308,6 +334,51 @@ func (s *session) identify(c discovery.Candidate) bool {
 	s.note("Printer: Zebra %s, %d dpi; print width %d dots, label length %d dots (as the printer reports)",
 		c.Model.ID, c.Model.DPI, s.setup["pw"], s.setup["ll"])
 	return true
+}
+
+// identifyCat takes a Bluetooth cat printer as found; its one paper roll is the media.
+func (s *session) identifyCat(c discovery.Candidate) bool {
+	if c.Model == nil || c.Model.Driver != "cat" {
+		s.say("pdb-print try tests Zebra printers and Bluetooth cat printers for now; this one is %q.\n", c.Name())
+		s.note("Not a supported Bluetooth printer: %q", c.Name())
+		return false
+	}
+	s.model, s.candidate = c.Model, c
+	s.printer = &config.Printer{ID: "try", Name: "test", Model: c.Model.ID,
+		Transport: config.Transport{Kind: "ble", Address: c.Address, Name: c.BLEName}}
+	if media := s.o.DB.MediaFor(c.Model); len(media) > 0 {
+		s.printer.Media = media[0].ID
+	}
+	s.say("This is a %s Bluetooth cat printer (%d dpi).\n", c.Model.ID, c.Model.DPI)
+	s.note("Printer: %s (Bluetooth cat printer), %d dpi, paper %s", c.Model.ID, c.Model.DPI, s.printer.Media)
+	return true
+}
+
+// runCat tests a cat printer: status, test card, part label, then paper advice if the print is pale.
+func (s *session) runCat() {
+	if !s.ask("Print the test labels now? This prints a test card and a part label on the paper roll.", false) {
+		s.note("Stopped before printing.")
+		return
+	}
+	s.say("The printer reports: %s\n", s.status("before printing"))
+	if !s.print("1/2", s.card("1/2")) {
+		return
+	}
+	s.print("2/2", printing.PartLabel("2/2"))
+	if !s.ask("Did the labels come out of the printer?", true) {
+		s.status("nothing came out")
+		return
+	}
+	s.say("\n— Label 1/2: test card —\n")
+	s.ask("Is the whole frame of label 1/2 (the border line) visible on both sides?", true)
+	s.say("\n— Label 2/2: part label with QR code and barcode —\n")
+	s.ask("Are the QR code and the barcode sharp, with clean edges?", true)
+	// darkness hardly changes the print on these printers (an MX10 looks the same at every setting)
+	if s.ask("Is the print pale or patchy?", false) {
+		s.say("Darkness changes little on these printers. Check the paper: thermal side up (a fingernail " +
+			"scratch turns that side dark), and a fresh roll — old or sun-faded paper prints pale.\n")
+		s.note("  pale: check the paper (thermal side up, fresh roll)")
+	}
 }
 
 // setupRes read the printer's own page settings from ^HH (print width, label length) and ^HZA
@@ -396,7 +467,7 @@ func (s *session) print(tag string, src printing.Source) bool {
 	start := time.Now()
 	res, err := s.o.Svc.Print(s.ctx, s.printer, "", src)
 	s.printed = true
-	q := report.Query{Target: s.printer.Transport.Host, Name: "print " + tag, TookMS: time.Since(start).Milliseconds()}
+	q := report.Query{Target: cmp.Or(s.printer.Transport.Host, s.printer.Transport.Address), Name: "print " + tag, TookMS: time.Since(start).Milliseconds()}
 	if p := s.printer; p.Mirror || p.UpsideDown || p.Adjust != (config.Adjust{}) {
 		q.Sent = fmt.Sprintf("mirror=%v upside_down=%v adjust=%+v", p.Mirror, p.UpsideDown, p.Adjust)
 	}
@@ -575,14 +646,18 @@ func (s *session) status(when string) string {
 			text += " (" + st.Detail + ")"
 		}
 	}
-	s.rep.Queries = append(s.rep.Queries, report.Query{Target: s.printer.Transport.Host, Name: "status " + when, Reply: text})
+	reply := text
+	if err == nil && st.Raw != "" { // a cat printer's raw A3 reply tells clones apart
+		reply += " [raw " + st.Raw + "]"
+	}
+	s.rep.Queries = append(s.rep.Queries, report.Query{Target: cmp.Or(s.printer.Transport.Host, s.printer.Transport.Address), Name: "status " + when, Reply: reply})
 	s.note("Status %s: %s", when, text)
 	return text
 }
 
 // restore sends the printer's own page settings back, since ours stay until it is switched off.
 func (s *session) restore() {
-	if !s.printed || s.printer == nil {
+	if !s.printed || s.printer == nil || s.model.Driver != "zpl" { // a cat printer keeps no page settings
 		return
 	}
 	pw, ll := s.setup["pw"], s.setup["ll"]
@@ -592,7 +667,7 @@ func (s *session) restore() {
 		return
 	}
 	cmd := s.restoreCmd()
-	t, err := transport.New(s.printer.Transport)
+	t, err := transport.New(s.printer.Transport, s.model)
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 5*time.Second)
 		defer cancel()

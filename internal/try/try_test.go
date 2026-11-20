@@ -1,7 +1,9 @@
 package try_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -12,7 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/try"
@@ -306,4 +311,137 @@ func restored(fake *zpltest.Fake) bool {
 		}
 	}
 	return false
+}
+
+// fakeCat is a BLE cat printer like an MX10: after a job, busy to the next status request and then
+// AE 00 ("buffer empty"); idle otherwise.
+type fakeCat struct {
+	mu       sync.Mutex
+	in       []byte
+	written  bytes.Buffer
+	printing bool
+}
+
+func catFrame(cmd byte, payload ...byte) []byte {
+	var crc byte
+	for _, x := range payload {
+		crc ^= x
+		for range 8 {
+			if crc&0x80 != 0 {
+				crc = crc<<1 ^ 0x07
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+	f := append([]byte{0x51, 0x78, cmd, 0x00, byte(len(payload)), 0x00}, payload...)
+	return append(f, crc, 0xFF)
+}
+
+func (f *fakeCat) Open(context.Context) error { return nil }
+func (f *fakeCat) Close() error               { return nil }
+func (f *fakeCat) Kind() string               { return "ble" }
+
+func (f *fakeCat) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.written.Write(p)
+	switch {
+	case !bytes.Equal(p, catFrame(0xA3, 0x00)):
+		f.printing = true
+	case f.printing:
+		f.printing = false
+		f.in = append(f.in, catFrame(0xA3, 0x80, 0x01, 0x95)...)
+		f.in = append(f.in, catFrame(0xAE, 0x00)...)
+	default:
+		f.in = append(f.in, catFrame(0xA3, 0x00, 0x01, 0x95)...)
+	}
+	return len(p), nil
+}
+
+func (f *fakeCat) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.in) == 0 {
+		time.Sleep(time.Millisecond)
+		return 0, os.ErrDeadlineExceeded
+	}
+	n := copy(p, f.in)
+	f.in = f.in[n:]
+	return n, nil
+}
+
+func (f *fakeCat) sent() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return bytes.Clone(f.written.Bytes())
+}
+
+// A cat printer: no Zebra identify, setup reads or restore; "too pale" reprints darker.
+func TestTryCatPrinter(t *testing.T) {
+	fake := &fakeCat{}
+	m, _ := devicedb.Default().Model("MX10")
+	r, w := io.Pipe()
+	d := &dialog{t: t, in: w, done: make(chan struct{})}
+	svc := &printing.Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OpenTransport: func(*config.Printer) driver.Transport { return fake }}
+	t.Cleanup(svc.Close)
+	o := try.Options{In: r, Out: d, Dir: t.TempDir(), Svc: svc, Version: "test",
+		Discover: func(context.Context) ([]discovery.Candidate, error) {
+			return []discovery.Candidate{{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported}}, nil
+		}}
+	go func() {
+		defer close(d.done)
+		d.path, d.err = try.Run(context.Background(), o)
+	}()
+	d.answer("Print the test labels now?", "y")
+	d.answer("Did the labels come out", "")
+	d.answer("whole frame", "")
+	d.answer("sharp", "")
+	d.answer("pale or patchy?", "y")
+	got := d.finish()
+	// darkness hardly changes an MX10's print: no darker reprint, the paper is the likely cause
+	if sent := fake.sent(); bytes.Count(sent, catFrame(0xBD, 0xC0)) != 0 || bytes.Count(sent, catFrame(0xBD, 0x80)) != 2 {
+		t.Errorf("speeds: %d dark, %d normal jobs; want the two labels only", bytes.Count(sent, catFrame(0xBD, 0xC0)), bytes.Count(sent, catFrame(0xBD, 0x80)))
+	}
+	// the raw A3 reply goes into the report, for telling clones apart
+	for _, want := range []string{"MX10", "Label 1/2: printed", "Label 2/2: printed", "pale: check the paper", fmt.Sprintf("% x", catFrame(0xA3, 0x00, 0x01, 0x95))} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report lacks %q:\n%s", want, got)
+		}
+	}
+	if out := d.output(); !strings.Contains(out, "thermal side") || !strings.Contains(out, "Darkness changes little") {
+		t.Errorf("no paper advice:\n%s", out)
+	}
+	out := d.output()
+	for _, zebra := range []string{"~HI", "Ask this printer what it is", "Read this printer's settings", "Which labels are loaded", "Switch the printer off", "restored", "Open the printer's lid"} {
+		if strings.Contains(out, zebra) || strings.Contains(got, zebra) {
+			t.Errorf("Zebra step %q in a cat printer test:\n%s", zebra, out)
+		}
+	}
+}
+
+// An unknown Bluetooth device in the list isn't taken for the Zebra.
+func TestTryListsUnknownBLENeutrally(t *testing.T) {
+	m, _ := devicedb.Default().Model("MX10")
+	r, w := io.Pipe()
+	d := &dialog{t: t, in: w, done: make(chan struct{})}
+	svc := &printing.Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	t.Cleanup(svc.Close)
+	o := try.Options{In: r, Out: d, Dir: t.TempDir(), Svc: svc, Version: "test",
+		Discover: func(context.Context) ([]discovery.Candidate, error) {
+			return []discovery.Candidate{
+				{Kind: "ble", Address: "AA:BB:CC:DD:EE:03", Status: discovery.Unknown},
+				{Kind: "ble", Address: "AA:BB:CC:DD:EE:01", BLEName: "MX10", Model: m, ModelID: "MX10", Status: discovery.Supported},
+			}, nil
+		}}
+	go func() {
+		defer close(d.done)
+		d.path, d.err = try.Run(context.Background(), o)
+	}()
+	d.answer("Which one is the printer to test?", "1")
+	d.finish()
+	if out := d.output(); strings.Contains(out, "Zebra)") || !strings.Contains(out, "Bluetooth device, not a known label printer") {
+		t.Errorf("output:\n%s", out)
+	}
 }
