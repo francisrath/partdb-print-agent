@@ -3,6 +3,7 @@ package try_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -403,7 +404,8 @@ func TestTryCatPrinter(t *testing.T) {
 	if sent := fake.sent(); bytes.Count(sent, catFrame(0xBD, 0xC0)) != 0 || bytes.Count(sent, catFrame(0xBD, 0x80)) != 2 {
 		t.Errorf("speeds: %d dark, %d normal jobs; want the two labels only", bytes.Count(sent, catFrame(0xBD, 0xC0)), bytes.Count(sent, catFrame(0xBD, 0x80)))
 	}
-	for _, want := range []string{"MX10", "Label 1/2: printed", "Label 2/2: printed", "pale: check the paper"} {
+	// the raw A3 reply goes into the report, for telling clones apart
+	for _, want := range []string{"MX10", "Label 1/2: printed", "Label 2/2: printed", "pale: check the paper", fmt.Sprintf("% x", catFrame(0xA3, 0x00, 0x01, 0x95))} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}

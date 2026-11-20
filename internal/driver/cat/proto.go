@@ -113,6 +113,7 @@ func encodePage(w io.Writer, img *image.Gray, dots int, energy uint16, speed byt
 type catFrame struct {
 	cmd     byte
 	payload []byte
+	raw     []byte // the whole frame as received
 }
 
 // nextFrame takes the first whole frame off a notification stream, skipping bytes before it and
@@ -142,6 +143,6 @@ func nextFrame(b []byte) (f catFrame, rest []byte, ok bool) {
 			b = b[1:]
 			continue
 		}
-		return catFrame{cmd: b[2], payload: payload}, b[8+n:], true
+		return catFrame{cmd: b[2], payload: payload, raw: b[:8+n]}, b[8+n:], true
 	}
 }

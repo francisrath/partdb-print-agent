@@ -160,6 +160,7 @@ type Status struct {
 	Done      bool   // a "printing completed" notification
 	Idle      bool   // idle when read (QL over SNMP: confirms a job only if it was idle before)
 	Via       string // where the status came from: the driver's own protocol ("" ), or e.g. "snmp", "tcp"
+	Raw       string // the status reply as received, in hex, where the driver keeps it (cat), for reports
 }
 
 // Error is a printer-side failure with a normalised code.

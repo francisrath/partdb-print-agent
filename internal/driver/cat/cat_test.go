@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -145,6 +146,9 @@ func TestStatusFlags(t *testing.T) {
 		}
 		if st.Code != tc.code || st.Idle != tc.idle || st.Detail != tc.detail || st.Via != "ble" || st.Model != "MX10" {
 			t.Errorf("%s: got %+v", tc.name, st)
+		}
+		if raw := tc.reply[len(tc.reply)-len(status(0)):]; st.Raw != fmt.Sprintf("% x", raw) { // the A3 reply as received
+			t.Errorf("%s: raw %q, want % x", tc.name, st.Raw, raw)
 		}
 	}
 }

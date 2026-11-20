@@ -646,7 +646,11 @@ func (s *session) status(when string) string {
 			text += " (" + st.Detail + ")"
 		}
 	}
-	s.rep.Queries = append(s.rep.Queries, report.Query{Target: cmp.Or(s.printer.Transport.Host, s.printer.Transport.Address), Name: "status " + when, Reply: text})
+	reply := text
+	if err == nil && st.Raw != "" { // a cat printer's raw A3 reply tells clones apart
+		reply += " [raw " + st.Raw + "]"
+	}
+	s.rep.Queries = append(s.rep.Queries, report.Query{Target: cmp.Or(s.printer.Transport.Host, s.printer.Transport.Address), Name: "status " + when, Reply: reply})
 	s.note("Status %s: %s", when, text)
 	return text
 }

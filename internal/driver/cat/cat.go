@@ -60,10 +60,11 @@ type cat struct {
 type reader struct {
 	t       driver.Transport
 	buf     []byte
-	replies int  // A3 replies taken
-	busy    bool // an A3 reply said busy
-	emptied bool // an AE 00 ("buffer empty") came after busy
-	paused  bool // an AE 10 (pause) wasn't lifted yet: the next AE 00 is its resume, not "empty"
+	replies int    // A3 replies taken
+	reply   []byte // the last A3 reply, whole frame as received
+	busy    bool   // an A3 reply said busy
+	emptied bool   // an AE 00 ("buffer empty") came after busy
+	paused  bool   // an AE 10 (pause) wasn't lifted yet: the next AE 00 is its resume, not "empty"
 }
 
 // take consumes the buffered whole frames up to the first A3 reply (reply) or all of them, noting
@@ -84,6 +85,7 @@ func (r *reader) take(reply bool) (flags byte, ok bool) {
 			r.paused = false
 		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
 			r.replies++
+			r.reply = f.raw
 			r.busy = r.busy || f.payload[0]&flagBusy != 0
 			return f.payload[0], true
 		}
@@ -150,12 +152,13 @@ func (c *cat) statusOf(flags byte) *driver.Status {
 }
 
 func (c *cat) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
-	flags, err := (&reader{t: t}).status()
+	r := &reader{t: t}
+	flags, err := r.status()
 	if err != nil {
 		return nil, err
 	}
 	st := c.statusOf(flags)
-	st.Via = t.Kind()
+	st.Via, st.Raw = t.Kind(), fmt.Sprintf("% x", r.reply)
 	return st, nil
 }
 
