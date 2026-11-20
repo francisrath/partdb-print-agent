@@ -357,3 +357,14 @@ func (p *Printer) validate() error {
 	}
 	return nil
 }
+
+// FallbackMedia is the media to print on when the printer doesn't report its roll ("" = none).
+func (p *Printer) FallbackMedia() string {
+	if p.Media == "auto" {
+		return ""
+	}
+	return p.Media
+}
+
+// AllowedMedia lists the media ids jobs may print on: every medium the model takes.
+func (p *Printer) AllowedMedia(m *devicedb.Model) []string { return m.Media }

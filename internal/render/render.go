@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"time"
 
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/enums"
 	"github.com/klippa-app/go-pdfium/references"
@@ -33,11 +34,23 @@ const (
 	MaxPixels = 256 << 20
 	mmPerPt   = 25.4 / 72
 	// A page side within this of the media width is treated as the cross-feed side.
-	widthToleranceMM = 0.6
+	widthToleranceMM = devicedb.WidthToleranceMM
 )
 
-// ErrSize means the page doesn't fit the media (see Options.CheckSize).
+// ErrSize means the page doesn't fit the media (see Options.CheckSize); the error is a *SizeError.
 var ErrSize = errors.New("label size doesn't match the media")
+
+// SizeError is a page that doesn't fit the media, with the page's size as displayed.
+type SizeError struct {
+	WMM, HMM float64
+	Media    string // "29 mm" or "17×54 mm"
+}
+
+func (e *SizeError) Error() string {
+	return fmt.Sprintf("%v: label is %.1f×%.1f mm, loaded media is %s", ErrSize, e.WMM, e.HMM, e.Media)
+}
+
+func (e *SizeError) Unwrap() error { return ErrSize }
 
 type Options struct {
 	WidthDots    int     // cross-feed (printhead) dots
@@ -265,12 +278,12 @@ func layout(wPt, hPt float64, o Options, budget *int, maxPixels int) (rot enums.
 		crossMM, feedMM = hMM, wMM
 	}
 	if o.CheckSize && (math.Abs(crossMM-o.MediaWidthMM) > widthToleranceMM ||
-		(o.MediaLengthMM > 0 && math.Abs(feedMM-o.MediaLengthMM) > 1)) {
+		(o.MediaLengthMM > 0 && math.Abs(feedMM-o.MediaLengthMM) > devicedb.LengthToleranceMM)) {
 		media := fmt.Sprintf("%g mm", o.MediaWidthMM)
 		if o.MediaLengthMM > 0 {
 			media = fmt.Sprintf("%g×%g mm", o.MediaWidthMM, o.MediaLengthMM)
 		}
-		return 0, 0, 0, fmt.Errorf("%w: label is %.1f×%.1f mm, loaded media is %s", ErrSize, wMM, hMM, media)
+		return 0, 0, 0, &SizeError{WMM: wMM, HMM: hMM, Media: media}
 	}
 	// Render straight at the target dot size: resampling afterwards would smear QR modules.
 	w, h = o.WidthDots, o.LengthDots
