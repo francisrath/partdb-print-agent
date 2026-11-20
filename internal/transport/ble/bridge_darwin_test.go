@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,10 +37,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// fakeHelper modes: "ok" echoes the open request and every write back as notifications; "die" exits on the
-// first write; "fail" refuses the open; "scan" / "scan-nobt" answer the scan mode.
+// fakeHelper modes: "ok" echoes the open request and every write back as notifications; on the first
+// write "die" exits silently, "drop" exits after logging a lost link, "junk" sends a bad frame and hangs;
+// "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
+	case "scan-hang": // stuck in Enable, deaf to the interrupt
+		signal.Ignore(os.Interrupt)
+		time.Sleep(time.Hour)
 	case "scan":
 		if strings.Join(args, " ") != "scan --timeout 8s" {
 			return fmt.Errorf("args %q", args)
@@ -62,6 +67,9 @@ func fakeHelper(mode string, args []string) error {
 	if err != nil || typ != blebridge.TypeOpen {
 		return fmt.Errorf("first frame %q: %v", typ, err)
 	}
+	if mode == "hang" {
+		time.Sleep(time.Hour)
+	}
 	if mode == "fail" {
 		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("no Bluetooth adapter: bluetooth is not authorized for this app"))
 	}
@@ -81,8 +89,16 @@ func fakeHelper(mode string, args []string) error {
 		case blebridge.TypeClose:
 			return nil
 		case blebridge.TypeWrite:
-			if mode == "die" {
+			switch mode {
+			case "die":
 				os.Exit(3)
+			case "drop":
+				fmt.Fprintln(os.Stderr, "pdb-print-ble: connected to 5E3F0A6B")
+				fmt.Fprintln(os.Stderr, "pdb-print-ble: printer 5E3F0A6B disconnected")
+				os.Exit(1)
+			case "junk":
+				_, _ = os.Stdout.Write([]byte{'N', 0xff, 0xff, 0xff, 0xff})
+				time.Sleep(time.Hour)
 			}
 			if err := blebridge.Write(os.Stdout, blebridge.TypeNotify, p); err != nil {
 				return err
@@ -267,5 +283,78 @@ func TestBridgeScan(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// within fails the test when f takes longer than d (a hang), and returns f's error otherwise.
+func within(t *testing.T, d time.Duration, what string, f func() error) error {
+	t.Helper()
+	errc := make(chan error, 1)
+	go func() { errc <- f() }()
+	select {
+	case err := <-errc:
+		return err
+	case <-time.After(d):
+		t.Fatalf("%s still running after %v", what, d)
+		return nil
+	}
+}
+
+func TestBridgeHelperBreaks(t *testing.T) {
+	tests := []struct{ mode, want string }{
+		{"junk", "frame exceeds"},
+		{"drop", "ble: pdb-print-ble: printer 5E3F0A6B disconnected"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			useFake(t, tt.mode)
+			tr := newBridge(t, config.Transport{Name: "MX10"})
+			if err := tr.Open(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			readAll(t, tr)
+			err := within(t, time.Second, "Write", func() error {
+				_, err := tr.Write([]byte("hello"))
+				return err
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Write: %v, want %q", err, tt.want)
+			}
+			if _, err := tr.Read(make([]byte, 10)); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Read: %v, want %q", err, tt.want)
+			}
+			if err := within(t, time.Second, "Close", tr.Close); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
+func TestBridgeOpenCancel(t *testing.T) {
+	useFake(t, "hang")
+	tr := newBridge(t, config.Transport{Name: "MX10"})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := within(t, time.Second, "Open", func() error { return tr.Open(ctx) })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Open: %v", err)
+	}
+	if tr.cmd != nil {
+		t.Error("cancelled Open left the helper process behind")
+	}
+}
+
+func TestBridgeScanCancel(t *testing.T) {
+	useFake(t, "scan-hang")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	var ads []blecore.Advert
+	err := within(t, 4*time.Second, "Scan", func() error {
+		var err error
+		ads, err = Scan(ctx, 8*time.Second)
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || ads != nil {
+		t.Errorf("Scan: %v %v, want the context's error", ads, err)
 	}
 }

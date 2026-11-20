@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -89,8 +90,15 @@ func enable() error {
 
 // scan listens until timeout, ctx ends, or settled reports true.
 func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scanned, time.Time) bool) ([]blecore.Advert, error) {
-	if err := enable(); err != nil {
-		return nil, err
+	enabled := make(chan error, 1)
+	go func() { enabled <- enable() }() // Enable may wait 10 s for the permission prompt
+	select {
+	case err := <-enabled:
+		if err != nil {
+			return nil, err
+		}
+	case <-ctx.Done():
+		return nil, nil // interrupted before the scan started: nothing seen
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -219,8 +227,8 @@ func serve(in io.Reader, out *frames) error {
 // Every notification goes to the client; the chunker also sees the flow control.
 func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Chunker, int, error) {
 	var none bluetooth.Device
-	if _, err := blecore.Pick(nil, req.Name, req.Address); !errors.Is(err, blecore.ErrNotFound) {
-		return none, nil, 0, err // neither name nor address set
+	if req.Name == "" && req.Address == "" {
+		return none, nil, 0, errors.New("set the printer's address or name")
 	}
 	found, err := scan(context.Background(), openScan, func(s *blecore.Scanned, now time.Time) bool {
 		return s.Settled(req.Name, req.Address, now)
@@ -239,24 +247,38 @@ func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Ch
 	if err != nil {
 		return none, nil, 0, fmt.Errorf("address %q: %w", ad.Address, err)
 	}
+	// When the link drops, the client learns from this process ending (and its last stderr line). The
+	// handler is in place before Connect so a drop during setup isn't missed; disconnects before Connect
+	// succeeded belong to a failed attempt (Connect reports those itself).
+	var (
+		connected atomic.Bool
+		live      atomic.Pointer[blecore.Chunker]
+	)
+	adapter.SetConnectionStateHandler(func(d bluetooth.Device, s bluetooth.ConnectionState) {
+		if s.Connected || d.Address.UUID != id || !connected.Load() {
+			return
+		}
+		if ch := live.Load(); ch != nil {
+			ch.Close()
+		}
+		log.Printf("printer %s disconnected", ad.Address)
+		os.Exit(1)
+	})
 	dev, err := adapter.Connect(bluetooth.Address{UUID: id},
 		bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
 	if err != nil {
 		return none, nil, 0, fmt.Errorf("connect %s: %w", ad.Address, err)
+	}
+	connected.Store(true)
+	if ok, _ := dev.Connected(); !ok { // dropped before the handler could count it
+		return none, nil, 0, fmt.Errorf("printer %s disconnected", ad.Address)
 	}
 	ch, mtu, err := setup(dev, req, out)
 	if err != nil {
 		_ = dev.Disconnect()
 		return none, nil, 0, err
 	}
-	// The printer allows one connection; when it drops, the client learns from this process ending.
-	adapter.SetConnectionStateHandler(func(d bluetooth.Device, s bluetooth.ConnectionState) {
-		if !s.Connected && d.Address.UUID == id {
-			ch.Close()
-			log.Printf("printer %s disconnected", ad.Address)
-			os.Exit(1)
-		}
-	})
+	live.Store(ch)
 	log.Printf("connected to %s (%s), %d bytes per write", ad.Address, ad.Name, mtu)
 	return dev, ch, mtu, nil
 }

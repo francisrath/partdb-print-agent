@@ -95,6 +95,9 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	out, err := cmd.Output()
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
+		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
+			return nil, ctx.Err()
+		}
 		if msg := lastLine(stderr.String()); msg != "" {
 			return nil, helperError(msg)
 		}
@@ -143,13 +146,14 @@ func (t *Transport) Kind() string { return "ble" }
 func (t *Transport) Open(ctx context.Context) error {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
-	t.stop() // a helper left from an earlier Open (it may have died already)
+	t.stop(false) // a helper left from an earlier Open (it may have died already)
 	helper, err := findHelper()
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command(helper)
-	cmd.Stderr = os.Stderr // the helper logs there
+	tail := new(lastLineWriter)
+	cmd.Stderr = io.MultiWriter(os.Stderr, tail) // the helper logs there; its last line explains an exit
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -166,18 +170,19 @@ func (t *Transport) Open(ctx context.Context) error {
 	t.cmd, t.stdin, t.done, t.dead = cmd, stdin, done, nil
 	t.replies, t.buf, t.ready = make(chan reply, 1), nil, make(chan struct{}, 1)
 	t.mu.Unlock()
-	go t.readLoop(cmd, stdout, done)
+	go t.readLoop(cmd, stdout, tail, done)
 
 	open, _ := json.Marshal(t.req)
 	if _, err := t.request(ctx, blebridge.TypeOpen, open); err != nil {
-		t.stop()
+		// Cancelled: the helper is busy scanning or connecting and won't read a Close.
+		t.stop(ctx.Err() != nil)
 		return err
 	}
 	return nil
 }
 
 // readLoop delivers the helper's frames until it exits, then reaps it.
-func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, done chan struct{}) {
+func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *lastLineWriter, done chan struct{}) {
 	var err error
 	for {
 		var typ byte
@@ -201,16 +206,22 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, done chan struct{}
 		}
 		t.mu.Unlock()
 	}
+	if !errors.Is(err, io.EOF) {
+		_ = cmd.Process.Kill() // garbage on stdout (version skew?): the helper can't be trusted any more
+	}
 	_, _ = io.Copy(io.Discard, stdout) // let Wait finish
 	werr := cmd.Wait()
+	msg := strings.TrimPrefix(tail.String(), helperName+": ")
 	t.mu.Lock()
 	switch {
+	case !errors.Is(err, io.EOF):
+		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
+	case msg != "" && werr != nil:
+		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
 	case werr != nil:
 		t.dead = fmt.Errorf("ble: %s exited: %w", helperName, werr)
-	case errors.Is(err, io.EOF):
-		t.dead = fmt.Errorf("ble: %s exited", helperName)
 	default:
-		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
+		t.dead = fmt.Errorf("ble: %s exited", helperName)
 	}
 	t.mu.Unlock()
 	close(done)
@@ -305,18 +316,23 @@ func (t *Transport) Read(p []byte) (int, error) {
 func (t *Transport) Close() error {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
-	t.stop()
+	t.stop(false)
 	return nil
 }
 
-func (t *Transport) stop() {
+// stop ends the helper: politely (Close, then a grace period) or, with kill, at once.
+func (t *Transport) stop(kill bool) {
 	t.mu.Lock()
 	cmd, stdin, done := t.cmd, t.stdin, t.done
 	t.mu.Unlock()
 	if cmd == nil {
 		return
 	}
-	_ = blebridge.Write(stdin, blebridge.TypeClose, nil)
+	if kill {
+		_ = cmd.Process.Kill()
+	} else {
+		_ = blebridge.Write(stdin, blebridge.TypeClose, nil)
+	}
 	_ = stdin.Close()
 	select {
 	case <-done:
@@ -328,3 +344,16 @@ func (t *Transport) stop() {
 	t.cmd, t.stdin = nil, nil
 	t.mu.Unlock()
 }
+
+// lastLineWriter keeps the last line written to it (exec copies stderr from one goroutine; read it after Wait).
+type lastLineWriter struct{ b []byte }
+
+func (w *lastLineWriter) Write(p []byte) (int, error) {
+	w.b = append(w.b, p...)
+	if len(w.b) > 4096 {
+		w.b = w.b[len(w.b)-1024:]
+	}
+	return len(p), nil
+}
+
+func (w *lastLineWriter) String() string { return lastLine(string(w.b)) }
