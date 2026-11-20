@@ -3,6 +3,9 @@ package transport_test
 import (
 	"testing"
 
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/partdb-print-agent/internal/driver"
+
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
@@ -10,19 +13,31 @@ import (
 )
 
 func TestTransportRegistry(t *testing.T) {
-	tr, err := transport.New(config.Transport{Kind: "tcp", Host: "printer.lan", Port: 9101})
+	tr, err := transport.New(config.Transport{Kind: "tcp", Host: "printer.lan", Port: 9101}, nil)
 	if tc, ok := tr.(*tcp.Transport); err != nil || !ok || tc.Addr != "printer.lan:9101" {
 		t.Errorf("tcp: %#v %v", tr, err)
 	}
-	tr, err = transport.New(config.Transport{Kind: "usb", Device: "/dev/usb/lp3"})
+	tr, err = transport.New(config.Transport{Kind: "usb", Device: "/dev/usb/lp3"}, nil)
 	if u, ok := tr.(*usb.Transport); err != nil || !ok || u.Device != "/dev/usb/lp3" {
 		t.Errorf("usb: %#v %v", tr, err)
 	}
-	tr, err = transport.New(config.Transport{Kind: "usb", USBID: "04f9:209c", Serial: "X1"})
+	tr, err = transport.New(config.Transport{Kind: "usb", USBID: "04f9:209c", Serial: "X1"}, nil)
 	if u, ok := tr.(*usb.Transport); err != nil || !ok || u.USBID != "04f9:209c" || u.Serial != "X1" {
 		t.Errorf("usb by id: %#v %v", tr, err)
 	}
-	if _, err := transport.New(config.Transport{Kind: "carrier-pigeon"}); err == nil {
+	if _, err := transport.New(config.Transport{Kind: "carrier-pigeon"}, nil); err == nil {
 		t.Error("unknown kind accepted")
+	}
+}
+
+func TestRegisterPassesModel(t *testing.T) {
+	var got *devicedb.Model
+	transport.Register("model-probe", func(c config.Transport, m *devicedb.Model) (driver.Transport, error) {
+		got = m
+		return nil, nil
+	})
+	want := &devicedb.Model{ID: "x"}
+	if _, err := transport.New(config.Transport{Kind: "model-probe"}, want); err != nil || got != want {
+		t.Errorf("model not passed: %p %p %v", got, want, err)
 	}
 }

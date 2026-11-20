@@ -592,7 +592,7 @@ func (s *session) restore() {
 		return
 	}
 	cmd := s.restoreCmd()
-	t, err := transport.New(s.printer.Transport)
+	t, err := transport.New(s.printer.Transport, s.model)
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 5*time.Second)
 		defer cancel()

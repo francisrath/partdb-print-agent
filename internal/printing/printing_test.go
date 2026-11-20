@@ -547,3 +547,10 @@ func TestPrintZebraShortensByOneMM(t *testing.T) {
 		t.Errorf("format %.60q, want ^LL792", f)
 	}
 }
+
+func TestLazyTransportUnwrap(t *testing.T) {
+	inner := &fakePT{}
+	if got := (&lazyTransport{t: inner}).Unwrap(); got != driver.Transport(inner) {
+		t.Errorf("Unwrap = %v", got)
+	}
+}

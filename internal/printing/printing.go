@@ -268,6 +268,9 @@ func (l *lazyTransport) open() error {
 func (l *lazyTransport) Open(context.Context) error { return l.open() }
 func (l *lazyTransport) Kind() string               { return l.t.Kind() }
 
+// Unwrap returns the underlying transport, for driver-specific code.
+func (l *lazyTransport) Unwrap() driver.Transport { return l.t }
+
 func (l *lazyTransport) Write(p []byte) (int, error) {
 	if err := l.open(); err != nil {
 		return 0, err
@@ -292,11 +295,11 @@ func (l *lazyTransport) Close() error {
 	return nil
 }
 
-func (s *Service) connect(ctx context.Context, p *config.Printer) (*lazyTransport, error) {
+func (s *Service) connect(ctx context.Context, p *config.Printer, m *devicedb.Model) (*lazyTransport, error) {
 	if s.OpenTransport != nil {
 		return &lazyTransport{ctx: ctx, t: s.OpenTransport(p)}, nil
 	}
-	t, err := transport.New(p.Transport)
+	t, err := transport.New(p.Transport, m)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +340,7 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 		}
 		defer lock.Unlock()
 	}
-	t, err := s.connect(ctx, p)
+	t, err := s.connect(ctx, p, m)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +370,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	var t *lazyTransport
 	var st *driver.Status
 	if dryRun == "" {
-		if t, err = s.connect(ctx, p); err != nil {
+		if t, err = s.connect(ctx, p, model); err != nil {
 			return nil, err
 		}
 		defer t.Close()
