@@ -63,10 +63,11 @@ type reader struct {
 	replies int  // A3 replies taken
 	busy    bool // an A3 reply said busy
 	emptied bool // an AE 00 ("buffer empty") came after busy
+	paused  bool // an AE 10 (pause) wasn't lifted yet: the next AE 00 is its resume, not "empty"
 }
 
 // take consumes the buffered whole frames up to the first A3 reply (reply) or all of them, noting
-// busy and AE 00 after it and skipping the rest.
+// busy, pauses and an AE 00 after busy that resumes no pause, and skipping the rest.
 func (r *reader) take(reply bool) (flags byte, ok bool) {
 	for {
 		f, rest, ok := nextFrame(r.buf)
@@ -75,8 +76,12 @@ func (r *reader) take(reply bool) (flags byte, ok bool) {
 			return 0, false
 		}
 		switch {
+		case f.cmd == cmdFlow && len(f.payload) == 1 && f.payload[0] == 0x10:
+			r.paused = true
 		case f.cmd == cmdFlow && len(f.payload) == 1 && f.payload[0] == 0x00:
-			r.emptied = r.emptied || r.busy
+			// the tail of a write can pause after Write returned; its resume isn't the end of the job
+			r.emptied = r.emptied || r.busy && !r.paused
+			r.paused = false
 		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
 			r.replies++
 			r.busy = r.busy || f.payload[0]&flagBusy != 0
@@ -205,7 +210,7 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len()}
-	r.busy, r.emptied = false, false // only what comes after our Write counts
+	r.busy, r.emptied, r.paused = false, false, false // only what comes after our Write counts
 	st, err := c.poll(ctx, r, time.Now().Add(confirmBase+confirmPerPage*time.Duration(len(job.Pages))), func(*driver.Status) bool {
 		return r.emptied
 	})

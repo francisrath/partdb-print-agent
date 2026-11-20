@@ -276,6 +276,9 @@ func TestPrintNeedsJobEvidence(t *testing.T) {
 		{"AE 00 during the write", [][]byte{status(0x80), status(0x00)}, then(frame(0xAE, 0x10), emptied), false, notDone, 0},
 		{"AE 00 before busy", [][]byte{then(emptied, status(0x80)), status(0x00)}, nil, false, notDone, 0},
 		{"AE 10 after busy", [][]byte{status(0x80), then(frame(0xAE, 0x10), status(0x00))}, nil, false, notDone, 0},
+		// the tail of the write paused after Write returned: its resume AE 00 is not the end of the job
+		{"resume after busy", [][]byte{then(status(0x80), frame(0xAE, 0x10)), then(emptied, status(0x80)), status(0x00), status(0x00)}, nil, false, notDone, 0},
+		{"resume, then buffer empty", [][]byte{then(status(0x80), frame(0xAE, 0x10)), then(emptied, status(0x80)), status(0x00), then(emptied, status(0x00)), status(0x00)}, nil, true, "printed", 1},
 		// a stale idle reply already buffered behind the busy one must not answer the next request
 		{"stale idle", [][]byte{append(status(0x80), status(0x00)...)}, nil, false, notDone, 0},
 	} {
