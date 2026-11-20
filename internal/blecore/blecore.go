@@ -19,12 +19,12 @@ var ErrNotFound = errors.New("BLE printer not found")
 
 // Advert is one device seen in a scan.
 type Advert struct {
-	Name    string
-	Address string // a MAC ("AA:BB:CC:DD:EE:FF") on Linux/Windows, a CoreBluetooth UUID on macOS
-	RSSI    int
+	Name    string `json:"name"`
+	Address string `json:"address"` // a MAC ("AA:BB:CC:DD:EE:FF") on Linux/Windows, a CoreBluetooth UUID on macOS
+	RSSI    int    `json:"rssi"`
 	// Services are the advertised service UUIDs in the library's canonical lowercase 128-bit form
 	// ("0000ae30-0000-1000-8000-00805f9b34fb").
-	Services []string
+	Services []string `json:"services"`
 }
 
 // Pick finds the configured printer among the adverts. With both set, the address wins (the name is
