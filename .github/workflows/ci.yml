@@ -102,7 +102,7 @@ jobs:
             grep -qx 'getent group bluetooth >/dev/null || groupadd --system bluetooth' <<<"$(dpkg-deb -I "$deb" postinst)"
             grep -qx 'SupplementaryGroups=lp bluetooth' <<<"$(dpkg-deb --fsys-tarfile "$deb" | tar -xO ./usr/lib/systemd/system/pdb-print.service)"
           done
-          if ls dist | grep -q darwin; then exit 1; fi # macOS is built by packaging-darwin
+          if compgen -G 'dist/*darwin*' >/dev/null; then exit 1; fi # macOS is built by packaging-darwin
           grep -q 'Depends: init-system-helpers, poppler-utils' <<<"$(dpkg-deb -I dist/pdb-print_*_armhf.deb)"
           grep -q 'Depends: init-system-helpers$' <<<"$(dpkg-deb -I dist/pdb-print_*_arm64.deb)"
           zip=$(unzip -l dist/pdb-print_*_windows_amd64.zip)

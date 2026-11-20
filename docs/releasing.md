@@ -17,7 +17,12 @@ A failed macOS build therefore leaves a draft, never a release without macOS.
   The Docker images, `:latest` included, are already pushed by then (accepted trade-off).
 - **Re-running `release-darwin` after the release was published** turns it back into a draft for the
   duration of the run. If that re-run fails, publish the draft by hand: `gh release edit TAG --draft=false`.
-- **Re-running the Linux job** reuses the draft while it is still a draft.
+- **Re-running the Linux job** reuses the draft while it is still a draft. `release-darwin` refuses to run
+  without that draft, so it never publishes a macOS-only release.
+- **Re-running the Linux job after the release was published is unsupported:** GoReleaser finds no draft and
+  creates a second, draft release for the tag. Delete that extra draft by hand (the published release stays):
+  `gh api repos/francisrath/partdb-print-agent/releases --jq '.[] | select(.draft and .tag_name == "TAG") | .id'`,
+  then `gh api -X DELETE repos/francisrath/partdb-print-agent/releases/ID`.
 - **Don't re-run the release jobs of an old tag:** it can move the "latest" badge back to it.
 
 Local macOS dry run: `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew`

@@ -53,13 +53,28 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false # this job publishes: don't restore a cache another run wrote
       # GoReleaser only looks for a draft (use_existing_draft); on a re-run after it already
       # published (e.g. the cask push failed), turn the release back into a draft so it's found
       # instead of a second release being made
       - name: re-run - turn the published release back into a draft
         run: |
-          if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft || true)" = false ]; then
-            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=true
+          if draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>"$RUNNER_TEMP/gh-err"); then
+            if [ "$draft" = false ]; then
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=true
+            fi
+          elif ! grep -q "release not found" "$RUNNER_TEMP/gh-err"; then # only "no release" is left to the next step
+            cat "$RUNNER_TEMP/gh-err" >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Without a draft GoReleaser would create and publish a macOS-only release
+      - name: require the Linux job's draft
+        run: |
+          if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::error::no draft release for $GITHUB_REF_NAME; the release job makes it"
+            exit 1
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
