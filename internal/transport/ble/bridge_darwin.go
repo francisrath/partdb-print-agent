@@ -99,7 +99,8 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+5*time.Second) // the helper's enable wait
+	// The helper's enable may take EnableWait plus one more library Enable (10 s) before the scan starts.
+	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, helper, "scan", "--timeout", timeout.String())
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
