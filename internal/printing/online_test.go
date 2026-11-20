@@ -319,3 +319,29 @@ func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
 		t.Error("a document error cleared the sighting")
 	}
 }
+
+// A Classic printer that prints but ignores DLE EOT stays online: silence on a link that opened says
+// nothing about its reach; only a link failure clears the sighting.
+func TestOnlineBluetoothSilentStatusKeepsSighting(t *testing.T) {
+	f := &fakeCat{statusErr: driver.ErrNoReadback}
+	s, p := catService(t, f)
+	p.Transport.Kind = "bt"
+	s.OpenTransport = func(*config.Printer) driver.Transport { return &silent{kind: "bt"} }
+	s.SeenBluetooth(p)
+	if _, err := s.Status(context.Background(), p); !errors.Is(err, driver.ErrNoReadback) {
+		t.Fatalf("err = %v", err)
+	}
+	if !s.Online(p) {
+		t.Error("a silent status took the printer offline")
+	}
+}
+
+// An edited RFCOMM channel is a new route: it needs its own sighting.
+func TestOnlineKeyChannel(t *testing.T) {
+	p := &config.Printer{ID: "rego", Transport: config.Transport{Kind: "bt", Address: "AA:BB:CC:DD:EE:FF", Channel: 1}}
+	k := onlineKey(p)
+	p.Transport.Channel = 2
+	if onlineKey(p) == k {
+		t.Error("the channel isn't part of the key")
+	}
+}

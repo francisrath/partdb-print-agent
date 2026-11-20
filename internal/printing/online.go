@@ -112,10 +112,10 @@ func (s *Service) check(p *config.Printer) (bool, <-chan struct{}) {
 	return s.reachable(p)
 }
 
-// onlineKey keys the cache by printer and address, so an edited address is checked afresh.
+// onlineKey keys the cache by printer and route (address, RFCOMM channel, ...), so an edited route is checked afresh.
 func onlineKey(p *config.Printer) string {
 	t := p.Transport
-	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name)
+	return fmt.Sprintf("%s|%s|%s|%d|%s|%s|%s|%s|%s|%d", p.ID, t.Kind, t.Host, t.Port, t.Device, t.USBID, t.Serial, t.Address, t.Name, t.Channel)
 }
 
 // bluetoothSeenFor is how long a Bluetooth printer counts as online after it was last found working. Checking
@@ -135,7 +135,8 @@ func (s *Service) SeenBluetooth(p *config.Printer) {
 }
 
 // noteBluetooth records how a status or job on a Bluetooth printer went: an answer means it's there; failing to
-// reach it means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach.
+// reach it (a link failure) means it's gone. Other errors (no paper, a bad PDF) say nothing about its reach, nor
+// does ErrNoReadback: a printer that prints but ignores status requests stays as seen.
 func (s *Service) noteBluetooth(p *config.Printer, err error) {
 	if !config.Bluetooth(p.Transport.Kind) {
 		return
@@ -144,7 +145,8 @@ func (s *Service) noteBluetooth(p *config.Printer, err error) {
 	switch {
 	case err == nil:
 		s.SeenBluetooth(p)
-	case errors.Is(err, driver.ErrNoReadback) || errors.As(commsError(err), &de) && de.Code == driver.CommsError:
+	case errors.Is(err, driver.ErrNoReadback):
+	case errors.As(commsError(err), &de) && de.Code == driver.CommsError:
 		key := onlineKey(p)
 		s.mu.Lock()
 		delete(s.seen, key)
