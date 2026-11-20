@@ -32,7 +32,7 @@ Or read it first: download `install.sh` from the release, read it (about 40 line
 The script picks the `.deb` package for your system, checks it against the release's `checksums.txt`,
 installs it with `apt-get` (the one step that needs `sudo`) and shows a setup code. The package adds:
 - `/usr/bin/pdb-print`;
-- a `pdb-print` system user, allowed to use USB printers (group `lp`);
+- a `pdb-print` system user, allowed to use USB printers (group `lp`) and Bluetooth (group `bluetooth`);
 - a `pdb-print` systemd service; its config is `/var/lib/pdb-print/config.yaml`.
 
 Its scripts only create that user and an empty config, enable and (re)start the service, and stop

@@ -506,7 +506,7 @@ type Transport interface {
 | OS queue | CUPS via IPP to `localhost:631` (or `lp`) | CUPS | Win32 spooler: `OpenPrinter/StartDocPrinter("RAW" or XPS/PDF)/WritePrinter`, GDI for sheet imposition | `golang.org/x/sys/windows` (no cgo) | MVP |
 | USB printer class | `/dev/usb/lpN` (usblp, read-back works) → no libusb needed. libusb fallback for devices without usblp | IOKit (cgo) or libusb (dynamic) | `usbprint.sys` interface `GUID_DEVINTERFACE_USBPRINT` via SetupAPI + `CreateFile/WriteFile/ReadFile`, **no Zadig/WinUSB swap needed** | own thin wrappers; google/gousb (Apache-2.0 wrapper, libusb LGPL-2.1, dynamic) only as fallback | MVP (Linux/Win), P2 (macOS) |
 | USB vendor-class/HID (DYMO LM, some Niimbot) | libusb / hidraw | IOKit HID | HID API (x/sys) | per device | P3 |
-| BLE GATT | BlueZ D-Bus | CoreBluetooth (cgo, needs app bundle + `NSBluetoothAlwaysUsageDescription`) | WinRT | tinygo.org/x/bluetooth (BSD-3; scan/connect/write/notify on all three) | P2 |
+| BLE GATT | BlueZ D-Bus | CoreBluetooth in the cgo helper `pdb-print-ble` (embedded Info.plist with `NSBluetoothAlwaysUsageDescription`; `pdb-print` stays cgo-free and talks to it over pipes) | WinRT | tinygo.org/x/bluetooth (BSD-3; scan/connect/write/notify on all three) | Phase 6 |
 | Serial / RS-232 | ✓ | ✓ | ✓ | go.bug.st/serial (BSD-3) | P2 |
 | Bluetooth classic SPP | OS-paired → `/dev/rfcommN` (or BlueZ Profile API [P3]) | paired → `/dev/tty.*` | paired → virtual COM | treated as serial | P2 |
 
