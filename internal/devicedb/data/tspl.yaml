@@ -1,0 +1,71 @@
+# TSPL/TSPL2 label printers (driver tspl): TSC and the clones that document TSPL. Every page goes as one BITMAP
+# (TSC TSPL/TSPL2 Programming Manual, rev. 2026/4/30). None of these has been tested on a real printer: dpi and
+# print width are from the manufacturer pages and manuals named per model (read 2026-11-20). head_pins is derived
+# from them (print width in mm × 8 or 12 dots/mm), not quoted. No product ids for these are in linux-usb.org usb.ids
+# (2026-06-26), and no manufacturer doc names an advertised Bluetooth name, so models are picked by hand (no match).
+# bt is listed where the manufacturer documents a Bluetooth serial/MFi option. The label size is the loaded roll
+# (media-labels.yaml or the continuous-* widths below).
+# Quirks: cutter = a cutter is available (all are options): `cut:` then sets SET CUTTER; gap_mm = the gap sent for
+# die-cut labels (default 3). See ~/Notes/claude/partdb-agent-tspl-design.md.
+media:
+  - {id: continuous-102, name: 102 mm continuous labels, kind: continuous, width_mm: 102}
+  - {id: continuous-76, name: 76 mm continuous labels, kind: continuous, width_mm: 76}
+  - {id: continuous-57, name: 57 mm continuous labels, kind: continuous, width_mm: 57}
+models:
+  # untested. TSC TE200 series user manual (fs.tscprinters.com/en/dl/1/2667, 2025) and the TE series page; TSPL2 in
+  # the manual's model list. 108 mm print width.
+  - &tspl4
+    id: TE200
+    vendor: TSC
+    driver: tspl
+    dialect: tspl2
+    dpi: 203
+    head_pins: 864
+    transports: [usb, bt]
+    media: &media4 [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13, continuous-102, continuous-76, continuous-57]
+  # untested. Same sources, 105.7 mm at 300 dpi.
+  - {<<: *tspl4, id: TE300, dpi: 300, head_pins: 1268}
+  # untested. Same sources: USB, Ethernet, BT/Wi-Fi options, cutter option.
+  - {<<: *tspl4, id: TE210, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  - {<<: *tspl4, id: TE310, dpi: 300, head_pins: 1268, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. TTP-244 Pro datasheet (fs.tscprinters.com/en/dl/1/2131): USB, RS-232; 108 mm.
+  - {<<: *tspl4, id: TTP-244Pro, transports: [usb]}
+  # untested. TDP-244 datasheet (fs.tscprinters.com/en/dl/3/2100): USB, RS-232, Centronics; cutter option.
+  - {<<: *tspl4, id: TDP-244, transports: [usb], quirks: {cutter: true}}
+  # untested. TDP-247 series manual (fs.tscprinters.com/en/dl/3/2665, 2021): USB, internal Ethernet option; cutter option.
+  - {<<: *tspl4, id: TDP-247, transports: [usb, tcp], quirks: {cutter: true}}
+  # untested. DA210/DA220 manual (fs.tscprinters.com/en/dl/1/2556, 2025): DA210 USB + BT/MFi BT option, no cutter;
+  # DA220 adds Ethernet and a cutter option.
+  - {<<: *tspl4, id: DA210, transports: [usb, bt]}
+  - {<<: *tspl4, id: DA220, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. TX200 series manual (fs.tscprinters.com/en/dl/3/2694, 2021): USB, Ethernet, BT serial module; cutter
+  # option; TX300 105.6 mm at 300 dpi.
+  - {<<: *tspl4, id: TX200, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  - {<<: *tspl4, id: TX300, dpi: 300, head_pins: 1267, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. TC200 manual (fs.tscprinters.com/en/dl/6/2572, 2025): USB, Ethernet, external BT module; cutter option.
+  - {<<: *tspl4, id: TC200, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. TDP-225 series page (usca.tscprinters.com, 2-inch TDP series): USB, Ethernet; 52 mm; cutter option.
+  - {<<: *tspl4, id: TDP-225, head_pins: 416, transports: [usb, tcp], quirks: {cutter: true}, media: [label-51x25, label-38x25, label-32x25, label-25x13]}
+  # untested. xprintertech.com/xp-420b-thermal-label-printer.html: TSPL; USB, LAN/BT/Wi-Fi options; cutter option; 108 mm.
+  - {<<: *tspl4, id: XP-420B, vendor: Xprinter, dialect: tspl, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. xprintertech.com/xp-470b-1: TSPL; USB, BT variant; 108 mm.
+  - {<<: *tspl4, id: XP-470B, vendor: Xprinter, dialect: tspl, transports: [usb, bt]}
+  # untested. xprintertech.com/xp-d463b: TSPL; USB, BT option; 108 mm.
+  - {<<: *tspl4, id: XP-D463B, vendor: Xprinter, dialect: tspl, transports: [usb, bt]}
+  # untested. xprintertech.com/xp-365b-xp-365bm-3-inch-label-printer: TSPL + ESC/POS; USB, LAN/BT options; 76 mm.
+  - {<<: *tspl4, id: XP-365B, vendor: Xprinter, dialect: tspl, head_pins: 608, transports: [usb, tcp, bt],
+     media: [label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13, continuous-76, continuous-57]}
+  # untested. pos.munbyn.com/munbyn-itpp941-series-thermal-label-printer: instruction set TSPL; USB; 108 mm.
+  # (ITPP941B's Bluetooth isn't said to be Classic; ITPP941AP is OPL, not TSPL.)
+  - {<<: *tspl4, id: ITPP941, vendor: Munbyn, dialect: tspl, transports: [usb]}
+  # untested. idprt.com product pages: SP410 TSPL, SP420 TSPL + EPL; USB only; 108 mm.
+  - {<<: *tspl4, id: SP410, vendor: iDPRT, dialect: tspl, transports: [usb]}
+  - {<<: *tspl4, id: SP420, vendor: iDPRT, dialect: tspl, transports: [usb]}
+  # untested. idprt.com iD4S page: TSPL among others; USB, Ethernet (Bluetooth is 5.2/LE: not listed); cutter
+  # option; 108 mm at 203 dpi, 106 mm at 300 dpi.
+  - {<<: *tspl4, id: iD4S-203, vendor: iDPRT, dialect: tspl, transports: [usb, tcp], quirks: {cutter: true}}
+  - {<<: *tspl4, id: iD4S-300, vendor: iDPRT, dialect: tspl, dpi: 300, head_pins: 1272, transports: [usb, tcp], quirks: {cutter: true}}
+  # untested. hprt.com HT300 page: TSPL among others; USB, Ethernet, BT option; cutter option; 108 mm.
+  - {<<: *tspl4, id: HT300, vendor: HPRT, dialect: tspl, transports: [usb, tcp, bt], quirks: {cutter: true}}
+  # untested. hprt.com N41 page: TSPL; USB; 108 mm.
+  - {<<: *tspl4, id: N41, vendor: HPRT, dialect: tspl, transports: [usb]}
