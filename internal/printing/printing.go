@@ -25,6 +25,7 @@ import (
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/niimbot" // registers the niimbot family (BLE label makers)
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/phomemo" // registers the phomemo family (BLE label printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"

@@ -1,0 +1,118 @@
+# Phomemo thermal printers (driver phomemo) over Bluetooth LE: GATT service 0xff00, write 0xff02, notify
+# 0xff03. None of these has been tried on a printer yet: every model is untested (2026-11-20). Sources
+# (facts only, see the design note): mabl/phomemo-printer-app and Dejniel/TiMini-Print (Apache-2.0) for
+# heads, dpi, names and media; sgrankin/phomemo, s04/phomemo, alexduboiz/ha-phomemo-t02,
+# flyingmaulwurf/ha-phomemo-q30, polskafan/phomemo_d30 (MIT) for the framing.
+# Dialects: m02 (pocket printers, continuous paper), m110 (label printers), d30 (12 mm label makers,
+# labels lengthwise: a 40×12 mm label is media 12 mm wide, 40 mm long). band_rows: rows per GS v 0 block
+# (0 = one block); align: where a label narrower than the head sits (center, right); speed: 1–5;
+# ble_gap_ms: pause between 20–180 byte writes (the Phomemo app waits 20 ms). Only m110 has a density
+# setting (darkness). Status is best effort: a silent printer prints blind.
+models:
+  - &m02
+    id: M02
+    vendor: Phomemo
+    driver: phomemo
+    dialect: m02
+    dpi: 203
+    head_pins: 384
+    transports: [ble]
+    match: {ble_name: "^(M02|Mr\\.in_M02)$"}
+    quirks: {ble_service: 0xff00, ble_write: 0xff02, ble_notify: 0xff03, ble_gap_ms: 20, band_rows: 255, align: center}
+    media: [phomemo-paper-53]
+  # 576 dots at 300 dpi (TiMini-Print; s04 measured the M02 Pro). theacodes and sgrankin say 512 at 203 for the M02S.
+  - {<<: *m02, id: M02S, dpi: 300, head_pins: 576, match: {ble_name: "^(M02S|Mr\\.in_M02S)$"}}
+  - {<<: *m02, id: M02-PRO, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^M02 ?PRO$"}}
+  - {<<: *m02, id: T02, match: {ble_name: "^T02E?$"}, media: [phomemo-paper-50]}
+  - &m110
+    <<: *m02
+    id: M110
+    dialect: m110
+    match: {ble_name: "(?i)^M110S?$"}
+    quirks: {ble_service: 0xff00, ble_write: 0xff02, ble_notify: 0xff03, ble_gap_ms: 20, align: center, speed: 3, darkness: true}
+    media: [phomemo-50x30, phomemo-50x50, phomemo-50x80, phomemo-40x30, phomemo-40x40, phomemo-40x60, phomemo-30x20,
+      phomemo-30x30, phomemo-20x10, phomemo-20x20, phomemo-50, phomemo-40, phomemo-30, phomemo-20]
+  - {<<: *m110, id: M120, match: {ble_name: "^M120$"}}
+  # 576 dots at 203 dpi (mabl, checked on an M220). The Phomemo app right-aligns narrower labels on the
+  # M220 head (mabl). The M200's and M220's advertised names aren't known: set model: in the config.
+  - &m220
+    <<: *m110
+    id: M220
+    head_pins: 576
+    match: {}
+    quirks: {ble_service: 0xff00, ble_write: 0xff02, ble_notify: 0xff03, ble_gap_ms: 20, align: right, speed: 3, darkness: true}
+    media: [phomemo-70x40, phomemo-70x80, phomemo-60x40, phomemo-60x80, phomemo-50x30, phomemo-50x50, phomemo-50x80,
+      phomemo-40x30, phomemo-40x40, phomemo-40x60, phomemo-30x20, phomemo-30x30, phomemo-20x10, phomemo-20x20,
+      phomemo-70, phomemo-60, phomemo-50, phomemo-40, phomemo-30, phomemo-20]
+  - {<<: *m220, id: M200}
+  - {<<: *m220, id: M221, match: {ble_name: "^M221$"}}
+  # A 96-dot label maker that printed with the m110 framing in 255-row blocks (ha-phomemo-q30, on a Q30).
+  # Matches Q30 and Q30S, not M120s advertising serials such as Q306….
+  - {<<: *m110, id: Q30, head_pins: 96, match: {ble_name: "^Q30S?($|[-_ ])"},
+    quirks: {ble_service: 0xff00, ble_write: 0xff02, ble_notify: 0xff03, ble_gap_ms: 20, band_rows: 255, align: right,
+      speed: 3, darkness: true},
+    media: &d30media [phomemo-12x30, phomemo-12x40, phomemo-12x50, phomemo-14x28, phomemo-14x30, phomemo-14x40,
+      phomemo-14x50, phomemo-15x30, phomemo-15x50]}
+  - &d30
+    <<: *m02
+    id: D30
+    dialect: d30
+    head_pins: 96
+    match: {ble_name: "^D30"}
+    quirks: {ble_service: 0xff00, ble_write: 0xff02, ble_notify: 0xff03, ble_gap_ms: 20, align: right}
+    media: *d30media
+  - {<<: *d30, id: D35, match: {ble_name: "^D35"}}
+
+# Phomemo media (width across the head × length, mm), from the Phomemo app's media list as published by
+# mabl/phomemo-printer-app (Apache-2.0); a bare width is continuous. Dots come from the model's dpi, the
+# width limited to its head.
+media:
+  - {id: phomemo-paper-53, name: Phomemo 53 mm paper, kind: continuous, width_mm: 53}
+  - {id: phomemo-paper-50, name: Phomemo 50 mm paper, kind: continuous, width_mm: 50}
+  - {id: phomemo-70x40, name: Phomemo 70×40 mm, kind: die_cut, width_mm: 70, length_mm: 40}
+  - {id: phomemo-70x80, name: Phomemo 70×80 mm, kind: die_cut, width_mm: 70, length_mm: 80}
+  - {id: phomemo-60x40, name: Phomemo 60×40 mm, kind: die_cut, width_mm: 60, length_mm: 40}
+  - {id: phomemo-60x80, name: Phomemo 60×80 mm, kind: die_cut, width_mm: 60, length_mm: 80}
+  - {id: phomemo-50x30, name: Phomemo 50×30 mm, kind: die_cut, width_mm: 50, length_mm: 30}
+  - {id: phomemo-50x50, name: Phomemo 50×50 mm, kind: die_cut, width_mm: 50, length_mm: 50}
+  - {id: phomemo-50x80, name: Phomemo 50×80 mm, kind: die_cut, width_mm: 50, length_mm: 80}
+  - {id: phomemo-40x30, name: Phomemo 40×30 mm, kind: die_cut, width_mm: 40, length_mm: 30}
+  - {id: phomemo-40x40, name: Phomemo 40×40 mm, kind: die_cut, width_mm: 40, length_mm: 40}
+  - {id: phomemo-40x60, name: Phomemo 40×60 mm, kind: die_cut, width_mm: 40, length_mm: 60}
+  - {id: phomemo-30x20, name: Phomemo 30×20 mm, kind: die_cut, width_mm: 30, length_mm: 20}
+  - {id: phomemo-30x30, name: Phomemo 30×30 mm, kind: die_cut, width_mm: 30, length_mm: 30}
+  - {id: phomemo-20x10, name: Phomemo 20×10 mm, kind: die_cut, width_mm: 20, length_mm: 10}
+  - {id: phomemo-20x20, name: Phomemo 20×20 mm, kind: die_cut, width_mm: 20, length_mm: 20}
+  - {id: phomemo-70, name: Phomemo 70 mm continuous, kind: continuous, width_mm: 70}
+  - {id: phomemo-60, name: Phomemo 60 mm continuous, kind: continuous, width_mm: 60}
+  - {id: phomemo-50, name: Phomemo 50 mm continuous, kind: continuous, width_mm: 50}
+  - {id: phomemo-40, name: Phomemo 40 mm continuous, kind: continuous, width_mm: 40}
+  - {id: phomemo-30, name: Phomemo 30 mm continuous, kind: continuous, width_mm: 30}
+  - {id: phomemo-20, name: Phomemo 20 mm continuous, kind: continuous, width_mm: 20}
+  # D30 class: the app lists these as 30×12, 40×14, … with the long side first; here the 12–15 mm side is across.
+  - {id: phomemo-12x30, name: Phomemo 12×30 mm, kind: die_cut, width_mm: 12, length_mm: 30}
+  - {id: phomemo-12x40, name: Phomemo 12×40 mm, kind: die_cut, width_mm: 12, length_mm: 40}
+  - {id: phomemo-12x50, name: Phomemo 12×50 mm, kind: die_cut, width_mm: 12, length_mm: 50}
+  - {id: phomemo-14x28, name: Phomemo 14×28 mm, kind: die_cut, width_mm: 14, length_mm: 28}
+  - {id: phomemo-14x30, name: Phomemo 14×30 mm, kind: die_cut, width_mm: 14, length_mm: 30}
+  - {id: phomemo-14x40, name: Phomemo 14×40 mm, kind: die_cut, width_mm: 14, length_mm: 40}
+  - {id: phomemo-14x50, name: Phomemo 14×50 mm, kind: die_cut, width_mm: 14, length_mm: 50}
+  - {id: phomemo-15x30, name: Phomemo 15×30 mm, kind: die_cut, width_mm: 15, length_mm: 30}
+  - {id: phomemo-15x50, name: Phomemo 15×50 mm, kind: die_cut, width_mm: 15, length_mm: 50}
+
+# Labels wider than the head: the head prints the middle, the edges stay blank (rendered at the
+# label's full width and trimmed, not shrunk).
+geometry:
+  - {media: phomemo-14x28, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 224, edge_mm: 1}
+  - {media: phomemo-14x30, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 240, edge_mm: 1}
+  - {media: phomemo-14x40, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 320, edge_mm: 1}
+  - {media: phomemo-14x50, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 400, edge_mm: 1}
+  - {media: phomemo-15x30, head_pins: 96, dpi: 203, width_dots: 120, printable_width_dots: 96, printable_length_dots: 240, edge_mm: 1.5}
+  - {media: phomemo-15x50, head_pins: 96, dpi: 203, width_dots: 120, printable_width_dots: 96, printable_length_dots: 400, edge_mm: 1.5}
+  - {media: phomemo-50, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, edge_mm: 1}
+  - {media: phomemo-50x30, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 240, edge_mm: 1}
+  - {media: phomemo-50x50, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 400, edge_mm: 1}
+  - {media: phomemo-50x80, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 640, edge_mm: 1}
+  - {media: phomemo-paper-50, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, edge_mm: 1}
+  - {media: phomemo-paper-53, head_pins: 384, dpi: 203, width_dots: 424, printable_width_dots: 384, edge_mm: 2.5}
+  - {media: phomemo-paper-53, head_pins: 576, dpi: 300, width_dots: 636, printable_width_dots: 576, edge_mm: 2.5}
