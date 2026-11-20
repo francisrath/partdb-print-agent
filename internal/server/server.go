@@ -84,7 +84,7 @@ type Server struct {
 	local       *Session       // the wizard's session on loopback (no code needed there)
 	finishGrace time.Duration  // after Finish the window stays open this long (the page\'s stylesheet)
 	setupPrints sync.WaitGroup // wizard test prints in progress
-	// Discover finds printers for the wizard (ip "" = USB and the LAN); nil = discovery package.
+	// Discover finds printers for the wizard (ip "" = USB, the LAN and Bluetooth); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
 	mu    sync.Mutex // guards cfg, flash, jobs, seen
