@@ -46,7 +46,7 @@ archives:
     ids: [pdb-print, pdb-print-arm]
     formats: [tar.gz]
     name_template: &archive_name >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}{{ with .Arm }}v{{ . }}{{ end }}
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}
     files: [LICENSE, README.md, config.example.yaml]
   # Windows: a zip with the guided printer test (double-click try-printer.cmd, see TRY.md)
   - id: windows
@@ -95,6 +95,8 @@ nfpms:
 
 release:
   draft: true # release-darwin adds the macOS assets, then publishes it
+  use_existing_draft: true # a re-run reuses this draft (a draft isn't found by its tag)
+  replace_existing_artifacts: true # … and overwrites what the first run uploaded
   extra_files:
     - glob: scripts/install.sh
 

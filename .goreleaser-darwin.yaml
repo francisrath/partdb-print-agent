@@ -48,8 +48,8 @@ archives:
 checksum:
   name_template: checksums-darwin.txt
 
+# GoReleaser publishes the Linux job's draft after the uploads and before the cask
 release:
-  draft: true # the workflow publishes it once this job is done
   use_existing_draft: true # the Linux job's draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # a re-run of this job overwrites its own partial uploads
   mode: keep-existing
