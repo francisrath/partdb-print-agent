@@ -87,3 +87,28 @@ type ClassicDevice struct {
 	Name    string `json:"name"`
 	Class   uint32 `json:"class"` // class of device
 }
+
+// MergeClassic joins device lists (paired first, then an inquiry's) into one entry per address, in first-seen
+// order. A later list only fills in a name or class the earlier entry lacks: a paired device not yet seen in
+// an inquiry may have neither, and the name pairing knows is the one pdb-print dials by.
+func MergeClassic(lists ...[]ClassicDevice) []ClassicDevice {
+	idx := map[string]int{}
+	var all []ClassicDevice
+	for _, l := range lists {
+		for _, d := range l {
+			i, ok := idx[d.Address]
+			if !ok {
+				idx[d.Address] = len(all)
+				all = append(all, d)
+				continue
+			}
+			if all[i].Name == "" {
+				all[i].Name = d.Name
+			}
+			if all[i].Class == 0 {
+				all[i].Class = d.Class
+			}
+		}
+	}
+	return all
+}

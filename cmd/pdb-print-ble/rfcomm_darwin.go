@@ -267,8 +267,8 @@ func scanClassicCmd(args []string) error {
 	return nil
 }
 
-// scanClassic lists the paired devices, then those an inquiry finds (once per address). Interrupted, it
-// returns what it has.
+// scanClassic lists the paired devices, then those an inquiry finds (once per address, the inquiry filling in
+// a paired device's missing name or class). Interrupted, it returns what it has.
 func scanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.ClassicDevice, error) {
 	if C.btPowered() == 0 {
 		return nil, errBluetoothOff
@@ -283,13 +283,5 @@ func scanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.Classi
 	case <-ctx.Done():
 	case <-time.After(timeout):
 	}
-	seen := map[string]bool{}
-	var all []blebridge.ClassicDevice
-	for _, d := range append(devs, devices(C.btInquiryStop())...) {
-		if !seen[d.Address] {
-			seen[d.Address] = true
-			all = append(all, d)
-		}
-	}
-	return all, nil
+	return blebridge.MergeClassic(devs, devices(C.btInquiryStop())), nil
 }

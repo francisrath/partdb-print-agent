@@ -69,3 +69,22 @@ func TestOpenRequestKind(t *testing.T) {
 		t.Errorf("BLE request %s carries kind or channel", b)
 	}
 }
+
+// A paired device not yet seen in an inquiry may lack its name and class: the inquiry fills them in,
+// without overwriting what pairing already knows.
+func TestMergeClassic(t *testing.T) {
+	paired := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01"}, {Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}}
+	found := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
+		{Address: "AA:BB:CC:DD:EE:02", Name: "RG-MLP80B"}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
+	got := MergeClassic(paired, found)
+	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
+		{Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

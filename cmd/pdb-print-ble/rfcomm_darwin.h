@@ -15,6 +15,6 @@ int btWrite(void *p, int n);                   // IOReturn; splits at the channe
 void btClose(void);                            // closes the channel; goClosed follows
 void btCloseConnection(void);                  // closes the baseband connection to the device
 int btIsConnected(const char *address);        // 1 if the device (NULL: the opened one) is connected
-void btRetryOpen(void);                        // closes the pending channel and opens it again (goOpening)
+void btRetryOpen(void);                        // closes a still pending channel and opens it again (goOpening); keeps an open one
 void btInquiryStart(int seconds);              // ends in goInquiryDone
 char *btInquiryStop(void);                     // stops the inquiry; JSON of what it found; free it

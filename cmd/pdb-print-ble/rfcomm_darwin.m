@@ -98,6 +98,7 @@ static char *devicesJSON(NSArray *devs) {
 
 @implementation PDBDelegate
 - (void)rfcommChannelOpenComplete:(IOBluetoothRFCOMMChannel *)ch status:(IOReturn)status {
+	if (gChan != nil && ch != gChan) return; // an attempt btRetryOpen replaced
 	goOpenDone(status == kIOReturnSuccess ? BT_OK : BT_UNREACHABLE, status, [ch getMTU]);
 }
 - (void)rfcommChannelData:(IOBluetoothRFCOMMChannel *)ch data:(void *)data length:(size_t)length {
@@ -200,6 +201,9 @@ int btIsConnected(const char *address) {
 
 void btRetryOpen(void) {
 	dispatch_async(dispatch_get_main_queue(), ^{
+		// The channel may have opened since the Go side's timer fired (its completion then waits in Go's
+		// queue): keep it. Only a still pending attempt is replaced.
+		if ([gChan isOpen]) return;
 		[gChan setDelegate:nil]; // a late completion of the first attempt is not this one's
 		[gChan closeChannel];
 		gChan = nil;
