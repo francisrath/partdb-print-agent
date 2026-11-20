@@ -135,8 +135,7 @@ length ±1 mm), turned if needed. A label that doesn't fit is refused, and Part-
 printer doesn't report its roll (SNMP off, no status reply); `auto`, the default, means no fallback.
 `media_allowed: [dk-22210, dk-22214, dk-11204]` refuses other rolls. A roll seen in the last 30 s stands
 in when a status read says nothing. `pdb-print printers status ql810` and the web UI show
-`media: dk-22214 (detected)` or `(config fallback)`, and which Part-DB label profiles fit it. Configs with a
-fixed `media:` keep working; the agent logs at startup that it's now only a fallback.
+`media: dk-22214 (detected)` or `(config fallback)`, and which Part-DB label profiles fit it.
 
 ### Zebra (ZPL)
 

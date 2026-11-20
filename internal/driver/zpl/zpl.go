@@ -83,7 +83,7 @@ func (z *zpl) Status(ctx context.Context, t driver.Transport) (*driver.Status, e
 		return nil, fmt.Errorf("%w: the printer doesn't answer status queries (paused, head open or out of labels?): %v", driver.ErrNoReadback, err)
 	}
 	st := &driver.Status{Code: driver.OK, Via: "tcp", Idle: h.Formats == 0 && h.LabelsRemaining == 0 && !h.PartialFormat,
-		Media: &driver.Media{ID: "unknown", Name: "labels loaded", Kind: driver.DieCut, DPI: z.model.DPI,
+		Media: &devicedb.Media{ID: "unknown", Name: "labels loaded", Kind: devicedb.DieCut, DPI: z.model.DPI,
 			LengthMM: float64(h.LabelLengthDots) / z.dpm(), PrintableLengthDots: h.LabelLengthDots}}
 	if hq != nil {
 		st.Code, st.Detail = hq.code()
@@ -136,7 +136,7 @@ func (z *zpl) Encode(w io.Writer, job *driver.Job) error {
 // Print checks the loaded label length, sends every page as its own format in one go and then
 // watches the print buffer: confirmed once the job was seen in it and it has emptied.
 func (z *zpl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
-	if st := job.Status; st != nil && st.Media != nil && st.Media.PrintableLengthDots > 0 && job.Media.Kind == driver.DieCut {
+	if st := job.Status; st != nil && st.Media != nil && st.Media.PrintableLengthDots > 0 && job.Media.Kind == devicedb.DieCut {
 		// the printer measures label + gap (a 100 mm roll: 101.5 mm on a GK420d), so the measured
 		// length may be up to 4 mm longer than the label, or 1 mm shorter
 		if diff := st.Media.PrintableLengthDots - job.Media.PrintableLengthDots; float64(diff) < -z.dpm() || float64(diff) > 4*z.dpm() {

@@ -28,7 +28,7 @@ func gk420d(t *testing.T) (driver.Driver, *devicedb.Model) {
 	return d, m
 }
 
-func media(t *testing.T, m *devicedb.Model, id string) *driver.Media {
+func media(t *testing.T, m *devicedb.Model, id string) *devicedb.Media {
 	for _, md := range devicedb.Default().MediaFor(m) {
 		if md.ID == id {
 			return &md
@@ -38,7 +38,7 @@ func media(t *testing.T, m *devicedb.Model, id string) *driver.Media {
 	return nil
 }
 
-func page(m *driver.Media) *image.Gray {
+func page(m *devicedb.Media) *image.Gray {
 	img := image.NewGray(image.Rect(0, 0, m.PrintableWidthDots, m.PrintableLengthDots))
 	for i := range img.Pix {
 		img.Pix[i] = 255

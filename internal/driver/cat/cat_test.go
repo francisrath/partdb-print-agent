@@ -102,7 +102,7 @@ func fastTimings(t *testing.T) {
 	}
 }
 
-func mx10(t *testing.T, darkness string) (driver.Driver, *driver.Media) {
+func mx10(t *testing.T, darkness string) (driver.Driver, *devicedb.Media) {
 	t.Helper()
 	m, ok := devicedb.Default().Model("MX10")
 	if !ok {
@@ -161,7 +161,7 @@ func TestStatusSilent(t *testing.T) {
 	}
 }
 
-func job(m *driver.Media, pages int) *driver.Job {
+func job(m *devicedb.Media, pages int) *driver.Job {
 	j := &driver.Job{Media: m, Status: &driver.Status{Code: driver.OK, Idle: true}}
 	for range pages {
 		j.Pages = append(j.Pages, page(384, "####", "#.#."))
@@ -306,7 +306,7 @@ func TestPrintNeedsJobEvidence(t *testing.T) {
 
 func TestPrintWaitsForIdle(t *testing.T) {
 	fastTimings(t)
-	busy := func(m *driver.Media) *driver.Job {
+	busy := func(m *devicedb.Media) *driver.Job {
 		j := job(m, 1)
 		j.Status.Idle = false
 		return j

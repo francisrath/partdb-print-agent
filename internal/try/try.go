@@ -24,7 +24,6 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/report"
@@ -493,13 +492,13 @@ func (s *session) printAll() bool {
 		return false
 	}
 	s.print("2/5", printing.PartLabel("2/5"))
-	s.print("3a+3b/5", func(m *driver.Media) ([]byte, error) {
+	s.print("3a+3b/5", func(m *devicedb.Media) ([]byte, error) {
 		return pdfgen.TestCardsTagged(m.WidthMM, m.LengthMM, []string{"batch of two", s.printer.Model}, "3a/5", "3b/5"), nil
 	})
 	if s.square() {
 		s.note("Label 4/5: skipped (square labels)")
 	} else {
-		s.print("4/5", func(m *driver.Media) ([]byte, error) {
+		s.print("4/5", func(m *devicedb.Media) ([]byte, error) {
 			return pdfgen.TestCardTagged(m.LengthMM, m.WidthMM, []string{"turned", s.printer.Model}, "4/5"), nil
 		})
 	}

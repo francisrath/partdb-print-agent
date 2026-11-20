@@ -102,33 +102,22 @@ type ReadTimeoutSetter interface {
 
 var ErrNoReadback = errors.New("transport has no read-back")
 
-// Media and its kinds live in the device database; these aliases keep driver.Media working.
-type (
-	MediaKind = devicedb.MediaKind
-	Media     = devicedb.Media
-)
-
-const (
-	Continuous = devicedb.Continuous
-	DieCut     = devicedb.DieCut
-)
-
 type Capabilities struct {
 	DPI      int
 	HeadDots int
 	Cutter   bool
-	Media    []Media
+	Media    []devicedb.Media
 }
 
 type DeviceInfo struct {
 	Model string
-	Media *Media
+	Media *devicedb.Media
 }
 
 // Job is one print job after rendering.
 type Job struct {
 	Pages  []*image.Gray // 1 dot per pixel, black < 128, rows in feed order
-	Media  *Media
+	Media  *devicedb.Media
 	Cut    string  // "" = the model's default
 	Status *Status // the status read before printing; nil if the printer gave none
 	// PrevUnconfirmed: the last job this process sent to the printer wasn't confirmed, so its end
@@ -161,7 +150,7 @@ type Status struct {
 	Code   Code
 	Detail string
 	Model  string
-	Media  *Media // loaded media, if the printer reports it
+	Media  *devicedb.Media // loaded media, if the printer reports it
 	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
 	// non-laminated, lettering, hg, av); "" otherwise.
 	MediaType string

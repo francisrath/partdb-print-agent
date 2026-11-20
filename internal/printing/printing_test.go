@@ -379,7 +379,7 @@ func TestPrintSilentPTFailsFast(t *testing.T) {
 	s := service(t, nil)
 	s.OpenTransport = func(*config.Printer) driver.Transport { return &silent{kind: "usb"} }
 	fetched := false
-	_, err := s.Print(context.Background(), ptPrinter("", ""), "", func(*driver.Media) ([]byte, error) {
+	_, err := s.Print(context.Background(), ptPrinter("", ""), "", func(*devicedb.Media) ([]byte, error) {
 		fetched = true
 		return nil, errors.New("not reached")
 	})

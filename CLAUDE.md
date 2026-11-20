@@ -4,68 +4,60 @@ A cross-platform, MIT-licensed label print agent for [Part-DB](https://github.co
 It fetches label PDFs that Part-DB already generates, rasterises them at the printer's native
 resolution and sends them straight to label printers – no OS driver scaling.
 
-The full design is in `docs/architecture.md` (read §0 TL;DR, §4 job flows, §5 data model,
-§6 rendering, §7 drivers, §10 security, §19 MVP scope, §22 decisions). This file is the
-working brief for the **MVP**.
+The design is in `docs/architecture.md` (§0 TL;DR, §4 job flows, §5 data model, §6 rendering, §7 drivers and
+transports, §10 security, §22 decisions); per-phase designs and plans live in the author's vault
+(`~/Notes/claude/partdb-agent-*`). Release steps: `docs/releasing.md`.
 
-## Decisions (2026-10-27)
-- Language **Go**, single static binary, no cgo in the default build. Module: `github.com/francisrath/partdb-print-agent`.
-- Licence **MIT**. Never link GPL/AGPL code (no brother_ql, no MuPDF, no Poppler). Brother raster
-  protocol is implemented clean-room from Brother's public *Raster Command Reference* (QL-800/810W/820NWB).
-- PDF rendering: **PDFium via go-pdfium in WebAssembly mode (wazero)** – BSD/Apache, no cgo.
-- MVP printer scope: **Brother QL only** (TCP 9100 first, USB after) + a `virtual` printer that writes PNGs for tests.
-  Everything else (ZPL, TSPL, ESC/POS, DYMO, Niimbot, Phomemo, OS queue, A4 sheets, two-colour) is phase 2,
-  but keep the driver/transport interfaces general enough for them (see architecture §7).
+## Decisions
+- Language **Go**, single static binary, `CGO_ENABLED=0`. The only cgo is the macOS Bluetooth helper
+  `cmd/pdb-print-ble` (CoreBluetooth/IOBluetooth), built on a macOS release runner. Module:
+  `github.com/francisrath/partdb-print-agent`.
+- Licence **MIT**. Never link or copy GPL/AGPL code (no brother_ql, no MuPDF, no Poppler library, no GPL cat-printer
+  projects). Protocols are implemented clean-room from public references (Brother Raster Command Reference, Zebra
+  ZPL II guide, Epson ESC/POS, public cat-printer write-ups).
+- PDF rendering: **PDFium via go-pdfium in WebAssembly mode (wazero)**; on 32-bit Linux it uses the external
+  `pdftoppm` program (run as a process, not linked) when installed, because it is much faster there.
+- **Pre-release: no backwards-compatibility code** (old config shapes, aliases, migration shims). Breaking config
+  changes are fine; update `config.example.yaml` and the README instead.
 - Part-DB token: **read-only** API token (enough for `POST /api/labels/generate`).
-- No Part-DB changes needed for the MVP. v0.1.0 released 2026-10-27; upstream proposal posted as
-  [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) – no answer yet, so (2026-10-28) we build three alternative draft PRs locally (Print button → local agent; server-side
-  agent jobs; Mercure push) plus the matching agent side; see the vault note `partdb-agent-prs-design`.
-  Nothing is pushed or posted upstream without the user's go-ahead.
-- Tag inbox (print parts tagged `print-label`) was **dropped** (2026-10-27, closed PR #5): tagging a part just to
-  print it was too much hassle. Desktop printing works with a remote Part-DB too (bookmarklet; the agent fetches
-  outbound); only printing from a phone to an agent at home waits for the upstream button + PrintJob API.
+- Upstream: proposal [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) and draft PRs
+  (print button → local agent, server-side agent jobs, Mercure push, MCP) await the maintainer. Part-DB-server
+  branches go to the `fork` remote only; nothing is pushed or posted upstream without the user's go-ahead.
+- Tag inbox (print parts tagged `print-label`) was **dropped** (2026-10-27): too much hassle.
 
-## MVP milestones (do them in order, each ends with something runnable)
-1. **Skeleton** – `cmd/pdb-print` (cobra or plain flag subcommands), `internal/...` packages, config file
-   (YAML, OS-appropriate path, `--config` override), structured logging, `pdb-print version`.
-2. **Renderer** – PDF page → 1-bit raster at exact printhead dots.
-   - Fit page to the printable width in dots (29 mm continuous = 306 dots, 12 mm = 106, 62 mm = 696; see Brother spec table).
-   - Auto-rotate: if the page's long side is across the tape, rotate 90°. Support both the current portrait
-     PDFs (29×46 mm with CSS-rotated content) and plain landscape PDFs (e.g. 50×29 mm).
-   - Render without anti-aliasing / threshold (no dithering of barcodes) – QR codes must stay crisp.
-   - Golden-image tests in `testdata/`.
-3. **Brother QL driver + TCP transport** – raster commands (invalidate, initialise, status request, media
-   info, auto-cut, cut-each, margins/feed, raster lines with optional compression, print with feed).
-   Model table for at least QL-800/810W/820NWB; media table for continuous 12/29/62 mm and common die-cut sizes.
-   Read status back over TCP where supported; map errors (no media, wrong media, cover open).
-4. **CLI print paths**
-   - `pdb-print print file.pdf --printer ql810` (local PDF – replaces `reference/qlprint`)
-   - `pdb-print print --profile 2 --ids 32,112-125 --type part` (fetch via Part-DB API, then print)
-   - `pdb-print printers test ql810` (test label)
-5. **Local HTTP API + minimal web UI** on `127.0.0.1:8631` – instance + token setup, printer setup,
-   profile→printer routes, test print, job history; `/v1/handoff` endpoint for a bookmarklet
-   (top-level navigation, pairing key; Part-DB's CSP blocks fetch() to localhost – see architecture §1, §10).
-6. **Hot folder** – watch a folder (default `~/Downloads`) for `label_*.pdf` and print them, then move/delete.
-7. **Packaging** – goreleaser: darwin universal, linux amd64/arm64, windows x64; Dockerfile; Homebrew tap
-   (`francisrath/tap`). Signing (Apple Developer ID via existing developer account, SignPath for Windows) comes later.
+## What exists
+- **Drivers** (`internal/driver/<family>`, registered by family, models are data in `internal/devicedb/data/*.yaml`):
+  `brother` (QL raster: QL-800/810W/820NWB; P-touch CBP raster: PT-9500PC), `zpl` (Zebra desktop ZPL printers),
+  `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MLP80B, generic 58/80 mm).
+- **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux), `ble` (Linux/Windows
+  in-process, macOS via the helper), `bt` (Bluetooth Classic RFCOMM: Linux/Windows sockets, macOS via the helper).
+- **Sources**: CLI `print`, local HTTP API + web UI and setup wizard on `127.0.0.1:8631` (`/v1/handoff` for the
+  bookmarklet), hot folder (`internal/source/hotfolder`), server-side agent jobs (`internal/source/agentjobs`).
+- **Other packages**: `config`, `partdb`, `render`, `printing` (the print service: per-printer lock, media, status,
+  online), `discovery`, `try` (guided first print), `report`, `snmp`, `pdfgen` (test labels), `server`,
+  `blecore`/`bleradio`/`blebridge` (shared Bluetooth code and the helper's stdin/stdout protocol).
+- Packaging: GoReleaser (Linux/Windows/.deb/Docker on Ubuntu; macOS + Homebrew cask on a macOS runner).
 
 ## Test environment (the author's setup)
-Addresses below are placeholders; the real printer IP and Part-DB URL live in the gitignored
+Addresses below are placeholders; real addresses, the Part-DB URL and tokens live in the gitignored
 `config.local.yaml` and `.env`. Never commit them.
-- Printer: **Brother QL-810W**, `tcp://192.168.1.50:9100`, roll **DK-22210 (29 mm continuous)** loaded.
-  Also owns DK-22214 (12 mm) and DK-11204 (17×54 die-cut).
+- Brother **QL-810W**, `tcp://192.168.1.50:9100`, roll **DK-22210 (29 mm continuous)**; also DK-22214 (12 mm) and
+  DK-11204 (17×54 die-cut). Brother **PT-9500PC** on a Raspberry Pi agent over USB. **MX10** cat printer (BLE).
+  A REGO **RG-MLP80B** (Bluetooth Classic, ESC/POS) arrives week of 2026-11-23. Raspberry Pis and a Windows 11 laptop
+  serve as test agents.
 - Part-DB 2.20.x at **https://partdb.example.org** (behind Traefik; multipart POSTs get HTTP 418 there – irrelevant
   for the agent, which only uses JSON API calls).
 - Label profiles in that instance (ids): 1 = part lid 12 mm (12×16 portrait, rotated content),
   2 = part bag 29 mm (29×46 portrait, rotated content), 3 = IC bag 17×54 die-cut, 4 = storage location 29×84.
 - Known-good test: profile 2, part 32 (AMS1117-3.3).
-- Reference implementation that already prints correctly: `reference/qlprint`
-  (pdftoppm to exact dots → `brother_ql` over TCP). Use it to compare output; do not copy GPL code from brother_ql.
+- `reference/qlprint` (pdftoppm → `brother_ql` over TCP) printed correctly before the agent existed; use it only to
+  compare output, never copy its GPL code.
 
 ## Conventions
-- Go ≥ 1.23, `go vet` + `staticcheck` clean, table-driven tests, no global state.
-- Package layout suggestion: `internal/config`, `internal/partdb`, `internal/render`, `internal/driver/brother`, `internal/devicedb`,
-  `internal/transport/{tcp,usb}`, `internal/queue`, `internal/server`, `internal/source/hotfolder`.
-- Keep the `Driver` and `Transport` interfaces from architecture §7 so phase-2 drivers drop in.
-- Never send real print jobs from tests; use the virtual printer. Hardware tests behind a build tag (`//go:build hardware`).
-- Commit messages: conventional commits.
+- Go version from `go.mod`; `go vet` + `staticcheck` clean on Linux, Windows and macOS; table-driven tests; no global
+  state beyond the driver/transport registries.
+- Keep the `Driver` and `Transport` interfaces (architecture §7) so new families and kinds drop in; a new model of an
+  existing family is a device-database entry, not code.
+- Tests never send real print jobs or touch real Bluetooth/USB: fake transports, pipes, fake helper processes.
+  Hardware tests sit behind the `hardware` build tag (`//go:build hardware`).
+- Commit messages: conventional commits, no AI attribution lines. PR descriptions end with the AI-use line.
