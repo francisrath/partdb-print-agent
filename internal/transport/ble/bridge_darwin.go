@@ -5,6 +5,7 @@ package ble
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,6 +68,13 @@ func init() {
 			GapMS:   q("ble_gap_ms", 10),
 		}}, nil
 	})
+	// Bluetooth Classic (Serial Port Profile) goes through the same helper on macOS: IOBluetooth also asks
+	// for Bluetooth permission. Package bt registers kind bt on the other systems.
+	transport.Register("bt", func(c config.Transport, _ *devicedb.Model) (driver.Transport, error) {
+		return &Transport{kind: "bt", req: blebridge.OpenRequest{
+			Kind: blebridge.KindRFCOMM, Name: c.Name, Address: c.Address, Channel: c.Channel,
+		}}, nil
+	})
 }
 
 // helperPath finds the helper; tests replace it so they never pick up a real one.
@@ -86,12 +94,16 @@ func findHelper() (string, error) {
 	return "", errNoHelper
 }
 
-// helperError turns the helper's error text back into an error, keeping ErrNoBluetooth recognisable.
-func helperError(msg string) error {
+// helperError turns the helper's error text back into an error for transport kind, keeping ErrNoBluetooth
+// recognisable.
+func helperError(kind, msg string) error {
 	if rest, ok := strings.CutPrefix(msg, blecore.ErrNoBluetooth.Error()); ok {
-		return fmt.Errorf("%w%s", blecore.ErrNoBluetooth, rest)
+		if kind == "ble" {
+			return fmt.Errorf("%w%s", blecore.ErrNoBluetooth, rest)
+		}
+		return fmt.Errorf("%s: %w%s", kind, blecore.ErrNoBluetooth, rest)
 	}
-	return fmt.Errorf("ble: %s", msg)
+	return fmt.Errorf("%s: %s", kind, msg)
 }
 
 // Scan runs the helper's scan mode. Without a usable adapter (powered off, Bluetooth not allowed) the
@@ -99,6 +111,24 @@ func helperError(msg string) error {
 // prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
+	return scanLines[blecore.Advert](ctx, "scan", timeout)
+}
+
+// ClassicDevice is a Bluetooth Classic device macOS knows (paired) or found in an inquiry.
+type ClassicDevice struct {
+	Address string `json:"address"` // AA:BB:CC:DD:EE:FF
+	Name    string `json:"name"`
+	Class   uint32 `json:"class"` // class of device
+}
+
+// ScanClassic lists the paired Bluetooth Classic devices and those an inquiry finds within timeout, through
+// the helper's scan-classic mode; errors as for Scan.
+func ScanClassic(ctx context.Context, timeout time.Duration) ([]ClassicDevice, error) {
+	return scanLines[ClassicDevice](ctx, "scan-classic", timeout)
+}
+
+// scanLines runs a scan mode of the helper and decodes its JSON lines.
+func scanLines[T any](ctx context.Context, mode string, timeout time.Duration) ([]T, error) {
 	helper, err := helperPath()
 	if err != nil {
 		return nil, err
@@ -106,7 +136,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	// The helper's enable may take EnableWait plus one more library Enable (10 s) before the scan starts.
 	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, helper, "scan", "--timeout", timeout.String())
+	cmd := exec.CommandContext(ctx, helper, mode, "--timeout", timeout.String())
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
@@ -120,23 +150,23 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
 		// ended a first-run permission prompt's wait).
 		if msg := fatalLine(stderr.String()); msg != "" {
-			return nil, helperError(msg)
+			return nil, helperError("ble", msg)
 		}
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("ble: %s scan: %w", helperName, err)
+		return nil, fmt.Errorf("ble: %s %s: %w", helperName, mode, err)
 	}
-	var ads []blecore.Advert
+	var found []T
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
-		var ad blecore.Advert
-		if err := json.Unmarshal(sc.Bytes(), &ad); err != nil {
-			return nil, fmt.Errorf("ble: %s scan output: %w", helperName, err)
+		var v T
+		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
+			return nil, fmt.Errorf("ble: %s %s output: %w", helperName, mode, err)
 		}
-		ads = append(ads, ad)
+		found = append(found, v)
 	}
-	return ads, nil
+	return found, nil
 }
 
 // fatalMark starts the helper's fatal stderr line (its other lines are log output).
@@ -152,9 +182,11 @@ func fatalLine(s string) string {
 	return msg
 }
 
-// Transport is one BLE connection to a cat printer, through a pdb-print-ble process.
+// Transport is one BLE connection to a cat printer (or, kind bt, one RFCOMM link), through a
+// pdb-print-ble process.
 type Transport struct {
-	req blebridge.OpenRequest
+	kind string // "" = ble
+	req  blebridge.OpenRequest
 
 	reqMu sync.Mutex // one request (Open, Write, Close) at a time
 
@@ -173,7 +205,7 @@ type reply struct {
 	payload []byte
 }
 
-func (t *Transport) Kind() string { return "ble" }
+func (t *Transport) Kind() string { return cmp.Or(t.kind, "ble") }
 
 func (t *Transport) Open(ctx context.Context) error {
 	t.reqMu.Lock()
@@ -295,7 +327,7 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	case blebridge.TypeOK:
 		return r.payload, nil
 	case blebridge.TypeError:
-		return nil, helperError(string(r.payload))
+		return nil, helperError(t.Kind(), string(r.payload))
 	}
 	return nil, fmt.Errorf("ble: %s: unexpected reply %q", helperName, r.typ)
 }

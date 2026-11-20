@@ -2,6 +2,7 @@ package blebridge
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -49,5 +50,22 @@ func TestBridgeFraming(t *testing.T) {
 	}
 	if err := Write(io.Discard, TypeWrite, make([]byte, MaxFrame+1)); err == nil {
 		t.Error("oversized write accepted")
+	}
+}
+
+// Kind and Channel select an RFCOMM link; a request without them (an older client) is BLE.
+func TestOpenRequestKind(t *testing.T) {
+	in := OpenRequest{Kind: "rfcomm", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 3}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out OpenRequest
+	if err := json.Unmarshal(b, &out); err != nil || out != in {
+		t.Fatalf("round trip %s: %+v %v", b, out, err)
+	}
+	b, _ = json.Marshal(OpenRequest{Name: "MX10", Service: 0xae30})
+	if bytes.Contains(b, []byte("kind")) || bytes.Contains(b, []byte("channel")) {
+		t.Errorf("BLE request %s carries kind or channel", b)
 	}
 }

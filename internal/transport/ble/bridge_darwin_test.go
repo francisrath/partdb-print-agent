@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -75,6 +76,13 @@ func fakeHelper(mode string, args []string) error {
 		return nil
 	case "scan-nobt":
 		return errors.New("no Bluetooth adapter: bluetooth is powered off")
+	case "scan-classic":
+		if strings.Join(args, " ") != "scan-classic --timeout 8s" {
+			return fmt.Errorf("args %q", args)
+		}
+		fmt.Println(`{"address":"AA:BB:CC:DD:EE:FF","name":"RG-MLP80B","class":1664}`)
+		fmt.Println(`{"address":"11:22:33:44:55:66","name":"","class":0}`)
+		return nil
 	}
 	if len(args) != 0 {
 		return fmt.Errorf("bridge mode got args %q", args)
@@ -85,6 +93,9 @@ func fakeHelper(mode string, args []string) error {
 	}
 	if mode == "hang" {
 		time.Sleep(time.Hour)
+	}
+	if mode == "bt-off" {
+		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("RG-MLP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"))
 	}
 	if mode == "fail" {
 		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("no Bluetooth adapter: bluetooth is not authorized for this app"))
@@ -456,5 +467,102 @@ func TestBridgeScanEndsWhileEnabling(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "if macOS asked for permission, allow it") || errors.Is(err, blecore.ErrNoBluetooth) {
 		t.Errorf("Scan: %v, want the not-enabled message", err)
+	}
+}
+
+func newBT(t *testing.T, c config.Transport) *Transport {
+	t.Helper()
+	c.Kind = "bt"
+	m, ok := devicedb.Default().ModelByBTName("RG-MLP80B")
+	if !ok {
+		t.Fatal("no escpos model for RG-MLP80B")
+	}
+	tr, err := transport.New(c, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, ok := tr.(*Transport)
+	if !ok {
+		t.Fatalf("kind bt is %T", tr)
+	}
+	return b
+}
+
+// Kind bt goes through the same helper, as an RFCOMM link; the escpos driver needs Read's timeout to wrap
+// os.ErrDeadlineExceeded and a dropped link to be a real error.
+func TestBridgeRFCOMM(t *testing.T) {
+	useFake(t, "ok")
+	tr := newBT(t, config.Transport{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1})
+	if tr.Kind() != "bt" {
+		t.Errorf("Kind %q", tr.Kind())
+	}
+	if err := tr.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var req blebridge.OpenRequest
+	if err := json.Unmarshal([]byte(readAll(t, tr)), &req); err != nil {
+		t.Fatal(err)
+	}
+	want := blebridge.OpenRequest{Kind: "rfcomm", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1}
+	if req != want {
+		t.Errorf("open request %+v, want %+v", req, want)
+	}
+	if _, err := tr.Write([]byte{0x10, 0x04, 0x01}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readAll(t, tr); got != "\x10\x04\x01" {
+		t.Errorf("data %q", got)
+	}
+	if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("Read with nothing sent: %v, want os.ErrDeadlineExceeded", err)
+	}
+	if err := tr.Close(); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestBridgeRFCOMMErrors(t *testing.T) {
+	t.Run("open", func(t *testing.T) {
+		useFake(t, "bt-off")
+		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		err := tr.Open(context.Background())
+		if want := "bt: RG-MLP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"; err == nil || err.Error() != want {
+			t.Errorf("Open: %v, want %q", err, want)
+		}
+	})
+	t.Run("no bluetooth", func(t *testing.T) {
+		useFake(t, "fail")
+		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		if err := tr.Open(context.Background()); !errors.Is(err, blecore.ErrNoBluetooth) || !strings.HasPrefix(err.Error(), "bt: ") {
+			t.Errorf("Open: %v, want bt: … ErrNoBluetooth", err)
+		}
+	})
+	t.Run("link dropped", func(t *testing.T) {
+		useFake(t, "drop")
+		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		if err := tr.Open(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		readAll(t, tr)
+		if _, err := tr.Write([]byte("x")); err == nil {
+			t.Error("Write to a dropped link succeeded")
+		}
+		if _, err := tr.Read(make([]byte, 10)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Errorf("Read after the link dropped: %v, want the helper's exit", err)
+		}
+		_ = tr.Close()
+	})
+}
+
+func TestScanClassic(t *testing.T) {
+	useFake(t, "scan-classic")
+	devs, err := ScanClassic(context.Background(), 8*time.Second)
+	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:FF", Name: "RG-MLP80B", Class: 1664}, {Address: "11:22:33:44:55:66"}}
+	if err != nil || !slices.Equal(devs, want) {
+		t.Errorf("ScanClassic: %+v %v, want %+v", devs, err, want)
+	}
+	useFake(t, "abort")
+	if _, err := ScanClassic(context.Background(), 8*time.Second); err == nil || !strings.Contains(err.Error(), denied) {
+		t.Errorf("ScanClassic killed by privacy: %v", err)
 	}
 }

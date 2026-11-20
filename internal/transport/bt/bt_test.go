@@ -16,7 +16,7 @@ import (
 )
 
 func TestResolve(t *testing.T) {
-	devs := []device{
+	devs := []Device{
 		{"RG-MLP80B", "AA:BB:CC:00:00:01"},
 		{"MLP", "AA:BB:CC:00:00:01"}, // the alias of the same device
 		{"Twin", "AA:BB:CC:00:00:02"},
@@ -36,7 +36,7 @@ func TestResolve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolve(devs, tt.name)
+			got, err := Resolve(devs, tt.name)
 			if tt.errHas == "" {
 				if err != nil || got != tt.want {
 					t.Fatalf("resolve = %q, %v; want %q", got, err, tt.want)

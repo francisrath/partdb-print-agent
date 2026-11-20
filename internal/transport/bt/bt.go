@@ -107,12 +107,12 @@ func (t *Transport) Close() error {
 	return c.Close()
 }
 
-// device is one Bluetooth device the OS knows by name (BlueZ lists Name and Alias as two entries).
-type device struct{ Name, Address string }
+// Device is one Bluetooth device the OS knows by name (BlueZ lists Name and Alias as two entries).
+type Device struct{ Name, Address string }
 
-// resolve finds the address of the device called name. The same address listed twice (alias, a second
+// Resolve finds the address of the device called name. The same address listed twice (alias, a second
 // adapter) is one device; two addresses are refused.
-func resolve(devs []device, name string) (string, error) {
+func Resolve(devs []Device, name string) (string, error) {
 	if name == "" {
 		return "", errors.New("bt: set the printer's address or name")
 	}
@@ -157,7 +157,7 @@ func connectRetry(ctx context.Context, pause time.Duration, e errnos, connect fu
 
 // lookupErr turns a failed paired-device lookup into an empty list (nothing remembered) or an error
 // wrapping blecore.ErrNoBluetooth.
-func lookupErr(err error, e errnos) ([]device, error) {
+func lookupErr(err error, e errnos) ([]Device, error) {
 	if isAny(err, e.noDevices) {
 		return nil, nil
 	}

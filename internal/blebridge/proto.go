@@ -24,15 +24,23 @@ const (
 // MaxFrame is the largest payload either side sends or accepts.
 const MaxFrame = 1 << 20
 
-// OpenRequest selects the printer (the address wins, as in config.Transport) and its GATT layout.
+// OpenRequest selects the printer (the address wins, as in config.Transport) and its link: BLE with its
+// GATT layout, or (Kind "rfcomm") Bluetooth Classic serial port on Channel (0 = look up the SPP record).
+// For rfcomm, Write frames go to the channel, incoming data comes back as Notify frames and OK.MTU is the
+// channel's MTU.
 type OpenRequest struct {
+	Kind    string `json:"kind,omitempty"` // "" = BLE, "rfcomm"
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address,omitempty"`
-	Service uint16 `json:"service"` // 16-bit UUIDs
+	Channel int    `json:"channel,omitempty"` // rfcomm only
+	Service uint16 `json:"service"`           // BLE only: 16-bit UUIDs
 	Write   uint16 `json:"write"`
 	Notify  uint16 `json:"notify"`
-	GapMS   int    `json:"gap_ms"` // pause between chunks
+	GapMS   int    `json:"gap_ms"` // BLE only: pause between chunks
 }
+
+// KindRFCOMM is OpenRequest.Kind for a Bluetooth Classic serial port link.
+const KindRFCOMM = "rfcomm"
 
 // OK is the payload of the OK answer to Open.
 type OK struct {

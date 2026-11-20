@@ -47,7 +47,7 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 		if err != nil {
 			return nil, err
 		}
-		if address, err = resolve(devs, name); err != nil {
+		if address, err = Resolve(devs, name); err != nil {
 			return nil, err
 		}
 	}
@@ -87,7 +87,7 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 }
 
 // pairedDevices lists the devices Windows remembers (paired or remembered), without an inquiry.
-func pairedDevices() ([]device, error) {
+func pairedDevices() ([]Device, error) {
 	const flags = windows.LUP_CONTAINERS | windows.LUP_RETURN_NAME | windows.LUP_RETURN_ADDR
 	q := windows.WSAQUERYSET{NameSpace: windows.NS_BTH}
 	q.Size = uint32(unsafe.Sizeof(q))
@@ -98,7 +98,7 @@ func pairedDevices() ([]device, error) {
 	defer func() { _ = windows.WSALookupServiceEnd(h) }()
 
 	buf := make([]uint64, 512) // 4 KiB, 8-byte aligned for the pointers inside
-	var devs []device
+	var devs []Device
 	for {
 		n := int32(len(buf) * 8)
 		r := (*windows.WSAQUERYSET)(unsafe.Pointer(&buf[0]))
@@ -120,7 +120,7 @@ func pairedDevices() ([]device, error) {
 		}
 		raw := (*windows.RawSockaddrBth)(unsafe.Pointer(r.SaBuffer.RemoteAddr.Sockaddr))
 		v := binary.LittleEndian.Uint64(raw.BtAddr[:])
-		devs = append(devs, device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))})
+		devs = append(devs, Device{Name: windows.UTF16PtrToString(r.ServiceInstanceName), Address: FormatAddr(fromBth(v))})
 	}
 }
 

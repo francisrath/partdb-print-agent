@@ -35,7 +35,7 @@ func dial(ctx context.Context, address, name string, channel int) (conn, error) 
 		if err != nil {
 			return nil, err
 		}
-		if address, err = resolve(devs, name); err != nil {
+		if address, err = Resolve(devs, name); err != nil {
 			return nil, err
 		}
 	}
@@ -111,7 +111,7 @@ func waitConnected(ctx context.Context, fd int, timeout time.Duration) error {
 }
 
 // bluezDevices lists every device BlueZ knows (paired or seen), once by Name and once by Alias.
-func bluezDevices(ctx context.Context) ([]device, error) {
+func bluezDevices(ctx context.Context) ([]Device, error) {
 	bus, err := dbus.SystemBus() // shared connection: not closed here
 	if err != nil {
 		if ctx.Err() != nil {
@@ -127,7 +127,7 @@ func bluezDevices(ctx context.Context) ([]device, error) {
 		}
 		return nil, fmt.Errorf("bt: %w: BlueZ: %w", blecore.ErrNoBluetooth, err)
 	}
-	var devs []device
+	var devs []Device
 	for _, ifaces := range objs {
 		props, ok := ifaces["org.bluez.Device1"]
 		if !ok {
@@ -136,7 +136,7 @@ func bluezDevices(ctx context.Context) ([]device, error) {
 		addr, _ := props["Address"].Value().(string)
 		for _, key := range []string{"Name", "Alias"} {
 			if n, ok := props[key].Value().(string); ok && addr != "" {
-				devs = append(devs, device{Name: n, Address: addr})
+				devs = append(devs, Device{Name: n, Address: addr})
 			}
 		}
 	}
