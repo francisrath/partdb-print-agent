@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How a label gets from Part-DB to the printer</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3d5a66"/>
+    </marker>
+  </defs>
+  <rect width="880" height="300" rx="12" fill="#ffffff"/>
+
+  <!-- Part-DB -->
+  <rect x="20" y="40" width="220" height="220" rx="10" fill="#eef4f7" stroke="#9db4bf"/>
+  <text x="130" y="72" text-anchor="middle" font-size="18" font-weight="600" fill="#1d3640">Part-DB</text>
+  <text x="130" y="104" text-anchor="middle" font-size="13" fill="#3d5a66">label profiles</text>
+  <text x="130" y="124" text-anchor="middle" font-size="13" fill="#3d5a66">parts, lots, locations</text>
+  <rect x="45" y="150" width="170" height="40" rx="6" fill="#ffffff" stroke="#9db4bf"/>
+  <text x="130" y="175" text-anchor="middle" font-size="13" fill="#1d3640">label PDF (API)</text>
+  <text x="130" y="222" text-anchor="middle" font-size="12" fill="#5d7480">you click a bookmarklet,</text>
+  <text x="130" y="240" text-anchor="middle" font-size="12" fill="#5d7480">or a print job is queued</text>
+
+  <!-- arrow Part-DB -> agent -->
+  <line x1="244" y1="170" x2="318" y2="170" stroke="#3d5a66" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="281" y="160" text-anchor="middle" font-size="11" fill="#5d7480">HTTPS</text>
+
+  <!-- agent -->
+  <rect x="322" y="40" width="236" height="220" rx="10" fill="#e3f1f0" stroke="#2f7d78"/>
+  <text x="440" y="72" text-anchor="middle" font-size="18" font-weight="600" fill="#1d3640">pdb-print</text>
+  <text x="440" y="92" text-anchor="middle" font-size="12" fill="#3d5a66">on your PC, a Pi or a server</text>
+  <rect x="345" y="108" width="190" height="34" rx="6" fill="#ffffff" stroke="#2f7d78"/>
+  <text x="440" y="130" text-anchor="middle" font-size="13" fill="#1d3640">render at the head's dots</text>
+  <rect x="345" y="150" width="190" height="34" rx="6" fill="#ffffff" stroke="#2f7d78"/>
+  <text x="440" y="172" text-anchor="middle" font-size="13" fill="#1d3640">driver: printer's language</text>
+  <rect x="345" y="192" width="190" height="34" rx="6" fill="#ffffff" stroke="#2f7d78"/>
+  <text x="440" y="214" text-anchor="middle" font-size="13" fill="#1d3640">status, roll check, confirm</text>
+  <text x="440" y="248" text-anchor="middle" font-size="12" fill="#5d7480">no OS printer driver, no scaling</text>
+
+  <!-- arrow agent -> printers -->
+  <line x1="562" y1="170" x2="636" y2="170" stroke="#3d5a66" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="599" y="134" text-anchor="middle" font-size="11" fill="#5d7480">network</text>
+  <text x="599" y="147" text-anchor="middle" font-size="11" fill="#5d7480">USB</text>
+  <text x="599" y="160" text-anchor="middle" font-size="11" fill="#5d7480">Bluetooth</text>
+
+  <!-- printers -->
+  <rect x="640" y="40" width="220" height="220" rx="10" fill="#f6f1e8" stroke="#bfa77a"/>
+  <text x="750" y="72" text-anchor="middle" font-size="18" font-weight="600" fill="#1d3640">Label printers</text>
+  <text x="750" y="100" text-anchor="middle" font-size="13" fill="#3d5a66">Brother QL and P-touch</text>
+  <text x="750" y="120" text-anchor="middle" font-size="13" fill="#3d5a66">Zebra (ZPL, EPL)</text>
+  <text x="750" y="140" text-anchor="middle" font-size="13" fill="#3d5a66">TSC and TSPL clones</text>
+  <text x="750" y="160" text-anchor="middle" font-size="13" fill="#3d5a66">DYMO LabelWriter</text>
+  <text x="750" y="180" text-anchor="middle" font-size="13" fill="#3d5a66">Bluetooth label makers</text>
+  <text x="750" y="200" text-anchor="middle" font-size="13" fill="#3d5a66">ESC/POS printers</text>
+  <text x="750" y="232" text-anchor="middle" font-size="12" fill="#5d7480">every model: docs/printers.md</text>
+</svg>
