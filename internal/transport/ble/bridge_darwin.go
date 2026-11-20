@@ -111,7 +111,7 @@ func helperError(kind, msg string) error {
 // prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
-	return scanLines[blecore.Advert](ctx, "scan", timeout)
+	return scanLines[blecore.Advert](ctx, "ble", "scan", timeout)
 }
 
 // ClassicDevice is a Bluetooth Classic device macOS knows (paired) or found in an inquiry.
@@ -124,11 +124,11 @@ type ClassicDevice struct {
 // ScanClassic lists the paired Bluetooth Classic devices and those an inquiry finds within timeout, through
 // the helper's scan-classic mode; errors as for Scan.
 func ScanClassic(ctx context.Context, timeout time.Duration) ([]ClassicDevice, error) {
-	return scanLines[ClassicDevice](ctx, "scan-classic", timeout)
+	return scanLines[ClassicDevice](ctx, "bt", "scan-classic", timeout)
 }
 
-// scanLines runs a scan mode of the helper and decodes its JSON lines.
-func scanLines[T any](ctx context.Context, mode string, timeout time.Duration) ([]T, error) {
+// scanLines runs a scan mode of the helper and decodes its JSON lines; errors start with kind.
+func scanLines[T any](ctx context.Context, kind, mode string, timeout time.Duration) ([]T, error) {
 	helper, err := helperPath()
 	if err != nil {
 		return nil, err
@@ -145,24 +145,24 @@ func scanLines[T any](ctx context.Context, mode string, timeout time.Duration) (
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
 		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
-			return nil, fmt.Errorf("ble: %w; the helper exited: %w", errDenied, err)
+			return nil, fmt.Errorf("%s: %w; the helper exited: %w", kind, errDenied, err)
 		}
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
 		// ended a first-run permission prompt's wait).
 		if msg := fatalLine(stderr.String()); msg != "" {
-			return nil, helperError("ble", msg)
+			return nil, helperError(kind, msg)
 		}
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("ble: %s %s: %w", helperName, mode, err)
+		return nil, fmt.Errorf("%s: %s %s: %w", kind, helperName, mode, err)
 	}
 	var found []T
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		var v T
 		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
-			return nil, fmt.Errorf("ble: %s %s output: %w", helperName, mode, err)
+			return nil, fmt.Errorf("%s: %s %s output: %w", kind, helperName, mode, err)
 		}
 		found = append(found, v)
 	}

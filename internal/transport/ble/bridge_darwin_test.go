@@ -566,7 +566,7 @@ func TestScanClassic(t *testing.T) {
 		t.Errorf("ScanClassic: %+v %v, want %+v", devs, err, want)
 	}
 	useFake(t, "abort")
-	if _, err := ScanClassic(context.Background(), 8*time.Second); err == nil || !strings.Contains(err.Error(), denied) {
+	if _, err := ScanClassic(context.Background(), 8*time.Second); err == nil || !strings.HasPrefix(err.Error(), "bt: "+denied) {
 		t.Errorf("ScanClassic killed by privacy: %v", err)
 	}
 }

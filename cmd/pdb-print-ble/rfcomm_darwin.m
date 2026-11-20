@@ -12,7 +12,8 @@ static PDBDelegate *gDel;
 static IOBluetoothDevice *gDev;
 static IOBluetoothRFCOMMChannel *gChan;
 static IOBluetoothDeviceInquiry *gInq;
-static volatile int gStop;
+static int gStop;     // main queue only
+static BOOL gNoRetry; // set by btClose: a pending btRetryOpen must not reopen
 static NSTimer *gSDPPoll;   // the SDP query's completion check (see startSDP)
 static NSDate *gSDPBefore;  // the device's last services update when the query started
 static BOOL gSDPDone;
@@ -177,7 +178,10 @@ int btWrite(void *p, int n) {
 }
 
 void btClose(void) {
-	dispatch_async(dispatch_get_main_queue(), ^{ [gChan closeChannel]; });
+	dispatch_async(dispatch_get_main_queue(), ^{
+		gNoRetry = YES;
+		[gChan closeChannel];
+	});
 }
 
 void btCloseConnection(void) {
@@ -200,7 +204,9 @@ void btRetryOpen(void) {
 		[gChan closeChannel];
 		gChan = nil;
 		[gDev closeConnection];
-		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ openChannel(gChanID); });
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+			if (!gNoRetry) openChannel(gChanID);
+		});
 	});
 }
 

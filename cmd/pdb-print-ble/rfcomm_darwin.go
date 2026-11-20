@@ -36,8 +36,9 @@ import (
 func init() { runtime.LockOSThread() }
 
 const (
-	rfcommConnect = 20 * time.Second // page timeout, SDP query (≤10 s) and channel open, retry included
-	rfcommAttempt = 8 * time.Second  // for the channel to open before one retry
+	rfcommConnect  = 20 * time.Second // page timeout, SDP query (≤10 s) and channel open, retry included
+	rfcommAttempt  = 8 * time.Second  // for the channel to open before one retry
+	rfcommRetryMin = 5 * time.Second  // left before the connect bound, else no retry
 	// A helper that exits before macOS has dropped the link leaves the printer unreachable for the next
 	// job (as with BLE): wait for the channel, then the connection, within the client's close grace.
 	channelCloseWait = blecore.NotifyOffWait
@@ -75,6 +76,9 @@ func goOpening() {
 	}
 }
 
+// goData runs on the main thread; writing stdout there can't stall it for long, since the client's
+// readLoop always reads.
+//
 //export goData
 func goData(p unsafe.Pointer, n C.int) {
 	if err := rf.out.send(blebridge.TypeNotify, C.GoBytes(p, n)); err != nil {
@@ -164,6 +168,7 @@ func openRFCOMM(req blebridge.OpenRequest, out *frames) (link, error) {
 	}
 	C.btOpen(ca, C.int(req.Channel))
 	var r openResult
+	end := time.Now().Add(rfcommConnect)
 	deadline := time.After(rfcommConnect)
 	var attempt <-chan time.Time // runs while the channel opens
 	retried := false
@@ -176,7 +181,8 @@ wait:
 			break wait
 		case <-attempt: // the retry's attempt is bounded by deadline only
 			attempt = nil
-			if !retried {
+			// a retry needs a few seconds of its own (SDP's channel-1 fallback opens late)
+			if !retried && time.Until(end) >= rfcommRetryMin {
 				retried = true
 				log.Printf("the channel to %s didn't open within %v, trying once more", who, rfcommAttempt)
 				C.btRetryOpen()
@@ -192,7 +198,7 @@ wait:
 		dropLink()
 		return link{}, fmt.Errorf("%s has no serial port (SPP) service – is it the printer, and is it switched on?", who)
 	case C.BT_BAD_ADDRESS:
-		return link{}, fmt.Errorf("address %q isn't a Bluetooth address", req.Address)
+		return link{}, fmt.Errorf("address %q isn't a Bluetooth address", addr)
 	default:
 		dropLink()
 		return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (IOReturn %#x)", who, uint32(r.status))
