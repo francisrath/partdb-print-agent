@@ -30,6 +30,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"  // registers kind bt (Linux/Windows; macOS in a later step)
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
 	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
 )
