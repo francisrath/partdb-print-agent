@@ -216,7 +216,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	err = blecore.ConnectRetry(ctx, retryPause, func() (err error) {
 		dev, err = connect(ctx, addr)
 		return err
-	}, func(err error) bool { return !errors.Is(err, errConnectTimeout) }, func() { dropStale(addr) })
+	}, func(err error) bool { return !errors.Is(err, errConnectTimeout) }, func() { dropStale(ctx, addr) })
 	if err != nil {
 		return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
 	}
