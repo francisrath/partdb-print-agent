@@ -268,7 +268,7 @@ func TestBridgeOpenErrors(t *testing.T) {
 	}{
 		{"", "install pdb-print-ble (comes with the macOS release) for Bluetooth printers", false},
 		{"fail", "not authorized", true},
-		{"abort", denied + " (run it from Terminal or another terminal app and allow Bluetooth when asked; a service needs its own permission) (signal: abort trap)", false},
+		{"abort", denied + " (run it from Terminal or another terminal app and allow Bluetooth when asked; a service needs its own permission); the helper exited: signal: abort trap", false},
 	}
 	for _, tt := range tests {
 		t.Run(cmp.Or(tt.mode, "no helper"), func(t *testing.T) {
@@ -314,7 +314,7 @@ func TestBridgeScan(t *testing.T) {
 					t.Errorf("Scan: %v", err)
 				}
 			case tt.denied:
-				if err == nil || !strings.Contains(err.Error(), denied) || !strings.HasSuffix(err.Error(), "(signal: abort trap)") ||
+				if err == nil || !strings.Contains(err.Error(), denied) || !strings.HasSuffix(err.Error(), "permission); the helper exited: signal: abort trap") ||
 					errors.Is(err, blecore.ErrNoBluetooth) {
 					t.Errorf("Scan: %v, want %q and not ErrNoBluetooth", err, denied)
 				}

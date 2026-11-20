@@ -112,7 +112,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
 		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
-			return nil, fmt.Errorf("ble: %w (%w)", errDenied, err)
+			return nil, fmt.Errorf("ble: %w; the helper exited: %w", errDenied, err)
 		}
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
 		// ended a first-run permission prompt's wait).
@@ -248,7 +248,7 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	case !exiting:
 		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
 	case killedByPrivacy(cmd.ProcessState):
-		t.dead = fmt.Errorf("ble: %w (%w)", errDenied, werr)
+		t.dead = fmt.Errorf("ble: %w; the helper exited: %w", errDenied, werr)
 	case msg != "" && werr != nil:
 		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
 	case werr != nil:
