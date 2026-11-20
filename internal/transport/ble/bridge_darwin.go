@@ -114,7 +114,7 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 			return nil, ctx.Err()
 		}
 		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
-			return nil, fmt.Errorf("ble: %w", errDenied)
+			return nil, fmt.Errorf("ble: %w (%w)", errDenied, err)
 		}
 		if msg := fatalLine(stderr.String()); msg != "" {
 			return nil, helperError(msg)
@@ -245,7 +245,7 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	case !exiting:
 		t.dead = fmt.Errorf("ble: %s: %w", helperName, err)
 	case killedByPrivacy(cmd.ProcessState):
-		t.dead = fmt.Errorf("ble: %w", errDenied)
+		t.dead = fmt.Errorf("ble: %w (%w)", errDenied, werr)
 	case msg != "" && werr != nil:
 		t.dead = fmt.Errorf("ble: %s: %s (%w)", helperName, msg, werr)
 	case werr != nil:
