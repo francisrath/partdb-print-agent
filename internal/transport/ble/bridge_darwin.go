@@ -110,14 +110,16 @@ func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) 
 	out, err := cmd.Output()
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
-		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
-			return nil, ctx.Err()
-		}
 		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
 			return nil, fmt.Errorf("ble: %w (%w)", errDenied, err)
 		}
+		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
+		// ended a first-run permission prompt's wait).
 		if msg := fatalLine(stderr.String()); msg != "" {
 			return nil, helperError(msg)
+		}
+		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
+			return nil, ctx.Err()
 		}
 		return nil, fmt.Errorf("ble: %s scan: %w", helperName, err)
 	}

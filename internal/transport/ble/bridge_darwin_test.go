@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 // write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
 // and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
 // "hang" never answers the open; "fail" refuses it; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
-// "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
+// "scan-enabling" is interrupted while waiting for Bluetooth; "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
 	case "abort": // a shell dies of the signal (Go would catch it and exit 2)
@@ -50,6 +50,11 @@ func fakeHelper(mode string, args []string) error {
 	case "scan-hang": // stuck in Enable, deaf to the interrupt
 		signal.Ignore(os.Interrupt)
 		time.Sleep(time.Hour)
+	case "scan-enabling": // waiting for Bluetooth (a permission prompt) when interrupted
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
+		<-c
+		return blecore.ErrNotEnabled
 	case "scan":
 		if strings.Join(args, " ") != "scan --timeout 8s" {
 			return fmt.Errorf("args %q", args)
@@ -382,5 +387,20 @@ func TestBridgeScanCancel(t *testing.T) {
 	})
 	if !errors.Is(err, context.DeadlineExceeded) || ads != nil {
 		t.Errorf("Scan: %v %v, want the context's error", ads, err)
+	}
+}
+
+// The caller's deadline (the setup wizard gives discovery 30 s) ends the helper's wait for a first-run
+// permission prompt: the helper's reason wins over the context's error.
+func TestBridgeScanEndsWhileEnabling(t *testing.T) {
+	useFake(t, "scan-enabling")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := within(t, 4*time.Second, "Scan", func() error {
+		_, err := Scan(ctx, 8*time.Second)
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "if macOS asked for permission, allow it") || errors.Is(err, blecore.ErrNoBluetooth) {
+		t.Errorf("Scan: %v, want the not-enabled message", err)
 	}
 }

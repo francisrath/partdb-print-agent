@@ -97,8 +97,8 @@ func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scan
 		if err != nil {
 			return nil, err
 		}
-	case <-ctx.Done():
-		return nil, nil // interrupted before the scan started: nothing seen
+	case <-ctx.Done(): // interrupted before the scan started, perhaps with a permission prompt still open
+		return nil, blecore.ErrNotEnabled
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

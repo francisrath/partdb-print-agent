@@ -160,6 +160,10 @@ func ConnectRetry(ctx context.Context, pause time.Duration, connect func() error
 	return connect()
 }
 
+// ErrNotEnabled: Bluetooth didn't come up in time (macOS: perhaps a permission prompt still open). Not
+// ErrNoBluetooth, which means a definite "off" or "none".
+var ErrNotEnabled = errors.New("bluetooth didn't become available — if macOS asked for permission, allow it and run again; otherwise check that Bluetooth is on")
+
 // EnableWait is how long the macOS helper waits for Bluetooth to come up: long enough for someone to
 // answer the first-run permission prompt (CoreBluetooth stays "unknown" while it is open).
 const EnableWait = 60 * time.Second
@@ -177,7 +181,7 @@ func WaitEnable(enable func() error, wait time.Duration) error {
 		case err.Error() != "timeout enabling CentralManager": // text from v0.17.0's adapter_darwin.go
 			return fmt.Errorf("%w: %w", ErrNoBluetooth, err)
 		case !time.Now().Before(deadline):
-			return errors.New("bluetooth didn't become available — if macOS asked for permission, allow it and run again; otherwise check that Bluetooth is on")
+			return ErrNotEnabled
 		}
 	}
 }
