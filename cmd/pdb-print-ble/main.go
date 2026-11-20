@@ -279,7 +279,11 @@ func open(req blebridge.OpenRequest, out *frames) (bluetooth.Device, *blecore.Ch
 		return none, nil, 0, err
 	}
 	live.Store(ch)
-	log.Printf("connected to %s (%s), %d bytes per write", ad.Address, ad.Name, mtu)
+	who := ad.Address
+	if ad.Name != "" { // found by address, the advert may carry no name
+		who += " (" + ad.Name + ")"
+	}
+	log.Printf("connected to %s, %d bytes per write", who, mtu)
 	return dev, ch, mtu, nil
 }
 
