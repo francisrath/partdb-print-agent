@@ -156,8 +156,8 @@ its advertised Bluetooth name, which must be exactly the model name.
   darkness: normal            # light | normal | dark; darker prints slower
 ```
 
-`darkness` sets the print speed (slower is darker). On an MX10, `dark` looks about the same as `normal`;
-`light` is visibly lighter and faster.
+`darkness` sets the print speed (slower should print darker). On an MX10 with its sticker paper, `light`,
+`normal` and `dark` look about the same; other cat printers may respond more.
 
 `pdb-print discover` lists nearby Bluetooth printers with their address and the exact `transport:` line
 (the Bluetooth scan can make `discover` take up to about 8 s; `--no-ble` skips it), and the setup wizard lists them too. The address
