@@ -223,7 +223,8 @@ for a PIN, pair once with `bluetoothctl` (`pair <address>`, `trust <address>`; t
 Status is real-time (`DLE EOT`: paper out, cover open). After a job pdb-print asks the printer for its
 paper status (`GS r 1`) and reports "printed" when it answers, otherwise "sent (unconfirmed)" after 20 s.
 Many cheap printers don't answer; that is not an error. Like BLE printers, a `bt` printer takes one
-connection at a time (a status check waits while a job runs) and shows online after it has been used
+connection at a time: a status check during a job answers Busy at once without connecting (ask again after
+the job for the printer's own status). It shows online after it has been used
 recently: scans don't count, because the OS lists paired printers even when they are off.
 
 `discover` and the setup wizard list Classic printers too (`try` names them but can't test ESC/POS
