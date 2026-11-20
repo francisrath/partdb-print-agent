@@ -36,20 +36,26 @@ import (
 func init() { runtime.LockOSThread() }
 
 const (
-	rfcommConnect = 20 * time.Second // page timeout, SDP query (≤10 s) and channel open
-	rfcommClose   = 3 * time.Second
+	rfcommConnect = 20 * time.Second // page timeout, SDP query (≤10 s) and channel open, retry included
+	rfcommAttempt = 8 * time.Second  // for the channel to open before one retry
+	// A helper that exits before macOS has dropped the link leaves the printer unreachable for the next
+	// job (as with BLE): wait for the channel, then the connection, within the client's close grace.
+	channelCloseWait = blecore.NotifyOffWait
+	disconnectWait   = blecore.DisconnectWait
+	staleLinkWait    = 2 * time.Second // for a link left by the previous helper to drop before Open
 )
 
 // rf is the one RFCOMM link (or inquiry) of this process, shared with the IOBluetooth callbacks.
 var rf = struct {
 	out     *frames
 	who     string
+	opening chan struct{}
 	opened  chan openResult
 	closed  chan struct{}
 	inquiry chan C.int
 	isOpen  atomic.Bool
 	closing atomic.Bool
-}{opened: make(chan openResult, 1), closed: make(chan struct{}, 1), inquiry: make(chan C.int, 1)}
+}{opening: make(chan struct{}, 1), opened: make(chan openResult, 1), closed: make(chan struct{}, 1), inquiry: make(chan C.int, 1)}
 
 type openResult struct{ code, status, mtu int }
 
@@ -57,6 +63,14 @@ type openResult struct{ code, status, mtu int }
 func goOpenDone(code, status, mtu C.int) {
 	select {
 	case rf.opened <- openResult{int(code), int(status), int(mtu)}:
+	default:
+	}
+}
+
+//export goOpening
+func goOpening() {
+	select {
+	case rf.opening <- struct{}{}:
 	default:
 	}
 }
@@ -145,23 +159,42 @@ func openRFCOMM(req blebridge.OpenRequest, out *frames) (link, error) {
 	rf.out, rf.who = out, who
 	ca := C.CString(strings.ReplaceAll(addr, ":", "-"))
 	defer C.free(unsafe.Pointer(ca))
+	if waitFor(staleLinkWait, func() bool { return C.btIsConnected(ca) == 0 }) {
+		log.Printf("%s is still connected (an earlier job?), opening anyway", who)
+	}
 	C.btOpen(ca, C.int(req.Channel))
 	var r openResult
-	select {
-	case r = <-rf.opened:
-	case <-time.After(rfcommConnect):
-		C.btClose()
-		return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (nothing within %v)", who, rfcommConnect)
+	deadline := time.After(rfcommConnect)
+	var attempt <-chan time.Time // runs while the channel opens
+	retried := false
+wait:
+	for {
+		select {
+		case <-rf.opening:
+			attempt = time.After(rfcommAttempt)
+		case r = <-rf.opened:
+			break wait
+		case <-attempt: // the retry's attempt is bounded by deadline only
+			attempt = nil
+			if !retried {
+				retried = true
+				log.Printf("the channel to %s didn't open within %v, trying once more", who, rfcommAttempt)
+				C.btRetryOpen()
+			}
+		case <-deadline:
+			dropLink()
+			return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (nothing within %v)", who, rfcommConnect)
+		}
 	}
 	switch r.code {
 	case C.BT_OK:
 	case C.BT_NO_SPP:
-		C.btClose()
+		dropLink()
 		return link{}, fmt.Errorf("%s has no serial port (SPP) service – is it the printer, and is it switched on?", who)
 	case C.BT_BAD_ADDRESS:
 		return link{}, fmt.Errorf("address %q isn't a Bluetooth address", req.Address)
 	default:
-		C.btClose()
+		dropLink()
 		return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (IOReturn %#x)", who, uint32(r.status))
 	}
 	rf.isOpen.Store(true)
@@ -179,15 +212,36 @@ func rfcommWrite(p []byte) error {
 	return nil
 }
 
-// closeRFCOMM closes the channel and waits for IOBluetooth to confirm.
+// closeRFCOMM closes the channel, then the connection, and waits for IOBluetooth to confirm each.
 func closeRFCOMM() {
 	rf.closing.Store(true)
 	C.btClose()
 	select {
 	case <-rf.closed:
-	case <-time.After(rfcommClose):
-		log.Printf("close not confirmed within %v", rfcommClose)
+	case <-time.After(channelCloseWait):
+		log.Printf("channel close not confirmed within %v", channelCloseWait)
 	}
+	C.btCloseConnection()
+	if waitFor(disconnectWait, func() bool { return C.btIsConnected(nil) == 0 }) {
+		log.Printf("disconnect not confirmed within %v", disconnectWait)
+	}
+}
+
+// dropLink ends a failed open: the channel if any, then the connection (the SDP query may have opened it).
+func dropLink() {
+	C.btClose()
+	C.btCloseConnection()
+	waitFor(disconnectWait, func() bool { return C.btIsConnected(nil) == 0 })
+}
+
+// waitFor polls done every 100 ms until it holds or d has passed; it reports whether d passed.
+func waitFor(d time.Duration, done func() bool) (timedOut bool) {
+	for end := time.Now().Add(d); !done(); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(end) {
+			return true
+		}
+	}
+	return false
 }
 
 func scanClassicCmd(args []string) error {

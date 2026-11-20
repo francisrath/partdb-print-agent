@@ -10,8 +10,11 @@ void btRunMain(void);  // runs the main run loop until btStopMain
 void btStopMain(void);
 int btPowered(void);   // 1 if a Bluetooth controller is on
 char *btPaired(void);  // JSON [{"address","name","class"}] of the paired devices; free it
-void btOpen(const char *address, int channel); // channel 0 = SDP lookup; ends in goOpenDone
+void btOpen(const char *address, int channel); // channel 0 = SDP lookup; goOpening, then goOpenDone
 int btWrite(void *p, int n);                   // IOReturn; splits at the channel MTU
-void btClose(void);                            // closes the channel (goClosed follows) and the connection
+void btClose(void);                            // closes the channel; goClosed follows
+void btCloseConnection(void);                  // closes the baseband connection to the device
+int btIsConnected(const char *address);        // 1 if the device (NULL: the opened one) is connected
+void btRetryOpen(void);                        // closes the pending channel and opens it again (goOpening)
 void btInquiryStart(int seconds);              // ends in goInquiryDone
 char *btInquiryStop(void);                     // stops the inquiry; JSON of what it found; free it

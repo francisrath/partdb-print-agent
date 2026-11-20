@@ -24,7 +24,11 @@ static BOOL sppChannel(BluetoothRFCOMMChannelID *id) {
 	return rec != nil && [rec getRFCOMMChannelID:id] == kIOReturnSuccess;
 }
 
+static BluetoothRFCOMMChannelID gChanID; // for btRetryOpen
+
 static void openChannel(BluetoothRFCOMMChannelID id) {
+	gChanID = id;
+	goOpening();
 	IOBluetoothRFCOMMChannel *ch = nil;
 	IOReturn r = [gDev openRFCOMMChannelAsync:&ch withChannelID:id delegate:gDel];
 	gChan = ch;
@@ -173,9 +177,30 @@ int btWrite(void *p, int n) {
 }
 
 void btClose(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{ [gChan closeChannel]; });
+}
+
+void btCloseConnection(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{ [gDev closeConnection]; });
+}
+
+int btIsConnected(const char *address) {
+	NSString *a = address != NULL ? [NSString stringWithUTF8String:address] : nil;
+	__block int on = 0;
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		IOBluetoothDevice *d = a != nil ? [IOBluetoothDevice deviceWithAddressString:a] : gDev;
+		on = d != nil && [d isConnected];
+	});
+	return on;
+}
+
+void btRetryOpen(void) {
 	dispatch_async(dispatch_get_main_queue(), ^{
+		[gChan setDelegate:nil]; // a late completion of the first attempt is not this one's
 		[gChan closeChannel];
+		gChan = nil;
 		[gDev closeConnection];
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ openChannel(gChanID); });
 	});
 }
 
