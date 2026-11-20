@@ -94,6 +94,8 @@ type Printer struct {
 	// SNMP (UDP 161) reports the loaded roll and errors; network QLs give no status on 9100.
 	SNMPCommunity string `yaml:"snmp_community,omitempty"` // default "public"
 	NoSNMP        bool   `yaml:"no_snmp,omitempty"`
+	// Darkness is the print density of models with quirk darkness (cat printers): light | normal | dark; "" = normal.
+	Darkness string `yaml:"darkness,omitempty"`
 	// AllowScaling prints labels whose size doesn't match the media by scaling them,
 	// instead of refusing with MEDIA_MISMATCH.
 	AllowScaling bool `yaml:"allow_scaling,omitempty"`
@@ -108,12 +110,16 @@ type Printer struct {
 type Adjust struct{ XDots, YDots, PrintWidthDots int }
 
 type Transport struct {
-	Kind   string `yaml:"kind"` // tcp | usb (allowed kinds come from the model)
+	Kind   string `yaml:"kind"` // tcp | usb | ble (allowed kinds come from the model)
 	Host   string `yaml:"host,omitempty"`
 	Port   int    `yaml:"port,omitempty"`   // tcp; default 9100
 	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux) …
 	USBID  string `yaml:"usb_id,omitempty"` // … or the printer's USB id ("04f9:209c"), found at each job
 	Serial string `yaml:"serial,omitempty"` // usb_id: tells two identical printers apart
+	// ble: the printer's address (a MAC on Linux/Windows, a CoreBluetooth UUID on macOS) or its
+	// advertised name; the address wins.
+	Address string `yaml:"address,omitempty"`
+	Name    string `yaml:"name,omitempty"`
 }
 
 // DefaultPath is <user config dir>/pdb-print/config.yaml.
@@ -336,6 +342,15 @@ func (p *Printer) validate() error {
 	if p.Media != "" && !slices.Contains(m.Media, p.Media) {
 		return fmt.Errorf("media %s doesn't fit %s (see `pdb-print media`)", p.Media, m.ID)
 	}
+	switch p.Darkness {
+	case "":
+	case "light", "normal", "dark":
+		if !m.QuirkBool("darkness") {
+			return fmt.Errorf("%s has no darkness setting", m.ID)
+		}
+	default:
+		return fmt.Errorf("darkness %q must be light, normal or dark", p.Darkness)
+	}
 	t := &p.Transport
 	switch t.Kind {
 	case "tcp":
@@ -344,6 +359,10 @@ func (p *Printer) validate() error {
 		}
 		if t.Port == 0 {
 			t.Port = 9100
+		}
+	case "ble":
+		if t.Address == "" && t.Name == "" {
+			return errors.New("transport kind ble needs an address or a name")
 		}
 	case "usb":
 		switch {

@@ -188,3 +188,50 @@ func TestModelByZebraMDL(t *testing.T) {
 		}
 	}
 }
+
+func TestModelByBLEName(t *testing.T) {
+	db := devicedb.Default()
+	for _, tc := range []struct{ name, want string }{
+		{"MX10", "MX10"}, {"GB03", "GB03"}, {"YT01", "YT01"}, {"MX10-1234", ""}, {"Phone", ""}, {"", ""},
+	} {
+		m, ok := db.ModelByBLEName(tc.name)
+		if got := ""; ok {
+			got = m.ID
+			if got != tc.want {
+				t.Errorf("%q: %s, want %q", tc.name, got, tc.want)
+			}
+		} else if tc.want != "" {
+			t.Errorf("%q: not found, want %s", tc.name, tc.want)
+		}
+	}
+}
+
+func TestCatModels(t *testing.T) {
+	db := devicedb.Default()
+	for _, id := range []string{"GB01", "GB02", "GB03", "GT01", "YT01", "MX05", "MX06", "MX08", "MX10"} {
+		m, ok := db.Model(id)
+		if !ok {
+			t.Errorf("%s missing", id)
+			continue
+		}
+		if m.Driver != "cat" || m.Dialect != "gb" || m.DPI != 203 || m.HeadPins != 384 || !slices.Equal(m.Transports, []string{"ble"}) {
+			t.Errorf("%s: %+v", id, m)
+		}
+		if m.Quirk("ble_service", 0) != 0xae30 || m.Quirk("ble_write", 0) != 0xae01 || m.Quirk("ble_notify", 0) != 0xae02 ||
+			m.Quirk("ble_gap_ms", 0) != 10 || m.Quirk("feed_lines", 0) != 80 || !m.QuirkBool("darkness") || !m.QuirkBool("needs_status") {
+			t.Errorf("%s quirks: %v", id, m.Quirks)
+		}
+	}
+	mx, _ := db.Model("MX10")
+	md := db.MediaFor(mx)
+	if len(md) != 1 || md[0].ID != "paper-57" || md[0].PrintableWidthDots != 384 || md[0].DPI != 203 || md[0].Kind != devicedb.Continuous {
+		t.Errorf("MX10 media: %+v", md)
+	}
+}
+
+func TestBadBLEName(t *testing.T) {
+	fsys := fstest.MapFS{"data/a.yaml": &fstest.MapFile{Data: []byte("models:\n  - {id: A, driver: cat, dialect: gb, match: {ble_name: \"MX(\"}}\n")}}
+	if _, err := devicedb.Load(fsys); err == nil || !strings.Contains(err.Error(), "ble_name") {
+		t.Errorf("err = %v", err)
+	}
+}

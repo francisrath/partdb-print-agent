@@ -55,6 +55,7 @@ type Match struct {
 	StatusCode    *int     `yaml:"status_code"`    // model byte in the driver's status reply
 	SNMPDescr     string   `yaml:"snmp_descr"`     // regexp on sysDescr
 	HIModel       string   `yaml:"hi_model"`       // regexp on the model part of a Zebra ~HI reply
+	BLEName       string   `yaml:"ble_name"`       // regexp on the BLE advertised name
 }
 
 type Model struct {
@@ -70,6 +71,7 @@ type Model struct {
 	Quirks     map[string]any    `yaml:"quirks"`
 	snmpRe     *regexp.Regexp    // Match.SNMPDescr, compiled at load
 	hiRe       *regexp.Regexp    // Match.HIModel, compiled at load
+	bleRe      *regexp.Regexp    // Match.BLEName, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
 }
 
@@ -183,6 +185,13 @@ func Load(fsys fs.FS) (*DB, error) {
 					errs = append(errs, fmt.Errorf("%s: model %s: bad hi_model pattern: %w", base, m.ID, err))
 				}
 				m.hiRe = re
+			}
+			if m.Match.BLEName != "" {
+				re, err := regexp.Compile(m.Match.BLEName)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: model %s: bad ble_name pattern: %w", base, m.ID, err))
+				}
+				m.bleRe = re
 			}
 			if m.Driver == "" || m.Dialect == "" {
 				errs = append(errs, fmt.Errorf("%s: model %s needs driver and dialect", base, m.ID))
@@ -316,6 +325,17 @@ func (db *DB) ModelByHI(hi string) (*Model, bool) {
 	for _, id := range db.ModelIDs() {
 		m := db.models[id]
 		if m.hiRe != nil && m.hiRe.MatchString(f[0]) && m.DPI == dpi {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// ModelByBLEName finds a model from the name a Bluetooth LE printer advertises ("MX10").
+func (db *DB) ModelByBLEName(name string) (*Model, bool) {
+	for _, id := range db.ModelIDs() {
+		m := db.models[id]
+		if m.bleRe != nil && name != "" && m.bleRe.MatchString(name) {
 			return m, true
 		}
 	}

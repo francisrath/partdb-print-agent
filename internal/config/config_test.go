@@ -223,6 +223,8 @@ func TestValidateModelTransport(t *testing.T) {
 		"ql by usb id":       "printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"04f9:209c\", serial: 000G5G313834}}]",
 		"ql-800 by usb path": "printers: [{id: a, model: QL-800, transport: {kind: usb, device: /dev/usb/lp0}}]",
 		"pt media":           "printers: [{id: a, model: PT-9500PC, transport: {kind: usb, usb_id: \"04f9:200f\"}, media: tze-24}]",
+		"ble by name":        "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: dark}]",
+		"ble by address":     "printers: [{id: a, model: MX10, transport: {kind: ble, address: \"AA:BB:CC:DD:EE:FF\"}, media: paper-57}]",
 	} {
 		if _, err := Load(write(y), true); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -235,6 +237,10 @@ func TestValidateModelTransport(t *testing.T) {
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, usb_id: \"04f9:209c\"}}]": {"device", "usb_id"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: \"4f9:209c\"}}]":                        {"usb_id", "4f9:209c"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: usb, device: /dev/usb/lp0, serial: X1}}]":            {"serial", "usb_id"},
+		"printers: [{id: a, model: MX10, transport: {kind: ble}}]":                                                 {"ble", "address", "name"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: ble, name: MX10}}]":                                  {"QL-810W", "ble"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, darkness: dark}]":                     {"darkness", "QL-810W"},
+		"printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: extra}]":                    {"darkness", "extra"},
 	} {
 		_, err := Load(write(y), true)
 		if err == nil {
