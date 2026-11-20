@@ -1,6 +1,6 @@
 # GoReleaser v2 config for macOS, run on a macOS runner after .goreleaser.yaml (see
 # .github/workflows/release.yml): universal pdb-print (no cgo) plus the cgo Bluetooth helper
-# pdb-print-ble next to it, added to the draft release the Linux job made.
+# pdb-print-ble next to it, added to the draft release the Linux job made (release.yml publishes it).
 # Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew
 version: 2
 project_name: pdb-print
@@ -48,8 +48,10 @@ archives:
 checksum:
   name_template: checksums-darwin.txt
 
-# GoReleaser publishes the Linux job's draft after the uploads and before the cask
+# The release stays a draft: release.yml publishes it once it carries every archive (should GoReleaser's
+# draft lookup fail, a release it creates is a draft too, never a published macOS-only one)
 release:
+  draft: true
   use_existing_draft: true # the Linux job's draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # a re-run of this job overwrites its own partial uploads
   mode: keep-existing

@@ -3,8 +3,9 @@ name: Release
 # Push a tag like v0.1.0 to build and publish: GitHub release with archives and
 # checksums, multi-arch image on ghcr.io, and the Homebrew cask in francisrath/homebrew-tap.
 # release (Linux) makes a draft release with everything but macOS; release-darwin adds the
-# macOS archive (it needs cgo for the Bluetooth helper), publishes the draft and then pushes
-# the cask, so a failed macOS build leaves a draft, never a half release.
+# macOS archive (it needs cgo for the Bluetooth helper) and pushes the cask, then its last step
+# publishes the draft once it carries every archive, so a failed macOS build leaves a draft,
+# never a half release.
 on:
   push:
     tags: ["v*"]
@@ -88,3 +89,30 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # fine-grained token with Contents: read/write on francisrath/homebrew-tap only
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      # The only release for the tag must be a draft with every archive; then publish it. The cask
+      # pushed by GoReleaser points at it from here on.
+      - name: publish the draft
+        run: |
+          rels=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | \"\(.id) \(.draft)\"")
+          if [ "$(grep -c . <<<"$rels")" != 1 ]; then
+            echo "::error::$(grep -c . <<<"$rels") releases for $GITHUB_REF_NAME (want one draft); delete the extra draft (docs/releasing.md)"
+            exit 1
+          fi
+          read -r id draft <<<"$rels"
+          if [ "$draft" != true ]; then
+            echo "::error::the release for $GITHUB_REF_NAME is not a draft"
+            exit 1
+          fi
+          assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$id/assets" --jq '.[].name')
+          v=${GITHUB_REF_NAME#v}
+          for a in checksums.txt checksums-darwin.txt "pdb-print_${v}_darwin_universal.tar.gz" \
+            "pdb-print_${v}_linux_amd64.tar.gz" "pdb-print_${v}_linux_arm64.tar.gz" \
+            "pdb-print_${v}_linux_armv6.tar.gz" "pdb-print_${v}_windows_amd64.zip"; do
+            if ! grep -qxF "$a" <<<"$assets"; then
+              echo "::error::draft $GITHUB_REF_NAME lacks $a; not publishing"
+              exit 1
+            fi
+          done
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

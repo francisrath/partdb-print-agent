@@ -1,6 +1,6 @@
 # GoReleaser v2 config for Linux, Windows, .debs and Docker. Release: push a tag vX.Y.Z (see
 # .github/workflows/release.yml); macOS is .goreleaser-darwin.yaml on a macOS runner, which
-# adds its assets to this config's draft release and then publishes it.
+# adds its assets to this config's draft release; release.yml then publishes it.
 # Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean
 version: 2
 project_name: pdb-print
