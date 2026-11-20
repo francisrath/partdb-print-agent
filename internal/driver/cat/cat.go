@@ -36,7 +36,8 @@ var (
 	pollEvery      = 300 * time.Millisecond
 	confirmBase    = 30 * time.Second // then "sent (not confirmed)"
 	confirmPerPage = 2 * time.Second
-	idleWait       = 10 * time.Second // for a printer still busy with a previous job
+	idleWait       = 10 * time.Second       // for a printer still busy with a previous job
+	drainWait      = 300 * time.Millisecond // notifications of the previous job dropped before ours
 )
 
 // Status flags in the first byte of an A3 reply.
@@ -55,9 +56,10 @@ type cat struct {
 
 // reader parses frames off the notification stream, keeping partial frames between calls.
 type reader struct {
-	t    driver.Transport
-	buf  []byte
-	done bool // a D3 frame came by
+	t       driver.Transport
+	buf     []byte
+	done    bool // a D3 frame came by
+	replies int  // A3 replies taken
 }
 
 // take consumes the buffered whole frames up to the first A3 reply (reply) or all of them,
@@ -73,6 +75,7 @@ func (r *reader) take(reply bool) (flags byte, ok bool) {
 		case f.cmd == cmdDone:
 			r.done = true
 		case reply && f.cmd == cmdStatus && len(f.payload) > 0:
+			r.replies++
 			return f.payload[0], true
 		}
 	}
@@ -86,7 +89,6 @@ func (r *reader) status() (flags byte, err error) {
 		return 0, err
 	}
 	deadline := time.Now().Add(replyWait)
-	p := make([]byte, 512)
 	for {
 		if flags, ok := r.take(true); ok {
 			return flags, nil
@@ -94,12 +96,33 @@ func (r *reader) status() (flags byte, err error) {
 		if !time.Now().Before(deadline) {
 			return 0, driver.ErrNoReadback
 		}
-		n, err := r.t.Read(p)
-		r.buf = append(r.buf, p[:n]...)
-		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, driver.ErrNoReadback) {
+		if err := r.read(); err != nil {
 			return 0, err
 		}
 	}
+}
+
+// read appends what one Read brings; a timeout is no error.
+func (r *reader) read() error {
+	p := make([]byte, 512)
+	n, err := r.t.Read(p)
+	r.buf = append(r.buf, p[:n]...)
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, driver.ErrNoReadback) {
+		return err
+	}
+	return nil
+}
+
+// drain reads for d and drops everything, D3 included (it belongs to the job before).
+func (r *reader) drain(d time.Duration) error {
+	for end := time.Now().Add(d); time.Now().Before(end); {
+		if err := r.read(); err != nil {
+			return err
+		}
+	}
+	r.take(false)
+	r.done = false
+	return nil
 }
 
 func (c *cat) statusOf(flags byte) *driver.Status {
@@ -163,8 +186,14 @@ func (c *cat) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		if st == nil && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if st == nil && r.replies == 0 {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: "printer stopped answering while busy with a previous job"}
+		}
 		if st == nil {
 			return nil, &driver.Error{Code: driver.Busy, Detail: "still busy with a previous job"}
+		}
+		if err := r.drain(drainWait); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
 	}
 	if _, err := t.Write(b.Bytes()); err != nil {

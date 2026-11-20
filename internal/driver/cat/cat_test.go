@@ -23,6 +23,7 @@ type fake struct {
 	written  bytes.Buffer
 	writeErr error // returned by the first Write longer than a status request
 	readErr  error // returned by Read once the replies are used up
+	perRead  int   // most bytes one Read returns (0 = any)
 }
 
 var statusRequest = frame(0xA3, 0x00)
@@ -55,6 +56,9 @@ func (f *fake) Read(p []byte) (int, error) {
 		time.Sleep(time.Millisecond)
 		return 0, os.ErrDeadlineExceeded
 	}
+	if f.perRead > 0 && len(p) > f.perRead {
+		p = p[:f.perRead]
+	}
 	n := copy(p, f.in)
 	f.in = f.in[n:]
 	return n, nil
@@ -63,11 +67,13 @@ func (f *fake) Read(p []byte) (int, error) {
 func status(flags byte) []byte { return frame(0xA3, flags, 0x01, 0x95) }
 
 func fastTimings(t *testing.T) {
-	old := [...]time.Duration{replyWait, pollEvery, confirmBase, confirmPerPage, idleWait}
-	replyWait, pollEvery, confirmBase, confirmPerPage, idleWait = 50*time.Millisecond, time.Millisecond, 300*time.Millisecond, 0, 200*time.Millisecond
-	t.Cleanup(func() {
-		replyWait, pollEvery, confirmBase, confirmPerPage, idleWait = old[0], old[1], old[2], old[3], old[4]
-	})
+	vars := []*time.Duration{&replyWait, &pollEvery, &confirmBase, &confirmPerPage, &idleWait, &drainWait}
+	fast := []time.Duration{50 * time.Millisecond, time.Millisecond, 300 * time.Millisecond, 0, 200 * time.Millisecond, 20 * time.Millisecond}
+	for i, v := range vars {
+		old := *v
+		*v = fast[i]
+		t.Cleanup(func() { *v = old })
+	}
 }
 
 func mx10(t *testing.T, darkness string) (driver.Driver, *driver.Media) {
@@ -272,5 +278,16 @@ func TestPrintWaitsForIdle(t *testing.T) {
 	}
 	if n := bytes.Count(f.written.Bytes(), statusRequest); n*len(statusRequest) != f.written.Len() {
 		t.Errorf("job bytes sent to a busy printer")
+	}
+	f = &fake{} // never answers while we wait: not busy, gone
+	_, err = d.Print(context.Background(), f, busy(m))
+	if !errors.As(err, &de) || de.Code != driver.CommsError || f.written.Len() != bytes.Count(f.written.Bytes(), statusRequest)*len(statusRequest) {
+		t.Errorf("silent while waiting: err = %v, want COMMS_ERROR and no job sent", err)
+	}
+	// the previous job's D3 arrives just after its idle reply, before our Write: no evidence for ours
+	f = &fake{replies: [][]byte{append(status(0x00), frame(0xD3, 0x19)...), status(0x00), status(0x00)}, perRead: len(status(0x00))}
+	res, err := d.Print(context.Background(), f, busy(m))
+	if err != nil || res.Confirmed || res.Message != "sent (not confirmed: printer never reported the job)" {
+		t.Errorf("late D3 of the previous job: %+v, %v", res, err)
 	}
 }
