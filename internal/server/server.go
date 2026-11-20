@@ -451,15 +451,17 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(formModels(), p.Model) {
 			return fmt.Errorf("unknown Brother QL model %s", p.Model)
 		}
-		if _, ok := printing.LookupMedia(&p, p.Media); p.Media != "" && !ok {
-			return fmt.Errorf("unknown media %q", p.Media)
+		if f := p.FallbackMedia(); f != "" {
+			if _, ok := printing.LookupMedia(&p, f); !ok {
+				return fmt.Errorf("unknown media %q", f)
+			}
 		}
 		for i := range c.Printers {
 			if c.Printers[i].ID == p.ID {
 				// keep settings the form doesn't show
 				old := c.Printers[i]
 				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
-				p.Mirror, p.UpsideDown = old.Mirror, old.UpsideDown
+				p.Mirror, p.UpsideDown, p.MediaAllowed = old.Mirror, old.UpsideDown, old.MediaAllowed
 				c.Printers[i] = p
 				return nil
 			}
@@ -568,36 +570,34 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, driver.ErrNoReadback) && needsStatus(p):
 		writeJSON(w, map[string]any{"ok": false, "text": "no status reply: check the printer's power and USB cable"})
-	case errors.Is(err, driver.ErrNoReadback) && p.Media == "":
+	case errors.Is(err, driver.ErrNoReadback) && p.FallbackMedia() == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
 		writeJSON(w, map[string]any{"ok": true, "text": "reachable (no status over TCP)"})
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
-		text, ok := statusText(st, p)
+		text, ok := statusText(s.Svc, st, p)
+		if m, _, _ := s.Svc.MediaStatus(p, st); m != nil {
+			pctx, cancel := context.WithTimeout(r.Context(), 20*time.Second) // first call measures each profile
+			defer cancel()
+			if fit := s.Svc.FittingProfiles(pctx, s.config(), m); fit != "" {
+				text += " · " + fit
+			}
+		}
 		writeJSON(w, map[string]any{"ok": ok, "text": text})
 	}
 }
 
-// statusText summarises a printer status for the UI; ok=false also when the loaded roll
-// differs from the configured media (jobs would be refused).
-func statusText(st *driver.Status, p *config.Printer) (string, bool) {
-	text := fmt.Sprintf("%s · %s · %s loaded", st.Code, st.Model, printing.MediaName(st.Media))
+// statusText summarises a printer status for the UI; ok=false also when jobs would be
+// refused or fail for the loaded roll.
+func statusText(svc *printing.Service, st *driver.Status, p *config.Printer) (string, bool) {
+	_, media, ok := svc.MediaStatus(p, st)
+	text := fmt.Sprintf("%s · %s · media: %s", st.Code, st.Model, media)
 	if st.Detail != "" {
 		text += " · " + st.Detail
 	}
-	ok := st.Code == driver.OK
-	known := st.Media != nil && st.Media.ID != "unknown"
-	switch {
-	case known && p.Media != "" && st.Media.ID != p.Media:
-		text += fmt.Sprintf(" · jobs will be refused: config expects %s", p.Media)
-		ok = false
-	case !known && p.Media == "":
-		text += " · jobs will fail: the printer doesn't report a known roll, set media for this printer"
-		ok = false
-	}
-	return text, ok
+	return text, ok && st.Code == driver.OK
 }
 
 // PrintFile prints a PDF file from another job source (e.g. the hot folder) on printerID,
@@ -640,7 +640,10 @@ func (s *Server) AgentPrinters() []partdb.AgentPrinter {
 	var wg sync.WaitGroup
 	for i := range ps {
 		p := &ps[i]
-		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.Media}
+		out[i] = partdb.AgentPrinter{ID: p.ID, Name: p.Name, Model: p.Model, Media: p.FallbackMedia()}
+		if m, _, ok := s.Svc.LastMedia(p.ID); ok {
+			out[i].Media = m.ID // the roll it reported last
+		}
 		wg.Add(1)
 		go func() { defer wg.Done(); out[i].Online = s.Svc.Online(p) }() // checks take up to 2 s each
 	}
@@ -694,6 +697,9 @@ func resultText(res *printing.Result) string {
 		return "not printed"
 	}
 	s := fmt.Sprintf("%d page(s) on %s", res.Pages, res.Media)
+	if res.MediaFrom != "" {
+		s += " (" + res.MediaFrom + ")"
+	}
 	if !res.Confirmed {
 		s += ", sent (unconfirmed)"
 	}

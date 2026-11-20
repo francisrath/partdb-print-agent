@@ -251,7 +251,8 @@ printers:
     model: QL-810W                 # → devices/brother-ql.yaml
     transport: { kind: tcp, host: 192.168.1.50, port: 9100 }
     status_transport: { kind: snmp, host: 192.168.1.50 }   # optional
-    media: dk-22210                # currently loaded (auto-detected when the printer reports it)
+    media: auto                    # the loaded roll the printer reports decides; an id is a fallback
+    media_allowed: [dk-22210, dk-22214, dk-11204]   # optional
     defaults: { cut: per_label, copies: 1 }
 
   - id: office
@@ -434,7 +435,9 @@ The sketch in 7.1 was the starting point; the code now works like this:
 * **Transport registry** (`internal/transport`): connection kinds (`tcp`, `usb`) register in `init`.
   The printing service hands drivers a connection that opens on first use, so a QL that answers over
   SNMP never gets a TCP connection just for a status check.
-* **Printing service** (`internal/printing`): per-printer lock, model and media resolution, rendering
+* **Printing service** (`internal/printing`): per-printer lock, model and media resolution (the roll the
+  printer reports, else the one it reported in the last 30 s, else the config's fallback; checked
+  against `media_allowed` and, per page, against the label size via `devicedb.Media.Fits`), rendering
   (tape: full width, edges trimmed with a warning in the job result), dispatch to the driver.
 
 * **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,

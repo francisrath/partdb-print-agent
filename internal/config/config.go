@@ -87,10 +87,14 @@ type Printer struct {
 	Name      string    `yaml:"name"`
 	Model     string    `yaml:"model"` // device database id (QL-810W, PT-9500PC); names the driver
 	Transport Transport `yaml:"transport"`
-	Media     string    `yaml:"media"`  // dk-22210, tze-24; empty = use what the printer reports
-	Rotate    string    `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
-	Cut       string    `yaml:"cut"`    // per_label | last (QL) | none | chain, half (PT); see config.example.yaml
-	Threshold uint8     `yaml:"threshold"`
+	// Media is the fallback for when the printer doesn't report its roll: dk-22210, tze-24;
+	// auto (or empty, the default) = no fallback. The roll the printer reports always wins.
+	Media string `yaml:"media"`
+	// MediaAllowed limits the rolls jobs may print on; empty = every medium the model takes.
+	MediaAllowed []string `yaml:"media_allowed,omitempty"`
+	Rotate       string   `yaml:"rotate"` // auto (default) | 0 | 90 | 180 | 270
+	Cut          string   `yaml:"cut"`    // per_label | last (QL) | none | chain, half (PT); see config.example.yaml
+	Threshold    uint8    `yaml:"threshold"`
 	// SNMP (UDP 161) reports the loaded roll and errors; network QLs give no status on 9100.
 	SNMPCommunity string `yaml:"snmp_community,omitempty"` // default "public"
 	NoSNMP        bool   `yaml:"no_snmp,omitempty"`
@@ -333,8 +337,13 @@ func (p *Printer) validate() error {
 	if !slices.Contains(m.Transports, p.Transport.Kind) {
 		return fmt.Errorf("%s connects over %s, not transport kind %q", m.ID, strings.Join(m.Transports, " or "), p.Transport.Kind)
 	}
-	if p.Media != "" && !slices.Contains(m.Media, p.Media) {
-		return fmt.Errorf("media %s doesn't fit %s (see `pdb-print media`)", p.Media, m.ID)
+	for _, id := range append([]string{p.FallbackMedia()}, p.MediaAllowed...) {
+		if id != "" && !slices.Contains(m.Media, id) {
+			return fmt.Errorf("media %s doesn't fit %s (see `pdb-print media`)", id, m.ID)
+		}
+	}
+	if f := p.FallbackMedia(); f != "" && len(p.MediaAllowed) > 0 && !slices.Contains(p.MediaAllowed, f) {
+		return fmt.Errorf("media %s isn't in media_allowed", f)
 	}
 	t := &p.Transport
 	switch t.Kind {
@@ -356,4 +365,20 @@ func (p *Printer) validate() error {
 		}
 	}
 	return nil
+}
+
+// FallbackMedia is the media to print on when the printer doesn't report its roll ("" = none).
+func (p *Printer) FallbackMedia() string {
+	if p.Media == "auto" {
+		return ""
+	}
+	return p.Media
+}
+
+// AllowedMedia lists the media ids jobs may print on: media_allowed, else every medium the model takes.
+func (p *Printer) AllowedMedia(m *devicedb.Model) []string {
+	if len(p.MediaAllowed) > 0 {
+		return p.MediaAllowed
+	}
+	return m.Media
 }

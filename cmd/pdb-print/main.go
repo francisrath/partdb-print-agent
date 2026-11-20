@@ -171,6 +171,12 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	for _, p := range cfg.Printers {
+		if f := p.FallbackMedia(); f != "" {
+			log.Info("the roll the printer reports now decides the media; media in the config is only a fallback for when it reports none",
+				"printer", p.ID, "media", f)
+		}
+	}
 	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
 	pdftoppm := cfg.Pdftoppm
 	if v := os.Getenv("PDB_PRINT_PDFTOPPM"); v != "" {
@@ -570,14 +576,20 @@ func (a *app) printers(ctx context.Context, args []string) error {
 			return err
 		}
 		st, err := a.svc.Status(ctx, p)
-		if errors.Is(err, driver.ErrNoReadback) {
+		switch {
+		case errors.Is(err, driver.ErrNoReadback):
 			fmt.Println("connected, but the printer sent no status reply")
-			return nil
-		}
-		if err != nil {
+			st = nil
+		case err != nil:
 			return err
+		default:
+			fmt.Printf("model:  %s\nstatus: %s %s\n", st.Model, st.Code, st.Detail)
 		}
-		fmt.Printf("model:  %s\nstatus: %s %s\nmedia:  %s\n", st.Model, st.Code, st.Detail, printing.MediaName(st.Media))
+		m, media, _ := a.svc.MediaStatus(p, st)
+		fmt.Printf("media:  %s\n", media)
+		if fit := a.svc.FittingProfiles(ctx, a.cfg, m); fit != "" {
+			fmt.Println(fit)
+		}
 		return nil
 	case len(args) >= 2 && args[0] == "test":
 		fs := flag.NewFlagSet("printers test", flag.ContinueOnError)

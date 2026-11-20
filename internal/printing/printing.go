@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
+	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
@@ -78,10 +80,13 @@ type Service struct {
 	// OnlineCheck replaces the reachability check behind Online (tests); nil = real check.
 	OnlineCheck func(p *config.Printer) bool
 
-	mu       sync.Mutex // guards r, printers and online
+	mu       sync.Mutex // guards r, printers, online, media and profileSizes
 	online   map[string]onlineState
 	probes   map[string]*sync.Mutex // one online check per printer at a time
 	printing map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
+	media    map[string]knownMedia  // last roll each printer reported
+	// label profile sizes measured by ProfilesFitting, by Part-DB URL and profile id
+	profileSizes map[string]profileSize
 
 	beforePublish   func()                               // tests: between an online check returning and its result being stored
 	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
@@ -343,10 +348,29 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status
 	}
 	defer t.Close()
 	st, err := drv.Status(ctx, t)
+	switch {
+	case err == nil:
+		s.observe(p, m, st)
+	case !errors.Is(err, driver.ErrNoReadback):
+		s.forgetMedia(p.ID)
+	}
 	return st, commsError(err)
 }
 
-// Print checks the printer, settles the media (config or what the printer reports), gets the
+// observe records the roll a status read reports: an allowed, known roll is remembered;
+// any other report replaces what was remembered (the roll changed or the printer is unhappy).
+func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.Status) {
+	switch {
+	case st == nil || st.Media == nil && st.Code == driver.OK:
+		// says nothing about the roll: keep what we know
+	case st.Code == driver.OK && st.Media.ID != "unknown" && slices.Contains(p.AllowedMedia(model), st.Media.ID):
+		s.rememberMedia(p.ID, *st.Media)
+	default:
+		s.forgetMedia(p.ID)
+	}
+}
+
+// Print checks the printer, settles the media (what the printer reports, else the config's), gets the
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
 func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (*Result, error) {
@@ -359,10 +383,6 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	model, drv, err := printer(p)
 	if err != nil {
 		return nil, err
-	}
-	media, ok := LookupMedia(p, p.Media)
-	if p.Media != "" && !ok {
-		return nil, fmt.Errorf("unknown media %q", p.Media)
 	}
 	var t *lazyTransport
 	var st *driver.Status
@@ -378,44 +398,33 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 			if err != driver.ErrNoReadback { // the driver says more (Zebra: what silence usually means)
 				detail = err.Error()
 			}
+			s.forgetMedia(p.ID)
 			return nil, &driver.Error{Code: driver.CommsError, Detail: detail}
 		case errors.Is(err, driver.ErrNoReadback):
 			s.Log.Warn("printer sent no status; printing blind", "printer", p.ID)
 			st = nil
 		case err != nil:
+			s.forgetMedia(p.ID)
 			return nil, commsError(err)
 		}
 		// connect now, before fetching and rendering, even if the status came over SNMP
 		if err := t.open(); err != nil {
+			s.forgetMedia(p.ID)
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 		}
+		s.observe(p, model, st)
 		if st != nil {
 			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "type", st.MediaType, "via", st.Via)
 			if st.Code != driver.OK {
 				return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 			}
-			switch {
-			case st.Media == nil:
-			case st.Media.ID == "unknown" && media.Kind == driver.DieCut && st.Media.PrintableLengthDots > 0:
-				// a printer that measures its labels but can't name them (Zebra): when it measured up to a
-				// millimetre less than configured, print at that length so no row lands on the gap; the
-				// measurement includes the gap, so a longer one never stretches the label
-				if d := st.Media.PrintableLengthDots - media.PrintableLengthDots; ok && d <= 0 && float64(-d) <= math.Round(float64(media.DPI)/25.4) {
-					media.PrintableLengthDots, media.LengthMM = st.Media.PrintableLengthDots, st.Media.LengthMM
-				}
-			case st.Media.ID == "unknown":
-				s.Log.Warn("printer reports media this agent doesn't know; using the configured media", "loaded", MediaName(st.Media))
-			case p.Media != "" && st.Media.ID != p.Media:
-				return nil, &driver.Error{Code: driver.MediaMismatch,
-					Detail: fmt.Sprintf("config says %s, printer has %s loaded", p.Media, MediaName(st.Media))}
-			case p.Media == "":
-				media, ok = *st.Media, true
-			}
 		}
 	}
-	if !ok {
-		return nil, errors.New("media unknown: set `media:` for this printer in the config")
+	media, from, err := s.pickMedia(p, model, st)
+	if err != nil {
+		return nil, err
 	}
+	s.Log.Debug("media", "printer", p.ID, "media", media.ID, "from", from)
 
 	pdf, err := source(&media)
 	if err != nil {
@@ -423,8 +432,13 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	}
 	start := time.Now()
 	pages, warnings, err := s.render(pdf, p, &media)
-	if errors.Is(err, render.ErrSize) {
-		return nil, &driver.Error{Code: driver.MediaMismatch, Detail: err.Error() + " (set allow_scaling to print it scaled)"}
+	var se *render.SizeError
+	if errors.As(err, &se) {
+		detail := devicedb.Mismatch(se.WMM, se.HMM, &media, devicedb.Default().MediaFor(model))
+		if p.Rotate != "" && p.Rotate != "auto" {
+			detail = err.Error() // a fixed rotation decides which side goes across: say what it checked
+		}
+		return nil, &driver.Error{Code: driver.MediaMismatch, Detail: detail + " (set allow_scaling to print it scaled)"}
 	}
 	if err != nil {
 		return nil, &driver.Error{Code: driver.RenderError, Detail: err.Error()}
@@ -440,19 +454,106 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		if err := drv.Encode(&b, job); err != nil {
 			return nil, err
 		}
-		res := &Result{Pages: len(pages), Media: media.ID, Bytes: b.Len(), Warnings: warnings}
+		res := &Result{Pages: len(pages), Media: media.ID, MediaFrom: from, Bytes: b.Len(), Warnings: warnings}
 		return res, os.WriteFile(dryRun, b.Bytes(), 0o644)
 	}
 	res, err := drv.Print(ctx, t, job)
 	if err != nil {
+		s.forgetMedia(p.ID) // the roll may be out or swapped: ask again next time
 		return nil, err
 	}
 	for _, w := range res.Warnings {
 		s.Log.Warn(w, "printer", p.ID)
 	}
-	res.Warnings = append(warnings, res.Warnings...)
+	res.Warnings, res.MediaFrom = append(warnings, res.Warnings...), from
 	s.Log.Info(res.Message, "printer", p.ID, "pages", res.Pages, "bytes", res.Bytes, "took", time.Since(start).Round(time.Millisecond))
 	return res, nil
+}
+
+// Where a job's media came from (see pickMedia).
+const (
+	FromPrinter  = "detected"
+	FromCache    = "detected earlier"
+	FromFallback = "config fallback"
+)
+
+// mediaTTL is how long a detected roll stands in for a status read that says nothing about the
+// media (SNMP down, a printer that printed blind).
+const mediaTTL = 30 * time.Second
+
+type knownMedia struct {
+	m  driver.Media
+	at time.Time
+}
+
+func (s *Service) rememberMedia(id string, m driver.Media) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.media == nil {
+		s.media = map[string]knownMedia{}
+	}
+	s.media[id] = knownMedia{m, time.Now()}
+}
+
+func (s *Service) forgetMedia(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.media, id)
+}
+
+// LastMedia is the roll the printer reported last, however long ago (for display).
+func (s *Service) LastMedia(id string) (driver.Media, time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.media[id]
+	return k.m, k.at, ok
+}
+
+// pickMedia settles the media for a job: the roll the printer reports, else the one it reported
+// in the last 30 s, else the config's media as a fallback.
+func (s *Service) pickMedia(p *config.Printer, model *devicedb.Model, st *driver.Status) (driver.Media, string, error) {
+	fallback, hasFallback := driver.Media{}, false
+	if id := p.FallbackMedia(); id != "" {
+		if fallback, hasFallback = LookupMedia(p, id); !hasFallback {
+			return fallback, "", fmt.Errorf("unknown media %q", id)
+		}
+	}
+	if st != nil && st.Media != nil {
+		loaded := st.Media
+		switch {
+		case loaded.ID == "unknown" && loaded.Kind == driver.DieCut && loaded.PrintableLengthDots > 0 && hasFallback:
+			// a printer that measures its labels but can't name them (Zebra): when it measured up to a
+			// millimetre less than configured, print at that length so no row lands on the gap; the
+			// measurement includes the gap, so a longer one never stretches the label
+			if d := loaded.PrintableLengthDots - fallback.PrintableLengthDots; d <= 0 && float64(-d) <= math.Round(float64(fallback.DPI)/25.4) {
+				fallback.PrintableLengthDots, fallback.LengthMM = loaded.PrintableLengthDots, loaded.LengthMM
+			}
+			return fallback, FromFallback, nil
+		case loaded.ID == "unknown" && hasFallback:
+			s.Log.Warn("printer reports media this agent doesn't know; using the configured media", "loaded", MediaName(loaded))
+			return fallback, FromFallback, nil
+		case loaded.ID == "unknown":
+			return driver.Media{}, "", fmt.Errorf("printer has %s loaded, which this agent doesn't know: set `media:` for this printer", MediaName(loaded))
+		}
+		if allowed := p.AllowedMedia(model); !slices.Contains(allowed, loaded.ID) {
+			return driver.Media{}, "", &driver.Error{Code: driver.MediaMismatch,
+				Detail: fmt.Sprintf("printer has %s (%s) loaded; this printer takes %s", loaded.ID, loaded.Describe(), strings.Join(allowed, ", "))}
+		}
+		return *loaded, FromPrinter, nil
+	}
+	if k, ok := s.recentMedia(p, model); ok {
+		return k, FromCache, nil
+	}
+	if hasFallback {
+		return fallback, FromFallback, nil
+	}
+	return driver.Media{}, "", errors.New("media unknown: the printer doesn't report its roll; set `media:` for this printer as a fallback")
+}
+
+// recentMedia is the roll the printer reported in the last 30 s, if this printer may print on it.
+func (s *Service) recentMedia(p *config.Printer, model *devicedb.Model) (driver.Media, bool) {
+	m, at, ok := s.LastMedia(p.ID)
+	return m, ok && time.Since(at) < mediaTTL && slices.Contains(p.AllowedMedia(model), m.ID)
 }
 
 func MediaName(m *driver.Media) string {
@@ -463,4 +564,59 @@ func MediaName(m *driver.Media) string {
 		return fmt.Sprintf("unknown %s %gx%g mm", m.Kind, m.WidthMM, m.LengthMM)
 	}
 	return m.ID
+}
+
+// MediaStatus says which media a job would use after status st (the same choice as pickMedia, without changing anything): "dk-22214 (detected)" or
+// "dk-22210 (config fallback)"; ok is false when jobs would be refused or fail. m is that
+// media, nil if none.
+func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *driver.Media, text string, ok bool) {
+	var loaded *driver.Media
+	if st != nil {
+		loaded = st.Media
+	}
+	model, err := p.DeviceModel()
+	if err != nil {
+		return nil, err.Error(), false
+	}
+	if loaded != nil && loaded.ID != "unknown" {
+		if !slices.Contains(p.AllowedMedia(model), loaded.ID) {
+			return loaded, loaded.ID + " (detected; not in media_allowed: jobs will be refused)", false
+		}
+		return loaded, loaded.ID + " (detected)", true
+	}
+	if loaded == nil { // like pickMedia: a roll seen lately stands in for a status that names none
+		if r, ok := s.recentMedia(p, model); ok {
+			return &r, r.ID + " (" + FromCache + ")", true
+		}
+	}
+	if f := p.FallbackMedia(); f != "" {
+		if fm, ok := LookupMedia(p, f); ok {
+			return &fm, f + " (config fallback)", true
+		}
+	}
+	return nil, MediaName(loaded) + " reported; jobs will fail: set media for this printer as a fallback", false
+}
+
+// FittingProfiles lists the label profiles of the config's Part-DB instance whose labels fit m,
+// as "fits profiles: 2 part bag 29 mm, 4 drawer"; "" without an instance or on errors (logged).
+func (s *Service) FittingProfiles(ctx context.Context, cfg *config.Config, m *driver.Media) string {
+	in, err := cfg.Instance("")
+	if err != nil || m == nil {
+		return ""
+	}
+	ps, err := s.ProfilesFitting(ctx, partdb.FromInstance(in), m)
+	if err != nil {
+		s.Log.Warn("checking label profiles against the roll", "err", err)
+	}
+	if len(ps) == 0 {
+		if err != nil {
+			return ""
+		}
+		return "no Part-DB label profile fits " + m.Describe()
+	}
+	names := make([]string, len(ps))
+	for i, p := range ps {
+		names[i] = fmt.Sprintf("%d %s", p.ID, p.Name)
+	}
+	return "fits profiles: " + strings.Join(names, ", ")
 }

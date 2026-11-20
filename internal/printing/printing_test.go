@@ -193,11 +193,12 @@ func (n *nonLaminated) Read(p []byte) (int, error) {
 }
 
 func TestPrintPTMediaMismatch(t *testing.T) {
-	f := newFakePT()
-	_, err := service(t, f).Print(context.Background(), ptPrinter("tze-24", ""), "", labels(1))
+	f := newFakePT() // 36 mm loaded; config media is only a fallback
+	_, err := service(t, f).Print(context.Background(), ptPrinter("tze-24", ""), "", PDF(pdfgen.Page(24, 50, pdfgen.Text("PT"))))
 	var de *driver.Error
-	if !errors.As(err, &de) || de.Code != driver.MediaMismatch {
-		t.Fatalf("err = %v, want MEDIA_MISMATCH", err)
+	if !errors.As(err, &de) || de.Code != driver.MediaMismatch ||
+		!strings.Contains(de.Detail, "label is 24×50 mm (needs 24 mm tape), printer has tze-36 (36 mm tape) loaded") {
+		t.Fatalf("err = %v, want MEDIA_MISMATCH naming the 24 mm label", err)
 	}
 	if len(f.writes) != 1 {
 		t.Errorf("%d writes; only the status request may be sent", len(f.writes))
