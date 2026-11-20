@@ -650,28 +650,28 @@ func discover(ctx context.Context, args []string) error {
 		fmt.Println("no printers found")
 		return nil
 	}
-	for _, c := range found {
-		addr, what := c.Device, c.ModelID
+	printCandidates(os.Stdout, found)
+	return nil
+}
+
+// printCandidates writes one block per printer, a blank line between them.
+func printCandidates(w io.Writer, found []discovery.Candidate) {
+	for i, c := range found {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		addr := c.Device
 		if c.Kind == "tcp" {
 			addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 		}
-		switch {
-		case what == "" && c.IEEE1284["MDL"] != "":
-			what = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
-		case what == "" && c.SNMPDescr != "":
-			what = c.SNMPDescr
-		case what == "":
-			what = "?"
-		}
-		fmt.Printf("%-4s %-22s %-28s %s\n", c.Kind, addr, what, c.Status)
+		fmt.Fprintf(w, "%-4s %-22s %-28s %s\n", c.Kind, addr, c.Name(), c.Status)
 		if c.Status != discovery.Unknown {
-			fmt.Printf("     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
+			fmt.Fprintf(w, "     model: %s\n     %s\n", c.ModelID, discovery.TransportLine(c))
 		}
 	}
 	if slices.ContainsFunc(found, func(c discovery.Candidate) bool { return c.Status == discovery.Unknown }) {
-		fmt.Println("\nUnknown printers: `pdb-print report` collects what we need to add them.")
+		fmt.Fprintln(w, "\nUnknown printers: `pdb-print report` collects what we need to add them.")
 	}
-	return nil
 }
 
 func tryCmd(ctx context.Context, args []string) error {

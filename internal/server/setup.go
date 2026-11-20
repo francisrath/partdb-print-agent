@@ -213,17 +213,9 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
 			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
-		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: candidateName(c)})
+		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr})
-}
-
-// candidateName is what the printer list shows: the model, else the device's own description
-// (up to its first ";": Brother appends the network card and firmware).
-func candidateName(c discovery.Candidate) string {
-	name := cmp.Or(c.ModelID, c.SNMPDescr, c.IEEE1284["MDL"], "Unknown printer")
-	name, _, _ = strings.Cut(name, ";")
-	return strings.TrimSpace(name)
 }
 
 func sortCandidates(cs []discovery.Candidate) []discovery.Candidate {

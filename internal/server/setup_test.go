@@ -392,14 +392,6 @@ func TestPartDBStepLinksToTokenPage(t *testing.T) {
 	}
 }
 
-// A long SNMP description is cut to the model part.
-func TestCandidateNameShort(t *testing.T) {
-	c := discovery.Candidate{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z ,MID 84E-755"}
-	if got := candidateName(c); got != "Brother HL-L3270CDW series" {
-		t.Errorf("name %q", got)
-	}
-}
-
 // A printer that didn't say what it is (a Zebra without SNMP) can be asked, with a warning.
 func TestWizardIdentify(t *testing.T) {
 	h := newHarness(t)

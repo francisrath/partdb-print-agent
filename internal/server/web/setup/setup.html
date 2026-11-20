@@ -61,7 +61,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
   {{range .Rows}}
   <label class="option{{if not .Supported}} off{{end}}">
     <span><input type="radio" name="choice" value="{{.Index}}"{{if .Current}} checked{{end}} {{if not .Supported}}disabled{{end}} required>
-    <strong>{{.Name}}</strong> · {{.Where}}</span>
+    <strong>{{if eq .Name "?"}}Unknown printer{{else}}{{.Name}}{{end}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>
   {{if not .Supported}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}">Ask this printer what it is</button>

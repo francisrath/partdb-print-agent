@@ -42,6 +42,23 @@ type Candidate struct {
 	Status    string            `json:"status"`
 }
 
+// Name is how to show the printer: its model, else what it says about itself (IEEE 1284, or the
+// SNMP description up to its first ";": Brother appends the network card and firmware), else "?".
+func (c *Candidate) Name() string {
+	name := c.ModelID
+	if name == "" && c.IEEE1284["MDL"] != "" {
+		name = strings.TrimSpace(c.IEEE1284["MFG"] + " " + c.IEEE1284["MDL"])
+	}
+	if name == "" {
+		name, _, _ = strings.Cut(c.SNMPDescr, ";")
+		name = strings.TrimSpace(name)
+	}
+	if name == "" {
+		return "?"
+	}
+	return name
+}
+
 func (c *Candidate) setModel(m *devicedb.Model) {
 	c.Model, c.Status = m, Unknown
 	if m == nil {

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/partdb-print-agent/internal/discovery"
 	"github.com/francisrath/partdb-print-agent/internal/server"
 	"github.com/zalando/go-keyring"
 )
@@ -379,5 +380,21 @@ func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return 
 func TestTryArgs(t *testing.T) {
 	if err := run(context.Background(), []string{"try", "10.0.0.1", "10.0.0.2"}); err == nil || !strings.Contains(err.Error(), "at most one") {
 		t.Errorf("two addresses: %v", err)
+	}
+}
+
+// One block per printer, with a blank line between, so long names don't run together.
+func TestPrintCandidates(t *testing.T) {
+	var b bytes.Buffer
+	printCandidates(&b, []discovery.Candidate{
+		{Kind: "tcp", Host: "192.168.1.160", Port: 9100, ModelID: "QL-810W", Status: discovery.Supported},
+		{Kind: "tcp", Host: "192.168.1.252", Port: 9100, SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z", Status: discovery.Unknown},
+	})
+	out := b.String()
+	if !strings.Contains(out, "transport: {kind: tcp, host: 192.168.1.160}\n\ntcp  192.168.1.252:9100") {
+		t.Errorf("no blank line between printers:\n%s", out)
+	}
+	if strings.Contains(out, "NC-9400h") || !strings.Contains(out, "Brother HL-L3270CDW series") {
+		t.Errorf("long SNMP description not cut:\n%s", out)
 	}
 }

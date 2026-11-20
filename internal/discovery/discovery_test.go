@@ -243,3 +243,16 @@ func TestIdentifyNonZebra(t *testing.T) {
 		t.Errorf("sent %q, want only ~HI", g)
 	}
 }
+
+func TestCandidateName(t *testing.T) {
+	for c, want := range map[*Candidate]string{
+		{ModelID: "QL-810W", SNMPDescr: "Brother QL-810W"}:                                        "QL-810W",
+		{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z  ,MID 84E-755"}: "Brother HL-L3270CDW series",
+		{IEEE1284: map[string]string{"MFG": "Zebra Technologies", "MDL": "ZTC GK420d"}}:           "Zebra Technologies ZTC GK420d",
+		{}: "?",
+	} {
+		if got := c.Name(); got != want {
+			t.Errorf("%+v → %q, want %q", *c, got, want)
+		}
+	}
+}
