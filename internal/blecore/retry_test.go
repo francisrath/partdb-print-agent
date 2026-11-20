@@ -3,6 +3,8 @@ package blecore
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,14 +70,14 @@ func TestConnected(t *testing.T) {
 func TestDial(t *testing.T) {
 	ctx := context.Background()
 	t.Run("connects", func(t *testing.T) {
-		d, err := Dial(ctx, time.Second, time.Second, func() (int, error) { return 1, nil }, func(int) { t.Error("dropped") })
+		d, err := new(Dialer[int]).Dial(ctx, "AA", time.Second, time.Second, func() (int, error) { return 1, nil }, func(int) { t.Error("dropped") })
 		if d != 1 || err != nil {
 			t.Fatalf("%v %v", d, err)
 		}
 	})
 	t.Run("late connection is dropped before Dial returns", func(t *testing.T) {
 		var dropped atomic.Int32
-		_, err := Dial(ctx, 20*time.Millisecond, time.Second, func() (int, error) {
+		_, err := new(Dialer[int]).Dial(ctx, "AA", 20*time.Millisecond, time.Second, func() (int, error) {
 			time.Sleep(60 * time.Millisecond)
 			return 7, nil
 		}, func(d int) { dropped.Store(int32(d)) })
@@ -90,7 +92,7 @@ func TestDial(t *testing.T) {
 		release := make(chan struct{})
 		defer close(release)
 		start := time.Now()
-		_, err := Dial(ctx, 10*time.Millisecond, 30*time.Millisecond, func() (int, error) { <-release; return 0, errors.New("x") }, func(int) {})
+		_, err := new(Dialer[int]).Dial(ctx, "AA", 10*time.Millisecond, 30*time.Millisecond, func() (int, error) { <-release; return 0, errors.New("x") }, func(int) {})
 		if !errors.Is(err, ErrConnectTimeout) || time.Since(start) > time.Second {
 			t.Fatalf("err %v after %v", err, time.Since(start))
 		}
@@ -98,8 +100,51 @@ func TestDial(t *testing.T) {
 	t.Run("cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
-		if _, err := Dial(ctx, time.Second, time.Second, func() (int, error) { time.Sleep(20 * time.Millisecond); return 0, errors.New("x") }, func(int) {}); !errors.Is(err, context.Canceled) {
+		if _, err := new(Dialer[int]).Dial(ctx, "AA", time.Second, time.Second, func() (int, error) { time.Sleep(20 * time.Millisecond); return 0, errors.New("x") }, func(int) {}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("err %v", err)
 		}
 	})
+}
+
+// A Linux Connect can outlive the grace (it may wait for a connected signal forever): while it is pending,
+// a new Dial to that address fails at once, and the late success is dropped on its own link only.
+func TestDialPendingAttempt(t *testing.T) {
+	ctx := context.Background()
+	var x Dialer[int]
+	release := make(chan struct{})
+	var dropped []int
+	var mu sync.Mutex
+	drop := func(d int) { mu.Lock(); dropped = append(dropped, d); mu.Unlock() }
+	_, err := x.Dial(ctx, "AA", 10*time.Millisecond, 20*time.Millisecond, func() (int, error) { <-release; return 1, nil }, drop)
+	if !errors.Is(err, ErrConnectTimeout) {
+		t.Fatalf("first: %v", err)
+	}
+	start := time.Now()
+	_, err = x.Dial(ctx, "AA", time.Second, time.Second, func() (int, error) { return 2, nil }, drop)
+	if !errors.Is(err, ErrConnectPending) || !strings.Contains(err.Error(), "previous connection attempt to AA still pending; switch the printer off and on") {
+		t.Fatalf("second: %v", err)
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Error("second Dial waited")
+	}
+	if d, err := x.Dial(ctx, "BB", time.Second, time.Second, func() (int, error) { return 3, nil }, drop); d != 3 || err != nil {
+		t.Fatalf("other address: %v %v", d, err)
+	}
+	close(release) // the first attempt connects at last and is dropped
+	deadline := time.Now().Add(time.Second)
+	for {
+		d, err := x.Dial(ctx, "AA", time.Second, time.Second, func() (int, error) { return 4, nil }, drop)
+		if err == nil && d == 4 {
+			break
+		}
+		if !errors.Is(err, ErrConnectPending) || time.Now().After(deadline) {
+			t.Fatalf("after the old attempt ended: %v %v", d, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dropped) != 1 || dropped[0] != 1 {
+		t.Errorf("dropped %v, want only the old attempt's link 1", dropped)
+	}
 }

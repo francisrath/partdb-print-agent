@@ -55,6 +55,7 @@ var (
 	enabled   bool
 	scanMu    sync.Mutex
 	connectMu sync.Mutex // Open's scan + connect, so two jobs don't race for the adapter
+	dialer    blecore.Dialer[bluetooth.Device]
 
 	liveMu sync.Mutex
 	live   = map[string]*blecore.Chunker{} // open connections by address, for the disconnect handler
@@ -161,7 +162,9 @@ func (t *Transport) Open(ctx context.Context) error {
 	err = blecore.ConnectRetry(ctx, retryPause, func() (err error) {
 		dev, err = connect(ctx, addr)
 		return err
-	}, func(err error) bool { return !errors.Is(err, blecore.ErrConnectTimeout) }, func() { dropStale(ctx, addr) })
+	}, func(err error) bool {
+		return !errors.Is(err, blecore.ErrConnectTimeout) && !errors.Is(err, blecore.ErrConnectPending)
+	}, func() { dropStale(ctx, addr) })
 	if err != nil {
 		return fmt.Errorf("ble: connect %s: %w", ad.Address, err)
 	}
@@ -172,11 +175,11 @@ func (t *Transport) Open(ctx context.Context) error {
 	return nil
 }
 
-// connect gives up after connectTimeout. A connection that still comes up later is dropped before
-// connect returns (Open holds connectMu), so it can't drop a later Open's link to the same printer. BlueZ's
-// Connect call itself ends after the 25 s D-Bus timeout.
+// connect gives up after connectTimeout. A connection that still comes up within 30 s is dropped before
+// connect returns (Open holds connectMu); an attempt running longer keeps the printer's address pending
+// (see blecore.Dialer), so its late cleanup can't drop a later Open's link to the same printer.
 func connect(ctx context.Context, addr bluetooth.Address) (bluetooth.Device, error) {
-	return blecore.Dial(ctx, connectTimeout, 30*time.Second, func() (bluetooth.Device, error) {
+	return dialer.Dial(ctx, addr.String(), connectTimeout, 30*time.Second, func() (bluetooth.Device, error) {
 		return adapter.Connect(addr, bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(connectTimeout)})
 	}, func(d bluetooth.Device) { _ = d.Disconnect() })
 }

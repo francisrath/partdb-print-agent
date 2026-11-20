@@ -163,40 +163,70 @@ func ConnectRetry(ctx context.Context, pause time.Duration, connect func() error
 // ErrConnectTimeout: Dial gave up waiting for the connection.
 var ErrConnectTimeout = errors.New("no connection")
 
-// Dial runs connect, giving up after timeout or when ctx ends. An abandoned attempt may still connect
-// later: Dial waits up to grace for it to end and drops what it brought up, so that cleanup can't hit the
-// link of a later connection to the same device (callers serialise connects). An attempt still running
-// after grace is left to drop its connection on its own.
-func Dial[D any](ctx context.Context, timeout, grace time.Duration, connect func() (D, error), drop func(D)) (D, error) {
+// ErrConnectPending: an earlier, abandoned attempt to the same address hasn't ended yet.
+var ErrConnectPending = errors.New("previous connection attempt")
+
+// Dialer runs connection attempts and remembers, per address, the abandoned ones still running. The zero
+// value is ready to use.
+type Dialer[D any] struct {
+	mu      sync.Mutex
+	pending map[string]bool
+}
+
+// Dial runs connect to addr, giving up after timeout or when ctx ends. An abandoned attempt may still
+// connect later: Dial waits up to grace for it to end and drops what it brought up. One still running
+// after grace (v0.17.0's Linux Connect can wait for its connected signal forever) keeps addr pending:
+// Dials to addr fail at once until it ends, so its late cleanup can't drop a newer link to the device.
+func (x *Dialer[D]) Dial(ctx context.Context, addr string, timeout, grace time.Duration, connect func() (D, error), drop func(D)) (D, error) {
+	var zero D
+	x.mu.Lock()
+	if x.pending[addr] {
+		x.mu.Unlock()
+		return zero, fmt.Errorf("%w to %s still pending; switch the printer off and on", ErrConnectPending, addr)
+	}
+	if x.pending == nil {
+		x.pending = map[string]bool{}
+	}
+	x.pending[addr] = true
+	x.mu.Unlock()
+	unpend := func() {
+		x.mu.Lock()
+		delete(x.pending, addr)
+		x.mu.Unlock()
+	}
+
 	type result struct {
 		dev D
 		err error
 	}
-	res := make(chan result, 1)
+	res := make(chan result) // unbuffered: an attempt either hands its result over or sees abandoned
+	abandoned, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		d, err := connect()
-		res <- result{d, err}
-	}()
-	late := func(r result) {
-		if r.err == nil {
-			drop(r.dev)
+		select {
+		case res <- result{d, err}:
+		case <-abandoned:
+			if err == nil {
+				drop(d)
+			}
+			unpend() // only now: the drop above is done
+			close(done)
 		}
-	}
+	}()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case r := <-res:
+		unpend()
 		return r.dev, r.err
 	case <-timer.C:
 	case <-ctx.Done():
 	}
+	close(abandoned)
 	select {
-	case r := <-res:
-		late(r)
+	case <-done:
 	case <-time.After(grace):
-		go func() { late(<-res) }() // ponytail: may then hit a later link; grace covers BlueZ's own timeout
 	}
-	var zero D
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}

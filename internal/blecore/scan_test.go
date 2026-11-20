@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -231,4 +232,34 @@ func TestRadioRun(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// tinygo's Linux Scan keeps its state after a failed start: only a Stop lets the next scan run.
+func TestRadioRunAfterFailedStart(t *testing.T) {
+	var scanning, fail atomic.Bool
+	r := Radio{
+		Scan: func(found func(Advert)) error {
+			if !scanning.CompareAndSwap(false, true) {
+				return errors.New("bluetooth: a scan is already in progress")
+			}
+			if fail.Load() {
+				return errors.New("SetDiscoveryFilter failed") // the state stays set, as in v0.17.0
+			}
+			found(Advert{Name: "MX10", Address: "AA:01"})
+			for scanning.Load() {
+				time.Sleep(time.Millisecond)
+			}
+			return nil
+		},
+		Stop: func() error { scanning.Store(false); return nil },
+	}
+	fail.Store(true)
+	if _, err := r.Run(context.Background(), time.Second, nil); err == nil || !strings.Contains(err.Error(), "SetDiscoveryFilter") {
+		t.Fatalf("failed start: %v", err)
+	}
+	fail.Store(false)
+	got, err := r.Run(context.Background(), 50*time.Millisecond, nil)
+	if err != nil || len(got) != 1 || got[0].Address != "AA:01" {
+		t.Fatalf("second scan: %+v, %v", got, err)
+	}
 }
