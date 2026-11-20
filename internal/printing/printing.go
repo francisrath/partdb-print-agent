@@ -86,10 +86,11 @@ type Service struct {
 	printing    map[string]bool        // printers with a job running (their lock is also held by status checks and probes)
 	unconfirmed map[string]bool        // printers whose last job was sent but not confirmed (see driver.Job.PrevUnconfirmed)
 
-	beforePublish   func()                               // tests: between an online check returning and its result being stored
-	probeTimeout    time.Duration                        // USB online check; 0 = 2 s
-	openDevice      func(path string) (io.Closer, error) // USB online check; nil = open read/write
-	waitingForCheck func()                               // tests: an online call is about to wait for a running check
+	beforePublish   func()                                                       // tests: between an online check returning and its result being stored
+	probeTimeout    time.Duration                                                // USB online check; 0 = 2 s
+	openDevice      func(path string) (io.Closer, error)                         // USB online check; nil = open read/write
+	waitingForCheck func()                                                       // tests: an online call is about to wait for a running check
+	newDriver       func(*devicedb.Model, driver.Options) (driver.Driver, error) // tests: a fake driver; nil = driver.New
 	r               *render.Renderer
 	printers        map[string]*sync.Mutex
 }
@@ -310,12 +311,16 @@ func (s *Service) connect(ctx context.Context, p *config.Printer, m *devicedb.Mo
 }
 
 // printer resolves the printer's model and builds its driver.
-func printer(p *config.Printer) (*devicedb.Model, driver.Driver, error) {
+func (s *Service) printer(p *config.Printer) (*devicedb.Model, driver.Driver, error) {
 	m, err := p.DeviceModel()
 	if err != nil {
 		return nil, nil, err
 	}
-	d, err := driver.New(m, options(p))
+	newDriver := driver.New
+	if s.newDriver != nil {
+		newDriver = s.newDriver
+	}
+	d, err := newDriver(m, options(p))
 	return m, d, err
 }
 
@@ -331,7 +336,7 @@ func commsError(err error) error {
 // Status queries the printer. Models that must not be asked while printing (PT) answer BUSY
 // during a job without being asked. driver.ErrNoReadback if the printer doesn't answer.
 func (s *Service) Status(ctx context.Context, p *config.Printer) (*driver.Status, error) {
-	m, drv, err := printer(p)
+	m, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +367,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	s.setPrinting(p.ID, true)
 	defer s.setPrinting(p.ID, false)
 
-	model, drv, err := printer(p)
+	model, drv, err := s.printer(p)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +462,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	if s.unconfirmed == nil {
 		s.unconfirmed = map[string]bool{}
 	}
-	s.unconfirmed[p.ID] = res != nil && !res.Confirmed
+	s.unconfirmed[p.ID] = err != nil || res == nil || !res.Confirmed // a failed job may still be printing
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err

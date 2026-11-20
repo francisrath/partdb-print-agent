@@ -554,3 +554,74 @@ func TestLazyTransportUnwrap(t *testing.T) {
 		t.Errorf("Unwrap = %v", got)
 	}
 }
+
+// fakeCat is a cat-printer driver that records its jobs: Print answers from results in turn (an
+// unconfirmed send, a confirmed one, an error) and, with gate set, waits for it first.
+type fakeCat struct {
+	mu       sync.Mutex
+	jobs     []driver.Job
+	statuses int
+	results  []error // nil = confirmed; errUnconfirmed = sent, not confirmed; else the error
+	gate     chan struct{}
+	printing chan struct{}
+}
+
+var errUnconfirmed = errors.New("unconfirmed")
+
+func (f *fakeCat) Status(context.Context, driver.Transport) (*driver.Status, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statuses++
+	return &driver.Status{Code: driver.OK, Model: "MX10"}, nil
+}
+
+func (f *fakeCat) Print(_ context.Context, _ driver.Transport, job *driver.Job) (*driver.Result, error) {
+	if f.printing != nil {
+		close(f.printing)
+		<-f.gate
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.jobs = append(f.jobs, *job)
+	var err error
+	if len(f.results) > 0 {
+		err, f.results = f.results[0], f.results[1:]
+	}
+	switch err {
+	case nil:
+		return &driver.Result{Pages: len(job.Pages), Confirmed: true}, nil
+	case errUnconfirmed:
+		return &driver.Result{Pages: len(job.Pages)}, nil
+	}
+	return nil, err
+}
+
+func (f *fakeCat) Encode(io.Writer, *driver.Job) error { return nil }
+
+func catService(t *testing.T, f *fakeCat) (*Service, *config.Printer) {
+	t.Helper()
+	s := service(t, nil)
+	s.OpenTransport = func(*config.Printer) driver.Transport { return &silent{kind: "ble"} }
+	s.newDriver = func(*devicedb.Model, driver.Options) (driver.Driver, error) { return f, nil }
+	return s, &config.Printer{ID: "mx10", Model: "MX10", Media: "paper-57", AllowScaling: true,
+		Transport: config.Transport{Kind: "ble", Name: "MX10"}}
+}
+
+// A job after one that was sent but not confirmed (or failed) waits for that job's end report; after a
+// confirmed job it doesn't.
+func TestPrintPassesPrevUnconfirmed(t *testing.T) {
+	f := &fakeCat{results: []error{errUnconfirmed, nil, errors.New("link dropped"), nil}}
+	s, p := catService(t, f)
+	for range 5 {
+		_, _ = s.Print(context.Background(), p, "", labels(1))
+	}
+	want := []bool{false, true, false, true, false}
+	for i, j := range f.jobs {
+		if j.PrevUnconfirmed != want[i] {
+			t.Errorf("job %d: PrevUnconfirmed %v, want %v", i+1, j.PrevUnconfirmed, want[i])
+		}
+	}
+	if len(f.jobs) != len(want) {
+		t.Fatalf("%d jobs printed, want %d", len(f.jobs), len(want))
+	}
+}
