@@ -51,7 +51,7 @@ commands:
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
-  try [HOST] [--port N]            guided test of a printer (Zebra for now) by someone next to it:
+  try [HOST] [--port N]            guided test of a printer (Zebra or Bluetooth cat printer) by someone next to it:
                                    numbered test labels, questions, fixes; writes a report file
   pair [--addr 127.0.0.1:8631]     open the setup wizard to the LAN for a while (prints a code)
   render FILE.pdf [--printer ID | --media ID] [-o DIR]
