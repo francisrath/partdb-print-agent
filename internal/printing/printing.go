@@ -368,9 +368,6 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()
-	if dryRun == "" {
-		defer func() { s.noteBLE(p, err) }()
-	}
 	s.setPrinting(p.ID, true)
 	defer s.setPrinting(p.ID, false)
 
@@ -385,11 +382,14 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	var t *lazyTransport
 	var st *driver.Status
 	if dryRun == "" {
+		// noteBLE only hears how talking to the printer went: a bad document says nothing about its reach
 		if t, err = s.connect(ctx, p, model); err != nil {
+			s.noteBLE(p, err)
 			return nil, err
 		}
 		defer t.Close()
 		st, err = drv.Status(ctx, t)
+		s.noteBLE(p, err)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback) && model.QuirkBool("needs_status"):
 			detail := "printer sent no status reply"
@@ -405,7 +405,9 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 		}
 		// connect now, before fetching and rendering, even if the status came over SNMP
 		if err := t.open(); err != nil {
-			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+			err = &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+			s.noteBLE(p, err)
+			return nil, err
 		}
 		if st != nil {
 			s.Log.Info("printer status", "model", st.Model, "code", st.Code, "media", MediaName(st.Media), "type", st.MediaType, "via", st.Via)
@@ -465,6 +467,7 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	job.PrevUnconfirmed = s.unconfirmed[p.ID]
 	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
+	s.noteBLE(p, err)
 	s.mu.Lock()
 	if s.unconfirmed == nil {
 		s.unconfirmed = map[string]bool{}

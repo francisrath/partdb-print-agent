@@ -286,3 +286,31 @@ func TestOnlineBLE(t *testing.T) {
 	s.SeenBLE(p)
 	online(true, "found in a scan")
 }
+
+// A sighting recorded while a check runs beats the check's older "offline".
+func TestOnlineBLESightingDuringCheck(t *testing.T) {
+	s, p := catService(t, &fakeCat{})
+	s.beforePublish = func() { s.beforePublish = nil; s.SeenBLE(p) }
+	if !s.Online(p) {
+		t.Error("check reported offline over a newer sighting")
+	}
+	if !s.Online(p) {
+		t.Error("stale offline cached over a newer sighting")
+	}
+}
+
+// A job that fails on its document (or rendering) still reached the printer: the sighting stays.
+func TestOnlineBLEDocumentErrorKeepsSighting(t *testing.T) {
+	s, p := catService(t, &fakeCat{})
+	s.SeenBLE(p)
+	noDoc := func(*driver.Media) ([]byte, error) { return nil, errors.New("document unavailable") }
+	if _, err := s.Print(context.Background(), p, "", noDoc); err == nil {
+		t.Fatal("job didn't fail")
+	}
+	if _, err := s.Print(context.Background(), p, "", PDF([]byte("not a pdf"))); err == nil {
+		t.Fatal("job didn't fail")
+	}
+	if !s.Online(p) {
+		t.Error("a document error cleared the sighting")
+	}
+}

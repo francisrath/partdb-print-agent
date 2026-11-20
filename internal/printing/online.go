@@ -57,6 +57,7 @@ func (s *Service) Online(p *config.Printer) bool {
 		defer s.mu.Unlock()
 		return s.online[key].ok
 	}
+	start := time.Now()
 	up, done := s.check(p) // under the printer lock: a USB open can't collide with a starting job
 	if s.beforePublish != nil {
 		s.beforePublish()
@@ -64,6 +65,9 @@ func (s *Service) Online(p *config.Printer) bool {
 	s.mu.Lock()
 	if s.online == nil {
 		s.online = map[string]onlineState{}
+	}
+	if at, ok := s.seen[key]; ok && at.After(start) {
+		up = true // SeenBLE during the check: newer than what the check found
 	}
 	s.online[key] = onlineState{time.Now(), up} // published before the lock is released
 	s.mu.Unlock()
