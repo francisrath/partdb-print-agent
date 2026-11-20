@@ -168,7 +168,10 @@ type Status struct {
 type Error struct {
 	Code   Code
 	Detail string
+	Err    error // the underlying cause, if any
 }
+
+func (e *Error) Unwrap() error { return e.Err }
 
 func (e *Error) Error() string {
 	if e.Detail == "" {

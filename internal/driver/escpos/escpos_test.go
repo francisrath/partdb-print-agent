@@ -6,7 +6,9 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +16,14 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 )
 
-// fake pops one scripted reply per Read (nil = timeout) and records every Write.
+// fake answers like a printer: every DLE EOT / GS r request written pops the next scripted reply
+// (nil = silence) into the read stream; stale bytes can be preloaded. Reads time out when empty.
 type fake struct {
-	reads   [][]byte
+	replies [][]byte
+	in      []byte
 	written [][]byte
+	readErr error // returned by Read instead of a timeout once the stream is empty
+	zero    bool  // Read returns (0, nil) when empty
 }
 
 func (f *fake) Open(context.Context) error { return nil }
@@ -25,18 +31,25 @@ func (f *fake) Close() error               { return nil }
 func (f *fake) Kind() string               { return "bt" }
 func (f *fake) Write(p []byte) (int, error) {
 	f.written = append(f.written, append([]byte(nil), p...))
+	if req := len(p) == 3 && (p[0] == 0x10 || p[0] == 0x1D && p[1] == 0x72); req && len(f.replies) > 0 {
+		f.in = append(f.in, f.replies[0]...)
+		f.replies = f.replies[1:]
+	}
 	return len(p), nil
 }
 func (f *fake) Read(p []byte) (int, error) {
-	if len(f.reads) == 0 || f.reads[0] == nil {
-		if len(f.reads) > 0 {
-			f.reads = f.reads[1:]
-		}
+	if len(f.in) == 0 {
 		time.Sleep(time.Millisecond)
+		if f.readErr != nil {
+			return 0, f.readErr
+		}
+		if f.zero {
+			return 0, nil
+		}
 		return 0, os.ErrDeadlineExceeded
 	}
-	n := copy(p, f.reads[0])
-	f.reads = f.reads[1:]
+	n := copy(p, f.in)
+	f.in = f.in[n:]
 	return n, nil
 }
 
@@ -141,7 +154,7 @@ func TestStatus(t *testing.T) {
 		{"error", [][]byte{{0x12}, {0x40}, {0x00}}, driver.Unknown, "printer error"},
 		{"near end is only a warning", [][]byte{{0x12}, {0x00}, {0x0C}}, driver.OK, "paper near end"},
 	} {
-		f := &fake{reads: tc.reads}
+		f := &fake{replies: tc.reads}
 		st, err := newDriver(t, false).Status(context.Background(), f)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
@@ -169,7 +182,7 @@ func job(st *driver.Status) *driver.Job {
 var okStatus = &driver.Status{Code: driver.OK}
 
 func TestPrintConfirmed(t *testing.T) {
-	f := &fake{reads: [][]byte{{0x00}}}
+	f := &fake{replies: [][]byte{{0x00}}}
 	res, err := newDriver(t, false).Print(context.Background(), f, job(okStatus))
 	if err != nil || !res.Confirmed || res.Message != "printed" {
 		t.Fatalf("%+v %v", res, err)
@@ -187,7 +200,7 @@ func TestPrintUnconfirmed(t *testing.T) {
 }
 
 func TestPrintPaperEndDuringJob(t *testing.T) {
-	_, err := newDriver(t, false).Print(context.Background(), &fake{reads: [][]byte{{0x0C}}}, job(okStatus))
+	_, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x0C}}}, job(okStatus))
 	var de *driver.Error
 	if !errors.As(err, &de) || de.Code != driver.NoMedia {
 		t.Errorf("err = %v", err)
@@ -203,9 +216,98 @@ func TestPrintRefusesBadStatus(t *testing.T) {
 		t.Errorf("err = %v, wrote %d", err, len(f.written))
 	}
 	// status read by Print itself: nothing after the three queries is sent
-	f = &fake{reads: [][]byte{{0x12}, {0x00}, {0x60}}}
+	f = &fake{replies: [][]byte{{0x12}, {0x00}, {0x60}}}
 	_, err = newDriver(t, false).Print(context.Background(), f, job(nil))
 	if !errors.As(err, &de) || de.Code != driver.NoMedia || len(f.written) != 3 {
 		t.Errorf("err = %v, wrote %d", err, len(f.written))
+	}
+}
+
+func TestStatusDropsStaleBytes(t *testing.T) {
+	f := &fake{in: []byte{0x00, 0x00}, replies: [][]byte{{0x12}, {0x04}, {0x00}}}
+	st, err := newDriver(t, false).Status(context.Background(), f)
+	if err != nil || st.Code != driver.CoverOpen {
+		t.Errorf("%+v %v", st, err)
+	}
+}
+
+func TestPrintDropsStaleBeforeConfirm(t *testing.T) {
+	f := &fake{in: []byte{0x00}} // a late answer from before must not confirm this job
+	res, err := newDriver(t, false).Print(context.Background(), f, job(okStatus))
+	if err != nil || res.Confirmed {
+		t.Errorf("%+v %v", res, err)
+	}
+}
+
+func TestStatusCtx(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := newDriver(t, false).Status(ctx, &fake{replies: [][]byte{{1}, {1}, {1}}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPrintCtxEndsAfterSend(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	d := newDriver(t, false)
+	d.confirm = time.Minute
+	res, err := d.Print(ctx, &fake{}, job(okStatus))
+	if err != nil || res.Confirmed || !strings.HasPrefix(res.Message, "sent (unconfirmed: stopped waiting: ") {
+		t.Errorf("%+v %v", res, err)
+	}
+}
+
+func TestPrintLinkDropped(t *testing.T) {
+	_, err := newDriver(t, false).Print(context.Background(), &fake{readErr: io.EOF}, job(okStatus))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError || !errors.Is(err, io.EOF) || !strings.Contains(de.Detail, "may have printed") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestStatusHardError(t *testing.T) {
+	if _, err := newDriver(t, false).Status(context.Background(), &fake{readErr: io.EOF}); !errors.Is(err, io.EOF) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestEncodeClampsToHead(t *testing.T) {
+	got := encode(t, newDriver(t, false), img(600, 1, func(int, int) bool { return true }))
+	if want := []byte{0x1D, 0x76, 0x30, 0x00, 72, 0}; !bytes.Equal(got[2:8], want) { // 576 dots = 72 bytes
+		t.Errorf("header % x", got[2:8])
+	}
+}
+
+func TestStatusPartialAnswersNoReadback(t *testing.T) {
+	for _, r := range [][][]byte{{{0x12}, nil, {0x00}}, {{0x12}, {0x00}, nil}} {
+		if _, err := newDriver(t, false).Status(context.Background(), &fake{replies: r}); !errors.Is(err, driver.ErrNoReadback) {
+			t.Errorf("err = %v", err)
+		}
+	}
+}
+
+func TestPrintZeroReadsDoNotSpin(t *testing.T) {
+	d := newDriver(t, false)
+	d.confirm = 50 * time.Millisecond
+	start := time.Now()
+	res, err := d.Print(context.Background(), &fake{zero: true}, job(okStatus))
+	if err != nil || res.Confirmed || time.Since(start) > time.Second {
+		t.Errorf("%+v %v %v", res, err, time.Since(start))
+	}
+}
+
+func TestPrintNearEndWarns(t *testing.T) {
+	res, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x03}}}, job(okStatus))
+	if err != nil || !res.Confirmed || len(res.Warnings) != 1 || res.Warnings[0] != "paper near end" {
+		t.Errorf("%+v %v", res, err)
+	}
+}
+
+func TestPrintNilMedia(t *testing.T) {
+	j := job(okStatus)
+	j.Media = nil
+	if _, err := newDriver(t, false).Print(context.Background(), &fake{replies: [][]byte{{0x00}}}, j); err != nil {
+		t.Error(err)
 	}
 }
