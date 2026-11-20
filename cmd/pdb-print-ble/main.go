@@ -84,17 +84,14 @@ func scanCmd(args []string) error {
 	return nil
 }
 
-func enable() error {
-	if err := adapter.Enable(); err != nil { // powered off, not allowed, or no answer to the permission prompt
-		return fmt.Errorf("%w: %w", blecore.ErrNoBluetooth, err)
-	}
-	return nil
-}
+// enable waits up to a minute: on the first run macOS shows a permission prompt and Bluetooth stays
+// unavailable until it is answered.
+func enable() error { return blecore.WaitEnable(adapter.Enable, blecore.EnableWait) }
 
 // scan listens until timeout, ctx ends, or settled reports true.
 func scan(ctx context.Context, timeout time.Duration, settled func(*blecore.Scanned, time.Time) bool) ([]blecore.Advert, error) {
 	enabled := make(chan error, 1)
-	go func() { enabled <- enable() }() // Enable may wait 10 s for the permission prompt
+	go func() { enabled <- enable() }() // may wait for the permission prompt
 	select {
 	case err := <-enabled:
 		if err != nil {

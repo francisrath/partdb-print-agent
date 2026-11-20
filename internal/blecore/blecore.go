@@ -159,3 +159,25 @@ func ConnectRetry(ctx context.Context, pause time.Duration, connect func() error
 	}
 	return connect()
 }
+
+// EnableWait is how long the macOS helper waits for Bluetooth to come up: long enough for someone to
+// answer the first-run permission prompt (CoreBluetooth stays "unknown" while it is open).
+const EnableWait = 60 * time.Second
+
+// WaitEnable calls enable (tinygo bluetooth's darwin Adapter.Enable, which gives up after 10 s) again
+// while it times out, for up to wait. A definite answer (powered off, unsupported, not allowed) wraps
+// ErrNoBluetooth; still nothing after wait is a plain error, since it may be a prompt left open.
+func WaitEnable(enable func() error, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := enable()
+		switch {
+		case err == nil:
+			return nil
+		case err.Error() != "timeout enabling CentralManager": // text from v0.17.0's adapter_darwin.go
+			return fmt.Errorf("%w: %w", ErrNoBluetooth, err)
+		case !time.Now().Before(deadline):
+			return errors.New("bluetooth didn't become available — if macOS asked for permission, allow it and run again; otherwise check that Bluetooth is on")
+		}
+	}
+}

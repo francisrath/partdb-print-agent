@@ -91,14 +91,15 @@ func helperError(msg string) error {
 }
 
 // Scan runs the helper's scan mode. Without a usable adapter (powered off, Bluetooth not allowed) the
-// error wraps blecore.ErrNoBluetooth. When ctx ends early the helper is interrupted and reports what it
+// error wraps blecore.ErrNoBluetooth; Bluetooth still not up after blecore.EnableWait (perhaps a permission
+// prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
 	helper, err := findHelper()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second) // Enable may wait up to 10 s
+	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+5*time.Second) // the helper's enable wait
 	defer cancel()
 	cmd := exec.CommandContext(ctx, helper, "scan", "--timeout", timeout.String())
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
