@@ -32,6 +32,14 @@ printers:
   #   model: GK420d
   #   transport: {kind: tcp, host: 192.168.1.60}
   #   media: label-102x102
+  # TSC or another TSPL printer (TE200, XP-420B, …). They don't report the label: set media to the loaded roll
+  # (label-102x152, continuous-102, …). Over USB (Linux) {kind: usb, device: /dev/usb/lp0}, Bluetooth {kind: bt, address: …}.
+  # - id: xprinter
+  #   name: Xprinter XP-420B
+  #   model: XP-420B
+  #   transport: {kind: tcp, host: 192.168.1.70}
+  #   media: label-102x152
+  #   cut: per_label            # models with a cutter option only: per_label | last | none; unset = the printer's setting
   # Bluetooth LE "cat printer" (GB01-03, GT01, YT01, MX05-MX10; 57 mm paper). `pdb-print discover` prints
   # the transport line. address is a MAC (Linux/Windows) or a CoreBluetooth UUID (macOS); with only
   # name, two printers with the same name are refused. One connection at a time: disconnect phones first.
