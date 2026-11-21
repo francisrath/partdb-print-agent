@@ -314,6 +314,11 @@ func TestStatusText(t *testing.T) {
 	if _, ok := statusText(&printing.Service{}, &driver.Status{Code: driver.OK}, ql("")); ok {
 		t.Error("no roll reported, no configured media: jobs would fail")
 	}
+	// a printer that doesn't name itself in its status (a Zebra) shows the configured model, no empty field
+	silentModel := &driver.Status{Code: driver.OK, Media: loaded}
+	if text, _ := statusText(&printing.Service{}, silentModel, ql("")); text != "OK · QL-810W · media: dk-11201 (detected)" {
+		t.Errorf("no model in status: %q", text)
+	}
 	if text, ok := statusText(&printing.Service{}, unknown, ql("dk-22210")); !ok || !strings.Contains(text, "dk-22210 (config fallback)") {
 		t.Errorf("unknown roll with configured media: %q %v", text, ok)
 	}
@@ -559,5 +564,30 @@ func TestSaveInstanceStartsJobs(t *testing.T) {
 	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
 	if len(got) != 1 || got[0].BaseURL != h.partdb.URL || got[0].Token != "tcp_test" {
 		t.Errorf("OnInstance calls: %+v", got)
+	}
+}
+
+// The printer table shows each transport's own address, and a route without a Part-DB profile
+// name shows just the profile number.
+func TestIndexAddressesAndRoutes(t *testing.T) {
+	h := newHarness(t)
+	h.srv.mu.Lock()
+	h.srv.cfg.Printers = append(h.srv.cfg.Printers,
+		config.Printer{ID: "cat", Model: "MX10", Transport: config.Transport{Kind: "ble", Name: "MX10", Address: "AA:BB:CC:DD:EE:01"}},
+		config.Printer{ID: "rego", Model: "RG-MLP80B", Transport: config.Transport{Kind: "bt", Name: "RG-MLP80B"}},
+		config.Printer{ID: "pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", USBID: "04f9:2002"}})
+	h.srv.cfg.Routes = append(h.srv.cfg.Routes, config.Route{Profile: 2, Printer: "ql"})
+	h.srv.mu.Unlock()
+	body := h.do("GET", "/", nil).Body.String()
+	for _, want := range []string{"Bluetooth AA:BB:CC:DD:EE:01", "Bluetooth RG-MLP80B", "04f9:2002"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("address %q missing", want)
+		}
+	}
+	if strings.Contains(body, ">:0<") {
+		t.Error("a Bluetooth printer shows as :0")
+	}
+	if !strings.Contains(body, "<td>2</td>") {
+		t.Error("route without a profile name should show just its number")
 	}
 }

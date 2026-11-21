@@ -55,7 +55,7 @@
       <tr>
         <td>{{.ID}}{{with .Name}}<br><span class="muted">{{.}}</span>{{end}}</td>
         <td>{{.Model}}</td>
-        <td>{{if eq .Transport.Kind "usb"}}{{.Transport.Device}}{{else}}{{.Transport.Host}}:{{.Transport.Port}}{{end}}</td>
+        <td>{{with .Transport}}{{if eq .Kind "usb"}}{{or .Device .USBID}}{{else if or (eq .Kind "ble") (eq .Kind "bt")}}Bluetooth {{or .Address .Name}}{{else}}{{.Host}}:{{.Port}}{{end}}{{end}}</td>
         <td>{{if and .Media (ne .Media "auto")}}{{.Media}} <span class="muted">(fallback)</span>{{else}}<span class="muted">auto</span>{{end}}</td>
         <td data-status="{{.ID}}" class="muted">…</td>
         <td class="actions">
@@ -93,7 +93,7 @@
     <tbody>
     {{range .Routes}}
       <tr>
-        <td>{{.Profile}} – {{.Name}}</td>
+        <td>{{.Profile}}{{with .Name}} – {{.}}{{end}}</td>
         <td>{{.Printer}}</td>
         <td>{{if .Bookmarklet}}<a class="bookmarklet" href="{{.Bookmarklet}}">🏷 {{.Name}}</a>{{else}}<span class="muted">connect Part-DB first</span>{{end}}</td>
         <td><form method="post" action="/routes/{{.Profile}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="instance" value="{{.Route.Instance}}"><button class="secondary">Remove</button></form></td>
