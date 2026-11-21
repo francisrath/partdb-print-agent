@@ -1,6 +1,6 @@
 # Built by GoReleaser from prebuilt binaries (see .goreleaser.yaml, dockers_v2).
 # distroless static: CA certificates for HTTPS to Part-DB, non-root user, no shell.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/pdb-print /usr/bin/pdb-print
 # config dir owned by nonroot (65532): a volume mounted here starts out writable
