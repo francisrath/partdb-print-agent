@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -16,11 +17,14 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/snmp"
 )
 
-// QL dialect, from Brother's "Raster Command Reference" (QL-800/810W/820NWB).
+// QL dialect, from Brother's "Raster Command Reference" (QL-800/810W/820NWB; QL-600/710W/720NW;
+// QL-1100/1110NWB/1115NWB) and the older "QL-500/550/560/570/580N/650TD/700/1050/1060N Command
+// Reference". The head is 720 pins, or 1296 on the wide models (head_pins); the older models lack
+// some commands (quirks no_mode_switch, no_compression_cmd).
 
 const (
 	qlInvalidateN = 400
-	qlHeadPins    = 720 // 90 bytes per raster line
+	qlHeadPins    = 720 // 90 bytes per raster line, unless the model says head_pins
 	qlLineBytes   = qlHeadPins / 8
 )
 
@@ -49,9 +53,16 @@ func newQL(m *devicedb.Model, o driver.Options) *ql {
 
 var qlStatusRequest = append(make([]byte, qlInvalidateN), 0x1b, '@', 0x1b, 'i', 'S')
 
+// statusParser decodes a 32-byte status reply of a dialect.
+type statusParser func([]byte) (*driver.Status, error)
+
 // Status reads the printer over SNMP (network QLs give no status on 9100), else asks over
 // the transport with ESC i S.
 func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
+	return d.status(ctx, t, parseQLStatus)
+}
+
+func (d *ql) status(ctx context.Context, t driver.Transport, parse statusParser) (*driver.Status, error) {
 	if t.Kind() == "tcp" { // SNMP is about the network printer; over USB the printer answers itself
 		if ss, err := d.query(ctx); err == nil {
 			return d.statusFromSNMP(ss), nil
@@ -64,7 +75,7 @@ func (d *ql) Status(ctx context.Context, t driver.Transport) (*driver.Status, er
 	if err != nil {
 		return nil, err
 	}
-	s, err := parseQLStatus(b)
+	s, err := parse(b)
 	if s != nil {
 		s.Via = t.Kind() // answered over the printer connection itself (usb, tcp)
 	}
@@ -88,7 +99,7 @@ func (d *ql) statusFromSNMP(ss *snmp.State) *driver.Status {
 }
 
 // qlMediaBySize maps a reported roll to one the model takes; with no model known (status
-// from an unknown QL), to any QL's.
+// from an unknown QL), to any QL's. Sizes compare rounded: Brother reports the 103.6 mm roll as 104.
 func qlMediaBySize(model *devicedb.Model, kind devicedb.MediaKind, w, l int) (devicedb.Media, bool) {
 	db := devicedb.Default()
 	models := db.Models("brother")
@@ -96,17 +107,20 @@ func qlMediaBySize(model *devicedb.Model, kind devicedb.MediaKind, w, l int) (de
 		models = []*devicedb.Model{model}
 	}
 	for _, m := range models {
-		if m.Dialect != "ql" {
+		if model == nil && m.Dialect != "ql" {
 			continue
 		}
 		for _, md := range db.MediaFor(m) {
-			if md.Kind == kind && int(md.WidthMM) == w && int(md.LengthMM) == l {
+			if md.Kind == kind && mm(md.WidthMM) == w && mm(md.LengthMM) == l {
 				return md, true
 			}
 		}
 	}
 	return devicedb.Media{}, false
 }
+
+// mm is a size as Brother's commands and status give it: whole millimetres, rounded.
+func mm(v float64) int { return int(math.Round(v)) }
 
 func (d *ql) validate(job *driver.Job) error {
 	m := job.Media
@@ -144,11 +158,17 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 	m := job.Media
 	minLines := d.model.Quirk("min_lines", 150)
 	raw := d.noCompression || d.model.QuirkBool("no_compression")
+	lineBytes := qlLineBytes
+	if d.model.HeadPins > 0 {
+		lineBytes = d.model.HeadPins / 8
+	}
 
 	var b bytes.Buffer
 	b.Write(make([]byte, qlInvalidateN))
-	b.Write([]byte{0x1b, '@'})         // initialise
-	b.Write([]byte{0x1b, 'i', 'a', 1}) // switch to raster mode
+	b.Write([]byte{0x1b, '@'}) // initialise
+	if !d.model.QuirkBool("no_mode_switch") {
+		b.Write([]byte{0x1b, 'i', 'a', 1}) // switch to raster mode (older QLs have no other mode, nor this command)
+	}
 
 	var various, expanded byte
 	switch job.Cut {
@@ -174,7 +194,7 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 		if i == 0 {
 			start = 0
 		}
-		b.Write([]byte{0x1b, 'i', 'z', flags, kind, byte(m.WidthMM), byte(m.LengthMM)})
+		b.Write([]byte{0x1b, 'i', 'z', flags, kind, byte(mm(m.WidthMM)), byte(mm(m.LengthMM))})
 		b.Write(binary.LittleEndian.AppendUint32(nil, uint32(padTop+lines+padBottom)))
 		b.Write([]byte{start, 0})
 		b.Write([]byte{0x1b, 'i', 'M', various})
@@ -183,16 +203,18 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 		}
 		b.Write([]byte{0x1b, 'i', 'K', expanded})
 		b.Write(binary.LittleEndian.AppendUint16([]byte{0x1b, 'i', 'd'}, margin))
-		if raw {
+		switch {
+		case d.model.QuirkBool("no_compression_cmd"): // QL-560/700: no M command, always uncompressed
+		case raw:
 			b.Write([]byte{'M', 0})
-		} else {
+		default:
 			b.Write([]byte{'M', 2})
 		}
-		blank := make([]byte, qlLineBytes)
+		blank := make([]byte, lineBytes)
 		for y := -padTop; y < lines+padBottom; y++ {
 			line := blank
 			if y >= 0 && y < lines {
-				line = packLine(p, y, *m)
+				line, _ = ptPackLine(p, y, *m, lineBytes, true)
 			}
 			if !raw {
 				line = packbits(line)
@@ -211,18 +233,10 @@ func (d *ql) Encode(w io.Writer, job *driver.Job) error {
 }
 
 // packLine maps image row y onto the 720-pin head. Pins are numbered from the
-// spec's "right" edge, so the image's rightmost column lands on pin OffsetPins.
+// spec's "right" edge, so the image's rightmost column lands on pin OffsetPins
+// (ptPackLine's reversed order; wider heads call it with their line length).
 func packLine(p *image.Gray, y int, m devicedb.Media) []byte {
-	line := make([]byte, qlLineBytes)
-	w := p.Bounds().Dx()
-	off := m.OffsetPins + (m.PrintableWidthDots-w)/2 // centre narrower pages
-	row := p.Pix[y*p.Stride : y*p.Stride+w]
-	for x, v := range row {
-		if v < 128 {
-			pin := off + (w - 1 - x)
-			line[pin/8] |= 0x80 >> (pin % 8)
-		}
-	}
+	line, _ := ptPackLine(p, y, m, qlLineBytes, true)
 	return line
 }
 
@@ -233,12 +247,17 @@ func (d *ql) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 	if err := d.Encode(&b, job); err != nil {
 		return nil, err
 	}
-	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len(),
+	return d.send(ctx, t, job, b.Bytes(), parseQLStatus)
+}
+
+// send writes an encoded job and waits for the confirmation Print describes.
+func (d *ql) send(ctx context.Context, t driver.Transport, job *driver.Job, data []byte, parse statusParser) (*driver.Result, error) {
+	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: len(data),
 		Message: "sent (unconfirmed: printer gives no status)"}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := t.Write(b.Bytes()); err != nil {
+	if _, err := t.Write(data); err != nil {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	timeout := 30*time.Second + time.Duration(len(job.Pages))*5*time.Second
@@ -257,7 +276,7 @@ func (d *ql) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*d
 			res.Message = "sent (unconfirmed: printer didn't report printing)"
 		}
 	case job.Status != nil && job.Status.Via != "":
-		err := waitDone(ctx, t, len(job.Pages), timeout)
+		err := waitDoneWith(ctx, t, len(job.Pages), timeout, parse)
 		switch {
 		case errors.Is(err, driver.ErrNoReadback):
 			res.Message = "sent (unconfirmed: no completion status received)"
@@ -312,6 +331,10 @@ func (d *ql) waitSNMP(ctx context.Context, timeout time.Duration) (bool, error) 
 // waitDone reads status replies until n pages report "printing completed" or an error arrives.
 // Only call it after a status request succeeded on t; returns driver.ErrNoReadback on timeout.
 func waitDone(ctx context.Context, t driver.Transport, n int, timeout time.Duration) error {
+	return waitDoneWith(ctx, t, n, timeout, parseQLStatus)
+}
+
+func waitDoneWith(ctx context.Context, t driver.Transport, n int, timeout time.Duration, parse statusParser) error {
 	deadline := time.Now().Add(timeout)
 	r := &replyReader{t: t} // keeps a partial reply until the deadline
 	for done := 0; done < n; {
@@ -331,7 +354,7 @@ func waitDone(ctx context.Context, t driver.Transport, n int, timeout time.Durat
 		if err != nil {
 			return err
 		}
-		s, err := parseQLStatus(b)
+		s, err := parse(b)
 		if err != nil {
 			return err
 		}

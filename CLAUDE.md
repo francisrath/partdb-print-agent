@@ -27,7 +27,9 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
 
 ## What exists
 - **Drivers** (`internal/driver/<family>`, registered by family, models are data in `internal/devicedb/data/*.yaml`):
-  `brother` (QL raster: QL-800/810W/820NWB; P-touch CBP raster: PT-9500PC), `zpl` (Zebra desktop ZPL printers),
+  `brother` (dialects `ql`: QL-800/810W/820NWB tested, older QLs and the 1296-pin QL-1050/1060N/1100 series
+  untested; `pt-cbp`: PT-9500PC; `pt-raster`: PT-E550W/P750W/P710BT/P700/E500 and PT-P900 series, untested),
+  `zpl` (Zebra desktop ZPL printers; industrial ZT and mobile ZQ series untested),
   `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MLP80B, generic 58/80 mm).
 - **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux), `ble` (Linux/Windows
   in-process, macOS via the helper), `bt` (Bluetooth Classic RFCOMM: Linux/Windows sockets, macOS via the helper).

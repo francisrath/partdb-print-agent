@@ -137,11 +137,24 @@ printer doesn't report its roll (SNMP off, no status reply); `auto`, the default
 in when a status read says nothing. `pdb-print printers status ql810` and the web UI show
 `media: dk-22214 (detected)` or `(config fallback)`, and which Part-DB label profiles fit it.
 
+### Brother printers
+
+- **Tested:** QL-800, QL-810W, QL-820NWB (network and USB), PT-9500PC (USB).
+- **Untested**, added from Brother's raster command references (reports welcome):
+  QL-560, QL-570, QL-580N, QL-700, QL-710W, QL-720NW; the 102/103 mm wide QL-1050, QL-1060N, QL-1100,
+  QL-1110NWB, QL-1115NWB (DK-22243/22246/11240/11241/11247 rolls besides the narrow ones); P-touch
+  PT-E550W, PT-P750W, PT-P700, PT-E500 (12–24 mm, 180 dpi), PT-P710BT (USB, Bluetooth), PT-P900,
+  PT-P900W, PT-P950NW (6–36 mm, 360 dpi, standard resolution), PT-P910BT (USB, Bluetooth).
+  The P-touch printers cut like the PT-9500PC (`chain`, `per_label`, `half` where the model can, `none`).
+
 ### Zebra (ZPL)
 
 `model:` a Zebra from the device database (GK420d/t, GX420d/t, GX430t, GC420d/t, ZP450, ZP500, LP2844-Z,
 ZD220/230, ZD410, ZD420/421/620/621 at 203 or 300 dpi; `pdb-print media` lists them). Over the network
-(port 9100) or USB on Linux. Zebras don't report their label *width*, so set `media:` to the loaded size
+(port 9100) or USB on Linux. **Untested**, added from Zebra's spec sheets: the industrial ZT230, ZT231,
+ZT410, ZT411, ZT420, ZT421, ZT510, ZT610, ZT620 (ids like `ZT411-203`, `ZT411-300`) and the mobile ZQ310,
+ZQ320, ZQ510, ZQ520, ZQ511, ZQ521, ZQ610, ZQ620, ZQ630 (and their Plus versions; also over Bluetooth,
+`kind: bt`, with the printer set to ZPL). Zebras don't report their label *width*, so set `media:` to the loaded size
 (`label-102x102` for 4×4", `label-102x152` for 4×6" …); the printer's reported label length is checked
 against it. Every label goes as one compressed graphic; the agent reads the printer's status and waits for
 the print buffer to empty to confirm a label. It never saves settings or calibrates the printer.
@@ -251,7 +264,7 @@ widened, turned, mirrored), checks the status with the lid open, puts the printe
 ### Brother P-touch PT-9500PC (USB, Linux)
 
 `model: PT-9500PC` drives the tape printer over USB through Linux's `usblp` driver (add the user to
-group `lp`). Brother QLs also work over USB the same way (QL-800, QL-810W, QL-820NWB). It reads the loaded tape and errors before each job,
+group `lp`). Brother QLs and the newer P-touch printers also work over USB the same way. It reads the loaded tape and errors before each job,
 sends a batch label by label and waits for each to be printed. Labels print at true size: design the
 Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm on 36 mm tape,
 about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for 36 mm tape

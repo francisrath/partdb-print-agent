@@ -1,6 +1,10 @@
 # Brother TZe/HG tape at 360 dpi (PT-9500PC). From Brother's "PT-9500PC Command Reference, CBP-RASTER
 # Mode": tape and print-area width in dots (p.6), pins the Windows driver prints on (p.11). Labels are
 # drawn across the whole tape (width_dots) and the unprintable edges trimmed.
+# geometry: the same tapes on the raster-mode P-touch heads (untested: added from the references,
+# 2026-11-20). 128 pins at 180 dpi (PT-E550W/P750W/P710BT and PT-H500/P700/E500 "Raster Command
+# Reference", page size p.14 and pins p.20): offset_pins = the "pins for right margin". 560 pins at
+# 360 dpi (PT-P900/P900W/P950NW/P910BT reference, p.13 and p.20).
 media:
   - {id: tze-6, name: 6 mm tape, kind: continuous, width_mm: 6, width_dots: 84, printable_width_dots: 64, dpi: 360, offset_pins: 160, edge_mm: 0.71}
   - {id: tze-9, name: 9 mm tape, kind: continuous, width_mm: 9, width_dots: 128, printable_width_dots: 106, dpi: 360, offset_pins: 139, edge_mm: 0.78}
@@ -8,3 +12,15 @@ media:
   - {id: tze-18, name: 18 mm tape, kind: continuous, width_mm: 18, width_dots: 256, printable_width_dots: 234, dpi: 360, offset_pins: 75, edge_mm: 0.78}
   - {id: tze-24, name: 24 mm tape, kind: continuous, width_mm: 24, width_dots: 340, printable_width_dots: 320, dpi: 360, offset_pins: 32, edge_mm: 0.71}
   - {id: tze-36, name: 36 mm tape, kind: continuous, width_mm: 36, width_dots: 512, printable_width_dots: 384, dpi: 360, offset_pins: 0, edge_mm: 4.52}
+geometry:
+  - {media: tze-6, head_pins: 128, dpi: 180, width_dots: 42, printable_width_dots: 32, offset_pins: 48, edge_mm: 0.7}
+  - {media: tze-9, head_pins: 128, dpi: 180, width_dots: 64, printable_width_dots: 50, offset_pins: 39, edge_mm: 0.98}
+  - {media: tze-12, head_pins: 128, dpi: 180, width_dots: 84, printable_width_dots: 70, offset_pins: 29, edge_mm: 0.98}
+  - {media: tze-18, head_pins: 128, dpi: 180, width_dots: 128, printable_width_dots: 112, offset_pins: 8, edge_mm: 1.12}
+  - {media: tze-24, head_pins: 128, dpi: 180, width_dots: 170, printable_width_dots: 128, offset_pins: 0, edge_mm: 2.96}
+  - {media: tze-6, head_pins: 560, dpi: 360, width_dots: 84, printable_width_dots: 64, offset_pins: 256, edge_mm: 0.74}
+  - {media: tze-9, head_pins: 560, dpi: 360, width_dots: 128, printable_width_dots: 106, offset_pins: 235, edge_mm: 0.76}
+  - {media: tze-12, head_pins: 560, dpi: 360, width_dots: 170, printable_width_dots: 150, offset_pins: 213, edge_mm: 0.71}
+  - {media: tze-18, head_pins: 560, dpi: 360, width_dots: 256, printable_width_dots: 234, offset_pins: 171, edge_mm: 0.75}
+  - {media: tze-24, head_pins: 560, dpi: 360, width_dots: 340, printable_width_dots: 320, offset_pins: 128, edge_mm: 0.71}
+  - {media: tze-36, head_pins: 560, dpi: 360, width_dots: 512, printable_width_dots: 454, offset_pins: 61, edge_mm: 2.03}

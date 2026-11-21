@@ -136,8 +136,9 @@ func (d *pt) resolveCut(job *driver.Job) (cut, warning string) {
 		def = "chain"
 	}
 	laminated := job.Status != nil && (job.Status.MediaType == "laminated" || job.Status.MediaType == "hg")
+	_, canHalf := d.cutBytes("half")
 	switch {
-	case job.Cut == "" && len(job.Pages) > 1 && laminated:
+	case job.Cut == "" && len(job.Pages) > 1 && laminated && canHalf:
 		return "half", ""
 	case job.Cut == "":
 		return def, ""
@@ -162,7 +163,7 @@ func (d *pt) validate(job *driver.Job) error {
 	if len(job.Pages) == 0 {
 		return errors.New("no pages")
 	}
-	if job.Cut == "last" {
+	if job.Cut == "last" && d.model.Dialect == "pt-cbp" {
 		return fmt.Errorf(`cut "last" isn't possible on the %s: labels are sent one at a time, so the printer can't tell which is last (use half or chain)`, d.model.ID)
 	}
 	if _, ok := d.cutBytes(job.Cut); job.Cut != "" && !ok {
