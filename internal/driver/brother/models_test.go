@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
@@ -329,5 +331,29 @@ func TestPTRasterPrintWaitsPerPage(t *testing.T) {
 	}
 	if first := bytes.IndexByte(want.Bytes()[200:], 0x0c) + 200 + 1; tr.seen[0] != first {
 		t.Errorf("first completion read after %d bytes, page 1 ends at %d", tr.seen[0], first)
+	}
+}
+
+// A P-touch on USB or Bluetooth that gave no status can't be paced: one label still prints,
+// a batch is refused before anything is sent. On the network the job goes at once as before.
+func TestPTRasterSilentPrinter(t *testing.T) {
+	m, md := modelMedia(t, "PT-P710BT", "tze-12")
+	d := newPTRaster(m, driver.Options{NoSNMP: true})
+	two := []*image.Gray{white(70, 40), white(70, 40)}
+	for _, kind := range []string{"usb", "bt"} {
+		tr := &pageTape{kind: kind}
+		_, err := d.Print(context.Background(), tr, &driver.Job{Pages: two, Media: &md})
+		var de *driver.Error
+		if !errors.As(err, &de) || de.Code != driver.CommsError || !strings.Contains(de.Detail, "one label per job") || tr.written.Len() != 0 {
+			t.Errorf("%s, two labels: %v, %d bytes sent", kind, err, tr.written.Len())
+		}
+		tr = &pageTape{kind: kind}
+		if res, err := d.Print(context.Background(), tr, &driver.Job{Pages: two[:1], Media: &md}); err != nil || tr.written.Len() == 0 || res.Confirmed {
+			t.Errorf("%s, one label: %+v %v", kind, res, err)
+		}
+	}
+	tr := &pageTape{kind: "tcp"}
+	if _, err := d.Print(context.Background(), tr, &driver.Job{Pages: two, Media: &md}); err != nil || tr.written.Len() == 0 {
+		t.Errorf("tcp, two labels: %v", err)
 	}
 }

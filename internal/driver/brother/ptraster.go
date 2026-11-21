@@ -191,16 +191,22 @@ func (d *ptRaster) encodePages(job *driver.Job) ([]byte, [][]byte, error) {
 
 // Print sends the job. When the printer answered the status request over its own connection
 // (USB, Bluetooth) each label goes only after the previous one reported "printing completed"
-// ("(2) through (4) are repeated", p.4, flow chart 5.1). Over the network the printer gives no
-// status (flow chart 5.6): the whole job goes at once and SNMP confirms it, like a QL.
+// ("(2) through (4) are repeated", p.4, flow chart 5.1); one that gave no status there gets
+// single labels only. Over the network the printer gives no status (flow chart 5.6): the whole
+// job goes at once and SNMP confirms it, like a QL.
 func (d *ptRaster) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	_, warning := d.tape.resolveCut(job)
 	header, pages, err := d.encodePages(job)
 	if err != nil {
 		return nil, err
 	}
+	silent := job.Status == nil || job.Status.Via == ""
+	if silent && t.Kind() != "tcp" && len(pages) > 1 {
+		return nil, &driver.Error{Code: driver.CommsError, Detail: "the printer doesn't report status, so labels can't be sent " +
+			"one at a time; print one label per job or check the connection"}
+	}
 	var res *driver.Result
-	if st := job.Status; st == nil || st.Via == "" || st.Via == "snmp" {
+	if st := job.Status; silent || st.Via == "snmp" {
 		res, err = d.q.send(ctx, t, job, bytes.Join(append([][]byte{header}, pages...), nil), d.parse)
 	} else {
 		res, err = d.sendPaced(ctx, t, job, header, pages)
