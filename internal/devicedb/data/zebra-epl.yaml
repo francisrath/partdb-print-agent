@@ -2,8 +2,9 @@
 # All untested (no EPL printer on hand), researched 2026-11-20. Protocol: Zebra EPL Programming Guide
 # 14245L-003 Rev. A; density defaults from its D command (2844: 10, others 7). Head pins = print width at
 # 8 or 12 dots/mm. USB ids from linux-usb.org usb.ids (vendor 0a5f), only where it lists one.
-# Not here: serial/parallel-only models (LP/TLP 2622, LP 2443 Orion, LP/TLP 2684 Strata at 8.5") need a serial
-# transport; LP 2442, LP 2348 and TLP 2746 have no spec sheet found. See ~/Notes/claude/partdb-agent-epl2-design.md.
+# Serial: the models with an RS-232 port list it; Zebra's factory line setting for EPL printers is 9600 8N1
+# (support.zebra.com "EPL: Setting Communications"). Not here: LP/TLP 2622, LP 2443 Orion, LP/TLP 2684 Strata
+# (serial/parallel only; no spec sheet with head width and dpi found), LP 2442, LP 2348 and TLP 2746 (no spec). See ~/Notes/claude/partdb-agent-epl2-design.md.
 models:
   # untested; LP 2824 / TLP 2824 spec sheet (Zebra, 2003): 203 dpi, 2.2" (56 mm) print width, serial, parallel, USB 1.1, internal or external ZebraNet print server; units from before 2002 may lack USB and Ethernet
   - id: LP2824
@@ -12,7 +13,7 @@ models:
     dialect: epl2
     dpi: 203
     head_pins: 448
-    transports: [usb, tcp]
+    transports: [usb, tcp, serial]
     quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
     media: [label-51x25, label-38x25, label-32x25, label-25x13]
   # untested; same spec sheet as LP2824 (thermal transfer version)
@@ -22,7 +23,7 @@ models:
     dialect: epl2
     dpi: 203
     head_pins: 448
-    transports: [usb, tcp]
+    transports: [usb, tcp, serial]
     quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
     media: [label-51x25, label-38x25, label-32x25, label-25x13]
   # untested; LP 2844 user guide 980483-001A, 2844 spec page: 203 dpi, 4.09" (104 mm), USB + parallel + serial or USB + internal Ethernet + serial; USB id from usb.ids ("LP2844 Printer")
@@ -32,7 +33,7 @@ models:
     dialect: epl2
     dpi: 203
     head_pins: 832
-    transports: [usb, tcp]
+    transports: [usb, tcp, serial]
     match: {usb: ["0a5f:0009"]}
     quirks: {density: 10, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
     media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
@@ -43,7 +44,7 @@ models:
     dialect: epl2
     dpi: 203
     head_pins: 832
-    transports: [usb, tcp]
+    transports: [usb, tcp, serial]
     quirks: {density: 10, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
     media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # untested; TLP 3842 spec sheet (Zebra, 2003): 300 dpi, 4.09", serial, parallel, USB 1.1, optional internal print server
@@ -53,7 +54,7 @@ models:
     dialect: epl2
     dpi: 300
     head_pins: 1248
-    transports: [usb, tcp]
+    transports: [usb, tcp, serial]
     quirks: {density: 7, darkness: true, black_mark: true} # ^ee status over USB only: no needs_status
     media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # untested; 2746e spec page: 203 dpi, 4.09", RS-232, parallel, USB 1.1, internal or external print server

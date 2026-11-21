@@ -19,7 +19,11 @@ func TestDymoModels(t *testing.T) {
 		if m.ID == "LabelWriter-4XL" {
 			head = 1248 // 4.16 in at 300 dpi
 		}
-		if m.Vendor != "DYMO" || m.DPI != 300 || m.HeadPins != head || !slices.Equal(m.Transports, []string{"usb"}) ||
+		conns := []string{"usb"}
+		if m.Dialect == "lw300" {
+			conns = []string{"usb", "serial"} // the 330s also have an RS-232 port
+		}
+		if m.Vendor != "DYMO" || m.DPI != 300 || m.HeadPins != head || !slices.Equal(m.Transports, conns) ||
 			(m.Dialect != "lw400" && m.Dialect != "lw300") || m.QuirkBool("darkness") != (m.Dialect == "lw400") {
 			t.Errorf("%s: %+v", m.ID, m)
 		}
