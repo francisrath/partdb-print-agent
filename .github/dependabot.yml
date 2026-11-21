@@ -30,5 +30,6 @@ updates:
     groups:
       docker-base:
         patterns: ["*"]
+        group-by: dependency-name # one PR for the base image in both directories
     commit-message:
       prefix: "chore(docker)"
