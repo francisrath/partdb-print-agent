@@ -371,4 +371,9 @@ func TestLintGeometry(t *testing.T) {
 	if _, err := devicedb.Load(fstest.MapFS{"data/m.yaml": {Data: []byte(ok)}}); err != nil {
 		t.Errorf("trimmed geometry: %v", err)
 	}
+	// without width_dots the geometry would shrink it to the head: refused
+	shrunk := strings.Replace(ok, "width_dots: 400, ", "", 1)
+	if _, err := devicedb.Load(fstest.MapFS{"data/m.yaml": {Data: []byte(shrunk)}}); err == nil {
+		t.Error("geometry without the full width: loaded")
+	}
 }

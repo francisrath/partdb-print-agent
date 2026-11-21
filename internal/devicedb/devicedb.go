@@ -295,9 +295,11 @@ func Load(fsys fs.FS) (*DB, error) {
 				errs = append(errs, fmt.Errorf("%s: model %s: unknown media %s", origin[m.ID], m.ID, mid))
 				continue
 			}
-			// a geometry for this head says how the label lies on it (edges trimmed, not shrunk)
-			_, geo := db.geometry[geoKey{mid, m.HeadPins}]
-			if raw := db.media[mid]; !geo && raw.DPI == 0 && m.DPI > 0 && m.HeadPins > 0 && dots(raw.WidthMM, m.DPI) > m.HeadPins {
+			// a geometry for this head that keeps the label's full width trims the edges instead of shrinking it
+			raw := db.media[mid]
+			g, geo := db.geometry[geoKey{mid, m.HeadPins}]
+			geo = geo && max(g.WidthDots, g.PrintableWidthDots) >= dots(raw.WidthMM, g.DPI)
+			if !geo && raw.DPI == 0 && m.DPI > 0 && m.HeadPins > 0 && dots(raw.WidthMM, m.DPI) > m.HeadPins {
 				errs = append(errs, fmt.Errorf("%s: model %s: media %s is %d dots wide at %d dpi, head has %d: it would print narrower than its size",
 					origin[m.ID], m.ID, mid, dots(raw.WidthMM, m.DPI), m.DPI, m.HeadPins))
 			}
@@ -424,14 +426,20 @@ func (db *DB) ModelByHI(hi string) (*Model, bool) {
 }
 
 // ModelByBLEName finds a model from the name a Bluetooth LE printer advertises ("MX10").
+// The longest match wins, so "B1-PRO-…" picks the B1-PRO over the B1 ("B1-…"); ties go to the first id.
 func (db *DB) ModelByBLEName(name string) (*Model, bool) {
+	var best *Model
+	n := -1
 	for _, id := range db.ModelIDs() {
 		m := db.models[id]
-		if m.bleRe != nil && name != "" && m.bleRe.MatchString(name) {
-			return m, true
+		if m.bleRe == nil || name == "" {
+			continue
+		}
+		if loc := m.bleRe.FindStringIndex(name); loc != nil && loc[1]-loc[0] > n {
+			best, n = m, loc[1]-loc[0]
 		}
 	}
-	return nil, false
+	return best, best != nil
 }
 
 // ModelByBTName finds a model from the name a Bluetooth Classic printer is paired as ("RG-MLP80B").

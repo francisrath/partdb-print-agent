@@ -27,8 +27,8 @@ models:
   - {<<: *niimbot, id: B21S, dialect: d110, match: {ble_name: "^B21S-"}}
   # 300 dpi; niimbluelib's table says 591 (B21 Pro) and 567 (B1 Pro) dots, the wiki 576 read from the printers.
   # The advertised name is a guess.
-  - {<<: *niimbot, id: B21-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B21[ _]?PRO-"}}
-  - {<<: *niimbot, id: B1-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B1[ _]?PRO-"}}
+  - {<<: *niimbot, id: B21-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B21[ _-]?PRO-"}}
+  - {<<: *niimbot, id: B1-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B1[ _-]?PRO-"}}
   - &narrow
     <<: *niimbot
     id: D11
@@ -47,7 +47,7 @@ models:
   # 192 dots (24 mm); takes the narrow rolls until wider D101 sizes are sourced.
   - {<<: *narrow, id: D101, dialect: b1, head_pins: 192, match: {ble_name: "^D101-"}}
   # 300 dpi, 144 dots (the wiki, read from a printer; niimbluelib's table says 142), density 1–5.
-  - {<<: *narrow, id: D11-H, dialect: v4, dpi: 300, head_pins: 144, match: {ble_name: "(?i)^D11[ _]?H-"},
+  - {<<: *narrow, id: D11-H, dialect: v4, dpi: 300, head_pins: 144, match: {ble_name: "(?i)^D11[ _-]?H-"},
     quirks: {ble_service: "e7810a71-73ae-499d-8c15-faa9aef0c3f2", ble_write: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
       ble_notify: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", ble_gap_ms: 10, density_max: 5, darkness: true, needs_status: true}}
 
