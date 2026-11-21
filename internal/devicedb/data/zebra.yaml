@@ -15,6 +15,8 @@ models:
     match: {hi_model: "^GK420d", usb: ["0a5f:0080", "0a5f:0062"]}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    tested: community
+    tested_note: tested by a friend of the maintainer, 2026-11 (ZPL over TCP)
   # GK420t user guide
   - id: GK420t
     vendor: Zebra

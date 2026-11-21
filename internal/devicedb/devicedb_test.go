@@ -87,6 +87,8 @@ func TestLint(t *testing.T) {
 		"null model":       {map[string]string{"data/a.yaml": "models: [null]\n"}, []string{"a.yaml", "empty model"}},
 		"same status code": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {status_code: 0x39}}\n  - {id: Q2, driver: brother, dialect: ql, match: {status_code: 0x39}}\n"}, []string{"Q1", "Q2", "0x39"}},
 		"bad snmp pattern": {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, match: {snmp_descr: \"QL-(\"}}\n"}, []string{"Q1", "snmp_descr"}},
+		"unknown tested":   {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, tested: yes}\n"}, []string{"Q1", "tested"}},
+		"note untested":    {map[string]string{"data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, tested_note: works}\n"}, []string{"Q1", "tested_note"}},
 		"escpos no pins":   {map[string]string{"data/e.yaml": "models:\n  - {id: E1, driver: escpos, dialect: raster}\n"}, []string{"E1", "head_pins"}},
 		"tspl no pins":     {map[string]string{"data/t.yaml": "models:\n  - {id: T1, driver: tspl, dialect: tspl2}\n"}, []string{"T1", "head_pins"}},
 		"media too wide":   {map[string]string{"data/m.yaml": "media:\n  - {id: wide, name: w, kind: continuous, width_mm: 62, printable_width_dots: 696, offset_pins: 32, dpi: 300}\n", "data/q.yaml": "models:\n  - {id: Q1, driver: brother, dialect: ql, head_pins: 720, media: [wide]}\n"}, []string{"Q1", "wide", "720"}},

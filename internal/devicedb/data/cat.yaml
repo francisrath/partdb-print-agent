@@ -23,4 +23,4 @@ models:
   - {<<: *cat, id: MX05, match: {ble_name: "^MX05$"}}
   - {<<: *cat, id: MX06, match: {ble_name: "^MX06$"}}
   - {<<: *cat, id: MX08, match: {ble_name: "^MX08$"}}
-  - {<<: *cat, id: MX10, match: {ble_name: "^MX10$"}}
+  - {<<: *cat, id: MX10, match: {ble_name: "^MX10$"}, tested: maintainer, tested_note: "Bluetooth LE on Linux, Windows and macOS, 2026-11"}
