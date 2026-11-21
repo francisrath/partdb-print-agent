@@ -180,8 +180,16 @@ func TestHeartbeat(t *testing.T) {
 		{b1, reply{rspHeartbeatV4, []byte{0, 0, 90, 30, 0, 1, 1, 0, 0}}, driver.NoMedia, "no labels"},
 		{b1, reply{rspHeartbeatV4, []byte{0, 0, 90, 30, 1, 0, 1, 0, 0}}, driver.CoverOpen, "cover open"},
 		{b1, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0}}, driver.NoMedia, "no labels"},
+		{b1, reply{rspHeartbeatV4, []byte{0}}, "", ""}, // unknown layouts: nil
+		{b1, reply{0xDD, []byte{0, 0, 0}}, "", ""},
 	} {
 		st := tc.n.heartbeat(tc.p)
+		if tc.code == "" {
+			if st != nil {
+				t.Errorf("% X: %+v, want nil", tc.p.data, st)
+			}
+			continue
+		}
 		if st.Code != tc.code || st.Detail != tc.det {
 			t.Errorf("%s % X: %s %q, want %s %q", tc.n.model.ID, tc.p.data, st.Code, st.Detail, tc.code, tc.det)
 		}
@@ -404,6 +412,40 @@ func TestPrintB21Polls(t *testing.T) {
 	}
 }
 
+// The print end that closes the job after the polling window still confirms it when it answers 01.
+func TestPrintB21LastEnd(t *testing.T) {
+	fast(t)
+	pollEvery = 300 * time.Millisecond // longer than the window: one poll, then the closing print end
+	f := &printer{}
+	ends := 0
+	f.answer = func(p reply) ([]byte, bool) {
+		if p.cmd != cmdPrintEnd {
+			return nil, false
+		}
+		ends++
+		return packet(0xF4, byte(min(ends-1, 1))), true
+	}
+	res, err := newDriver(t, "B21", "").Print(context.Background(), f, job(1, nil))
+	if err != nil || !res.Confirmed || ends != 2 {
+		t.Fatalf("%+v %v, %d print ends", res, err, ends)
+	}
+}
+
+// A D110 that never reports a page stops the job there: the rest isn't sent, the result says so.
+func TestPrintD110Partial(t *testing.T) {
+	fast(t)
+	f := &printer{answer: func(p reply) ([]byte, bool) {
+		return packet(0xB3, 0, 0, 0, 0), p.cmd == cmdPrintStatus
+	}}
+	res, err := newDriver(t, "D110", "").Print(context.Background(), f, job(2, nil))
+	if err != nil || res.Confirmed || res.Pages != 1 || !strings.Contains(res.Message, "page 1 of 2") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if n := bytes.Count(f.cmds(), []byte{cmdPageStart}); n != 1 {
+		t.Errorf("%d pages started", n)
+	}
+}
+
 func TestPrintErrors(t *testing.T) {
 	fast(t)
 	for _, tc := range []struct {
@@ -428,6 +470,9 @@ func TestPrintErrors(t *testing.T) {
 		var de *driver.Error
 		if !errors.As(err, &de) || de.Code != tc.code {
 			t.Errorf("%s: %v, want %s", tc.name, err, tc.code)
+		}
+		if f.ended == 0 { // the job is closed after an error too
+			t.Errorf("%s: no print end", tc.name)
 		}
 	}
 	// a bad status before the job sends nothing
@@ -458,6 +503,14 @@ func TestStatus(t *testing.T) {
 	if err != nil || st.Code != driver.OK || st.Detail != "60 labels left on the roll" || st.Via != "ble" || hb != 4 {
 		t.Fatalf("%+v %v (heartbeat type %d)", st, err, hb)
 	}
+	// a heartbeat in a layout we don't know is no ready printer
+	f = &printer{protocol: 3, answer: func(p reply) ([]byte, bool) {
+		return packet(rspHeartbeatV4, 0), p.cmd == cmdHeartbeat
+	}}
+	var de *driver.Error
+	if _, err := newDriver(t, "B21-PRO", "").Status(context.Background(), f); !errors.As(err, &de) || de.Code != driver.Unknown {
+		t.Errorf("short heartbeat: %v", err)
+	}
 	// a silent printer has no status
 	f = &printer{answer: func(reply) ([]byte, bool) { return nil, true }}
 	if _, err := newDriver(t, "B1", "").Status(context.Background(), f); !errors.Is(err, driver.ErrNoReadback) {
@@ -470,6 +523,7 @@ func TestModels(t *testing.T) {
 	for _, tc := range []struct{ name, id string }{
 		{"B1-H115121009", "B1"}, {"B21-C2B12345", "B21"}, {"B21S-1234", "B21S"}, {"D11-G1234", "D11"},
 		{"D110-G326030306", "D110"}, {"D101-1", "D101"}, {"B18-1", "B18"}, {"B21_PRO-1", "B21-PRO"}, {"D11_H-1", "D11-H"},
+		{"B1-PRO-123", "B1-PRO"}, {"B21-PRO-123", "B21-PRO"}, {"D11-H-123", "D11-H"}, {"B1 PRO-1", "B1-PRO"},
 	} {
 		m, ok := db.ModelByBLEName(tc.name)
 		if !ok || m.ID != tc.id {

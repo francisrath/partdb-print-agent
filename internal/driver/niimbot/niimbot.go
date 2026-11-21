@@ -233,6 +233,9 @@ func (n *niimbot) Status(ctx context.Context, t driver.Transport) (*driver.Statu
 		return nil, err
 	}
 	st := n.heartbeat(hb)
+	if st == nil { // a layout we don't know: don't call a printer we can't read ready
+		return nil, &driver.Error{Code: driver.Unknown, Detail: fmt.Sprintf("unrecognised heartbeat answer % x", packet(hb.cmd, hb.data...))}
+	}
 	st.Via, st.Raw = t.Kind(), fmt.Sprintf("% x", packet(hb.cmd, hb.data...))
 	if st.Code == driver.OK {
 		if tag, err := r.do(ask(cmdRFID, 1)); err == nil {
@@ -245,7 +248,7 @@ func (n *niimbot) Status(ctx context.Context, t driver.Transport) (*driver.Statu
 }
 
 // heartbeat reads cover, labels and battery from a heartbeat answer; where they sit depends on its type and
-// length. Some models report the cover the other way round (quirk lid_inverted).
+// length; nil for a layout we don't know. Some models report the cover the other way round (quirk lid_inverted).
 func (n *niimbot) heartbeat(p reply) *driver.Status {
 	st := &driver.Status{Code: driver.OK, Model: n.model.ID, Idle: true}
 	d := p.data
@@ -262,6 +265,9 @@ func (n *niimbot) heartbeat(p reply) *driver.Status {
 		lid, battery, paper = int(d[15]), int(d[16]), int(d[17])
 	case len(d) == 20:
 		paper = int(d[18])
+	}
+	if lid < 0 && paper < 0 && battery < 0 {
+		return nil
 	}
 	if lid >= 0 && n.model.QuirkBool("lid_inverted") {
 		lid = 1 - min(lid, 1)
@@ -308,7 +314,6 @@ func (n *niimbot) Print(ctx context.Context, t driver.Transport, job *driver.Job
 	}
 	r := &reader{t: t}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID}
-	deadline := time.Now().Add(confirmBase + confirmPerPage*time.Duration(len(job.Pages)))
 	page := 0
 	for _, s := range n.steps(job) {
 		if err := ctx.Err(); err != nil {
@@ -316,22 +321,28 @@ func (n *niimbot) Print(ctx context.Context, t driver.Transport, job *driver.Job
 		}
 		p, err := r.do(s)
 		res.Bytes += len(s.p)
-		if err != nil {
-			return nil, fail(err)
+		if err != nil { // the print end still goes out, so the printer doesn't hold the job open
+			return n.end(r, res, false, err)
 		}
 		if s.want != nil && s.want[0] != rspCheckLine && len(p.data) > 0 && p.data[0] == 0 &&
 			s.p[2] != cmdPrintStart && s.p[2] != cmdPageSize {
-			return nil, &driver.Error{Code: driver.Unknown, Detail: fmt.Sprintf("printer refused command 0x%02x", s.p[2])}
+			return n.end(r, res, false, &driver.Error{Code: driver.Unknown, Detail: fmt.Sprintf("printer refused command 0x%02x", s.p[2])})
 		}
 		if s.p[2] == cmdPageEnd {
 			page++
-			if n.model.Dialect == "d110" {
-				if ok, err := n.waitStatus(ctx, r, page, deadline); err != nil || !ok {
+			if n.model.Dialect == "d110" { // each page gets its own window, counted from its last packet
+				if ok, err := n.waitStatus(ctx, r, page, time.Now().Add(confirmBase+confirmPerPage)); err != nil || !ok {
+					if err == nil && page < len(job.Pages) {
+						res.Pages = page
+						res.Message = fmt.Sprintf("stopped after page %d of %d: the printer never reported page %d printed", page, len(job.Pages), page)
+					}
 					return n.end(r, res, ok, err)
 				}
 			}
 		}
 	}
+	// the confirmation window starts once everything is sent
+	deadline := time.Now().Add(confirmBase + confirmPerPage*time.Duration(len(job.Pages)))
 	var ok bool
 	var err error
 	switch n.model.Dialect {
@@ -363,8 +374,11 @@ func (n *niimbot) Print(ctx context.Context, t driver.Transport, job *driver.Job
 
 // end sends the print end (after an error too, so the printer doesn't wait for more) and words the result.
 func (n *niimbot) end(r *reader, res *driver.Result, ok bool, err error) (*driver.Result, error) {
-	_, endErr := r.do(ask(cmdPrintEnd, 1))
+	pe, endErr := r.do(ask(cmdPrintEnd, 1))
 	res.Bytes += 9
+	if n.model.Dialect == "b21" && err == nil && endErr == nil && len(pe.data) > 0 && pe.data[0] == 1 {
+		ok = true // on the B21 a print end answered 01 means done, this last one too
+	}
 	if n.model.Dialect == "v4" { // and the packet after the print end is dropped too
 		_, _ = r.do(step{p: packet(cmdHeartbeat, 1)})
 		res.Bytes += 9
@@ -376,6 +390,7 @@ func (n *niimbot) end(r *reader, res *driver.Result, ok bool, err error) (*drive
 		res.Confirmed, res.Message = true, "printed"
 	case endErr != nil && !errors.Is(endErr, driver.ErrNoReadback):
 		return nil, fail(endErr)
+	case res.Message != "":
 	default:
 		res.Message = "sent (not confirmed: the printer never reported the last page)"
 	}
