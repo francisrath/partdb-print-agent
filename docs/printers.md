@@ -1,7 +1,7 @@
 # Printers
 
 Which label printers pdb-print can drive, how well each one is tested, and how to help with the rest.
-Every printer listed as ✅ or 🟡 is supported by the latest release (v0.2.0).
+Every printer listed as ✅ or 🟡 is supported by the [latest release](https://github.com/francisrath/partdb-print-agent/releases/latest).
 
 ## Support matrix
 
