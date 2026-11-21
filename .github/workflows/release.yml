@@ -97,6 +97,9 @@ jobs:
           security import "$RUNNER_TEMP/sign.p12" -k "$kc" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/sign.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$kp" "$kc" >/dev/null
+          # On a runner codesign finds no identity in a keychain off the user's search list, even with
+          # --keychain (v0.3.0: "no identity found")
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
           id=$(security find-identity -v -p codesigning "$kc" | awk '/"Developer ID Application: / {print $2; exit}')
           if [ -z "$id" ]; then echo "::error::no Developer ID Application identity in MACOS_SIGN_P12"; exit 1; fi
           (umask 077; printf '%s\n' "$MACOS_NOTARY_KEY" >"$RUNNER_TEMP/notary.p8")
