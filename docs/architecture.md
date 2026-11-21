@@ -450,6 +450,12 @@ The sketch in 7.1 was the starting point; the code now works like this:
   RG-MLP80B (576 dots) and generic ESCPOS-80/-58; real-time status by `DLE EOT`; after a job `GS r 1`
   confirms the paper state, and a printer that stays silent gives "sent (unconfirmed)" after 20 s.
 
+* **`tspl` driver family** (`internal/driver/tspl`): TSC printers and TSPL clones (Xprinter, Munbyn, iDPRT,
+  HPRT), from TSC's public TSPL/TSPL2 Programming Manual. Every page is `SIZE`/`GAP` (`GAP 0,0` for continuous
+  media)/`DIRECTION 0,0`/`REFERENCE 0,0`/`CLS`/one `BITMAP` (width in bytes, 0 = black)/`PRINT 1,1`; `SET CUTTER`
+  only when the config asks (it persists in the printer). Status is the `<ESC>!?` byte; completion waits for its
+  "printing" bit to clear. No answer means print blind, unconfirmed. Models are data only (`tspl.yaml`), all untested.
+
 * **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,
   IEEE 1284 id) and network printers by a connect to port 9100 plus SNMP `sysDescr`, named from the
   device database. Passive: nothing is written to a printer. `pdb-print report` (`internal/report`)
