@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -136,19 +137,38 @@ func (c *Checker) Run(ctx context.Context) {
 	}
 }
 
+// Install is how this copy was installed: deb, brew, docker, zip (Windows) or archive.
+func Install() string {
+	exe, _ := os.Executable()
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real // brew links /opt/homebrew/bin/pdb-print into its Caskroom
+	}
+	switch {
+	case runtime.GOOS == "darwin" && strings.Contains(exe, "/Caskroom/"):
+		return "brew"
+	case runtime.GOOS == "windows":
+		return "zip"
+	case fileExists("/.dockerenv"):
+		return "docker"
+	case exe == "/usr/bin/pdb-print": // the .deb
+		return "deb"
+	}
+	return "archive"
+}
+
 // hint says how to update this install.
 func hint(v string) string {
-	exe, _ := os.Executable()
-	switch {
-	case runtime.GOOS == "darwin":
+	switch Install() {
+	case "brew":
 		return "brew upgrade --cask pdb-print"
-	case runtime.GOOS == "windows":
+	case "zip":
 		return "download pdb-print_" + v + "_windows_amd64.zip from the release page and replace pdb-print.exe"
-	case fileExists("/.dockerenv"):
+	case "docker":
 		return "pull the new image (ghcr.io/francisrath/partdb-print-agent:" + v + ") and recreate the container"
-	case exe == "/usr/bin/pdb-print": // the .deb
+	case "deb":
 		return "download the .deb for this machine from the release page, then: sudo apt install ./pdb-print_" + v + "_<arch>.deb"
 	}
+	exe, _ := os.Executable()
 	return "download the archive for this machine from the release page and replace " + exe
 }
 

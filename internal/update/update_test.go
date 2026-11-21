@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,20 @@ func TestRunSkipsDevBuilds(t *testing.T) {
 	(&Checker{Current: "dev", URL: srv.URL}).Run(ctx)
 	if asked {
 		t.Error("dev build asked GitHub")
+	}
+}
+
+// Only a copy in Homebrew's Caskroom gets the brew command; others get archive instructions.
+func TestHintFollowsInstall(t *testing.T) {
+	h := hint("9.9.9")
+	switch Install() {
+	case "brew":
+		if h != "brew upgrade --cask pdb-print" {
+			t.Errorf("brew: %q", h)
+		}
+	case "archive":
+		if !strings.Contains(h, "replace") || strings.Contains(h, "brew") {
+			t.Errorf("archive: %q", h)
+		}
 	}
 }
