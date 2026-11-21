@@ -31,9 +31,9 @@ import (
 
 	"tinygo.org/x/bluetooth"
 
-	"github.com/francisrath/partdb-print-agent/internal/blebridge"
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/bleradio"
+	"github.com/francisrath/pdb-print/internal/blebridge"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/bleradio"
 )
 
 // fatalMark starts the last stderr line when the helper exits on an error (internal/transport/ble reads it).

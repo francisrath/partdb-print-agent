@@ -15,13 +15,13 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
-	"github.com/francisrath/partdb-print-agent/internal/printing"
-	"github.com/francisrath/partdb-print-agent/internal/report"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/report"
 )
 
 // Draft is a wizard session's setup until the printer is named and saved.
@@ -55,7 +55,7 @@ func (d *Draft) resetPrinter(p config.Printer) {
 	d.SavedCurrent = false
 }
 
-const issueURL = "https://github.com/francisrath/partdb-print-agent/issues/new"
+const issueURL = "https://github.com/francisrath/pdb-print/issues/new"
 
 // setupRoutes registers the wizard's pages on mux (LAN and loopback).
 func (s *Server) setupRoutes(mux *http.ServeMux) {

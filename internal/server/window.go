@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/assets"
+	"github.com/francisrath/pdb-print/assets"
 )
 
 // The setup window: for a while after install (or `pdb-print pair`) the wizard is reachable from

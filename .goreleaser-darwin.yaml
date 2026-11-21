@@ -67,7 +67,7 @@ homebrew_casks:
   - name: pdb-print
     binaries: [pdb-print, pdb-print-ble]
     skip_upload: auto # pre-releases don't update the tap
-    homepage: https://github.com/francisrath/partdb-print-agent
+    homepage: https://github.com/francisrath/pdb-print
     description: Direct label printing for Part-DB
     license: MIT
     repository:

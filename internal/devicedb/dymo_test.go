@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 )
 
 func TestDymoModels(t *testing.T) {

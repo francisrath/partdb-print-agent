@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
+	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
 	"image"
 	"io"
 	"log/slog"
@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
-	"github.com/francisrath/partdb-print-agent/internal/render"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/pdfgen"
+	"github.com/francisrath/pdb-print/internal/render"
 )
 
 // fakePT plays a PT-9500PC with 36 mm laminated tape behind a driver.Transport: it answers

@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/icon/social-preview.png" alt="pdb-print – Labelbot, direct label printing for Part-DB" width="100%"></p>
 
-# partdb-print-agent
+# pdb-print
 
 Direct label printing for [Part-DB](https://github.com/Part-DB/Part-DB-server).
 
@@ -25,7 +25,7 @@ pdb-print runs on the computer you work at, on a Raspberry Pi next to the printe
 with Part-DB as it is today. A Print button inside Part-DB and print jobs from any device (also a phone)
 are proposed upstream in [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625).
 
-**Status:** everything described here is in the [latest release](https://github.com/francisrath/partdb-print-agent/releases/latest). pdb-print is pre-1.0: the config
+**Status:** everything described here is in the [latest release](https://github.com/francisrath/pdb-print/releases/latest). pdb-print is pre-1.0: the config
 format may still change between releases (the release notes say how). Which printers have been tested on
 real hardware, and which are implemented from the documentation only, is in [docs/printers.md](docs/printers.md).
 
@@ -58,7 +58,7 @@ help test one: [docs/printers.md](docs/printers.md).
 > first. pdb-print only filters out obviously remote addresses; that is not a firewall.
 
 ```sh
-curl -fsSL https://github.com/francisrath/partdb-print-agent/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/francisrath/pdb-print/releases/latest/download/install.sh | sh
 ```
 Or read it first: download `install.sh` from the release, read it (about 40 lines), then `sh install.sh`.
 The script picks the `.deb` package for your system, checks it against the release's `checksums.txt`,
@@ -85,8 +85,10 @@ The macOS binaries are signed with a Developer ID and notarised by Apple.
 ```sh
 docker run --rm --network host --stop-timeout 130 \
   -v pdb-print:/home/nonroot/.config/pdb-print \
-  ghcr.io/francisrath/partdb-print-agent:latest
+  ghcr.io/francisrath/pdb-print:latest
 ```
+The image used to be `ghcr.io/francisrath/partdb-print-agent` (up to v0.3.1); it has moved with the
+repository, so switch to `ghcr.io/francisrath/pdb-print` to keep getting updates.
 On stop, the agent lets a print in progress finish (up to 2 minutes), hence `--stop-timeout 130`.
 The web UI binds loopback only, so `--network host` makes it reachable at `http://127.0.0.1:8631`
 on the host (and lets it find network printers). Until Part-DB is connected, the setup wizard is
@@ -95,7 +97,7 @@ open to the network for a while: the code is in `docker logs`, and
 token is kept in the config file (0600). The container has no Bluetooth.
 
 **Anything else:** archives for macOS (universal), Linux and Windows are on the
-[releases page](https://github.com/francisrath/partdb-print-agent/releases).
+[releases page](https://github.com/francisrath/pdb-print/releases).
 
 **Raspberry Pi without the package:** use the `linux_armv6` archive on 32-bit Raspberry Pi OS (Pi 1, Zero,
 Pi 2 v1.1) or `linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve`

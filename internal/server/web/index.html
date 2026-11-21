@@ -138,7 +138,7 @@
   <p>Once a week pdb-print can send an anonymous report: its version, the operating system, the printer
   models and connection types you use, and how many jobs and labels each printed. No addresses, names,
   serial numbers, Part-DB URL or label content, and no ID that ties reports together.
-  <a href="https://github.com/francisrath/partdb-print-agent/blob/main/docs/telemetry.md">Every field</a>.</p>
+  <a href="https://github.com/francisrath/pdb-print/blob/main/docs/telemetry.md">Every field</a>.</p>
   {{with .TelemetryOff}}<p class="muted">Not sent: {{.}}.</p>{{end}}
   <form method="post" action="/telemetry">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

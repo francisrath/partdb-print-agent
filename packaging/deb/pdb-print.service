@@ -1,6 +1,6 @@
 [Unit]
 Description=pdb-print label print agent for Part-DB
-Documentation=https://github.com/francisrath/partdb-print-agent
+Documentation=https://github.com/francisrath/pdb-print
 After=network-online.target
 Wants=network-online.target
 

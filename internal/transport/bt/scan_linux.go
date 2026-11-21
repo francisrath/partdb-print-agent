@@ -11,7 +11,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 const sppUUIDString = "00001101-0000-1000-8000-00805f9b34fb"

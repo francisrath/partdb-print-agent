@@ -1,4 +1,4 @@
-module github.com/francisrath/partdb-print-agent
+module github.com/francisrath/pdb-print
 
 go 1.27.4
 

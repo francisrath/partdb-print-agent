@@ -3,8 +3,8 @@ package brother
 import (
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // Every Brother model in the device database must build a driver (catches a dialect typo

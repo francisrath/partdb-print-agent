@@ -9,8 +9,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // pt-cbp dialect: Brother's "PT-9500PC Command Reference, CBP-RASTER Mode (PTCBP Mode)

@@ -16,13 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/snmp"
-	"github.com/francisrath/partdb-print-agent/internal/transport/ble"
-	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
-	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/snmp"
+	"github.com/francisrath/pdb-print/internal/transport/ble"
+	"github.com/francisrath/pdb-print/internal/transport/bt"
+	"github.com/francisrath/pdb-print/internal/transport/usb"
 )
 
 // Candidate statuses.

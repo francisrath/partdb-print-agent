@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/snmp"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/snmp"
 )
 
 // QL dialect, from Brother's "Raster Command Reference" (QL-800/810W/820NWB; QL-600/710W/720NW;

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // fakeLP behaves like Linux usblp as measured on a Pi with a PT-9500PC: a read with

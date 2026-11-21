@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
+	"github.com/francisrath/pdb-print/internal/pdfgen"
 	"github.com/klippa-app/go-pdfium/enums"
 )
 

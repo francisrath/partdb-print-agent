@@ -7,10 +7,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
-	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/transport/tcp"
+	"github.com/francisrath/pdb-print/internal/transport/usb"
 )
 
 // Status only — never prints.

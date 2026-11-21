@@ -21,13 +21,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
-	"github.com/francisrath/partdb-print-agent/internal/printing"
-	"github.com/francisrath/partdb-print-agent/internal/report"
-	"github.com/francisrath/partdb-print-agent/internal/transport"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/pdfgen"
+	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/report"
+	"github.com/francisrath/pdb-print/internal/transport"
 )
 
 // Options for Run. Discover, Report and Now are for tests (nil = the real ones).

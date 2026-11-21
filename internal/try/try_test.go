@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
-	"github.com/francisrath/partdb-print-agent/internal/printing"
-	"github.com/francisrath/partdb-print-agent/internal/try"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
+	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/try"
 )
 
 // dialog plays the person at the printer: it waits for a question in the output, then answers.

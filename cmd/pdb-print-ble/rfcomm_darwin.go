@@ -26,9 +26,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/francisrath/partdb-print-agent/internal/blebridge"
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
+	"github.com/francisrath/pdb-print/internal/blebridge"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/transport/bt"
 )
 
 // IOBluetooth delivers its callbacks on the main thread's run loop: the main goroutine stays on the main

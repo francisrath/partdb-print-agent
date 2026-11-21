@@ -85,7 +85,7 @@ nfpms:
     package_name: pdb-print
     file_name_template: '{{ replace .ConventionalFileName "~" "-" }}'
     formats: [deb]
-    homepage: https://github.com/francisrath/partdb-print-agent
+    homepage: https://github.com/francisrath/pdb-print
     maintainer: Francis Rath <francisrath@users.noreply.github.com>
     description: Direct label printing for Part-DB
     license: MIT
@@ -116,7 +116,7 @@ changelog:
     exclude: ["^docs", "^test", "^ci", "^chore"]
 
 dockers_v2:
-  - images: ["ghcr.io/francisrath/partdb-print-agent"]
+  - images: ["ghcr.io/francisrath/pdb-print"]
     ids: [pdb-print]
     tags:
       - "{{ .Version }}"
@@ -124,7 +124,7 @@ dockers_v2:
     platforms: [linux/amd64, linux/arm64]
     extra_files: [packaging/docker/config-dir.keep]
     labels:
-      org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
+      org.opencontainers.image.source: https://github.com/francisrath/pdb-print
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
   - id: stats
@@ -136,7 +136,7 @@ dockers_v2:
       - "{{ if not .Prerelease }}latest{{ end }}"
     platforms: [linux/amd64, linux/arm64]
     labels:
-      org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
+      org.opencontainers.image.source: https://github.com/francisrath/pdb-print
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.description: pdb-print usage report collector (docs/telemetry.md)

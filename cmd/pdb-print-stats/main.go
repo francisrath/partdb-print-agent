@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/telemetry"
+	"github.com/francisrath/pdb-print/internal/telemetry"
 )
 
 const (

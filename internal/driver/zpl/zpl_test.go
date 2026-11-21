@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
-	"github.com/francisrath/partdb-print-agent/internal/transport/tcp"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver/zpl"
+	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
+	"github.com/francisrath/pdb-print/internal/transport/tcp"
 )
 
 func gk420d(t *testing.T) (driver.Driver, *devicedb.Model) {

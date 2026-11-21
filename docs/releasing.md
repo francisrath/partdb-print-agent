@@ -21,7 +21,7 @@ publish step (seconds), the cask points at the still-draft release: `brew instal
 
 ## macOS signing
 
-The `release-darwin` job needs these Actions secrets on `francisrath/partdb-print-agent` and fails without them
+The `release-darwin` job needs these Actions secrets on `francisrath/pdb-print` and fails without them
 (a release is never unsigned):
 
 | Secret | What |
@@ -75,8 +75,8 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
   without that draft, so it never publishes a macOS-only release.
 - **Re-running the Linux job after the release was published is unsupported:** GoReleaser finds no draft and
   creates a second, draft release for the tag. Delete that extra draft by hand (the published release stays):
-  `gh api repos/francisrath/partdb-print-agent/releases --jq '.[] | select(.draft and .tag_name == "TAG") | .id'`,
-  then `gh api -X DELETE repos/francisrath/partdb-print-agent/releases/ID`.
+  `gh api repos/francisrath/pdb-print/releases --jq '.[] | select(.draft and .tag_name == "TAG") | .id'`,
+  then `gh api -X DELETE repos/francisrath/pdb-print/releases/ID`.
 - **Don't re-run the release jobs of an old tag:** it can move the "latest" badge back to it.
 
 Local macOS dry run: `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew`

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 )
 
 // Driver prints on one printer of a family. It is built per printer from its device-database

@@ -18,27 +18,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/dymo"    // registers the dymo family (LabelWriter)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/epl"     // registers the epl family (Zebra EPL2)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/niimbot" // registers the niimbot family (BLE label makers)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/phomemo" // registers the phomemo family (BLE label printers)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/tspl"    // registers the tspl family (TSC and clones)
-	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
-	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
-	"github.com/francisrath/partdb-print-agent/internal/render"
-	"github.com/francisrath/partdb-print-agent/internal/transport"
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble"    // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"     // registers kind bt (Linux/Windows; macOS: transport/ble)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/serial" // registers kind serial (Linux, macOS, Windows)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp"    // registers kind tcp
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb"    // registers kind usb
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	_ "github.com/francisrath/pdb-print/internal/driver/brother" // registers the brother family
+	_ "github.com/francisrath/pdb-print/internal/driver/cat"     // registers the cat family (BLE cat printers)
+	_ "github.com/francisrath/pdb-print/internal/driver/dymo"    // registers the dymo family (LabelWriter)
+	_ "github.com/francisrath/pdb-print/internal/driver/epl"     // registers the epl family (Zebra EPL2)
+	_ "github.com/francisrath/pdb-print/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
+	_ "github.com/francisrath/pdb-print/internal/driver/niimbot" // registers the niimbot family (BLE label makers)
+	_ "github.com/francisrath/pdb-print/internal/driver/phomemo" // registers the phomemo family (BLE label printers)
+	_ "github.com/francisrath/pdb-print/internal/driver/tspl"    // registers the tspl family (TSC and clones)
+	_ "github.com/francisrath/pdb-print/internal/driver/zpl"     // registers the zpl family (Zebra)
+	"github.com/francisrath/pdb-print/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/pdfgen"
+	"github.com/francisrath/pdb-print/internal/render"
+	"github.com/francisrath/pdb-print/internal/transport"
+	_ "github.com/francisrath/pdb-print/internal/transport/ble"    // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
+	_ "github.com/francisrath/pdb-print/internal/transport/bt"     // registers kind bt (Linux/Windows; macOS: transport/ble)
+	_ "github.com/francisrath/pdb-print/internal/transport/serial" // registers kind serial (Linux, macOS, Windows)
+	_ "github.com/francisrath/pdb-print/internal/transport/tcp"    // registers kind tcp
+	_ "github.com/francisrath/pdb-print/internal/transport/usb"    // registers kind usb
 )
 
 // Source returns the PDF to print once the media is known.

@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 )
 
 // Schema is bumped on any change to Report.

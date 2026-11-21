@@ -213,7 +213,7 @@ footer { margin-top: 36px; font-size: 13px; }
 </style></head><body>
 <h1>pdb-print usage</h1>
 <p class="muted">From the anonymous weekly reports pdb-print installs send
-(<a href="https://github.com/francisrath/partdb-print-agent/blob/main/docs/telemetry.md">what they contain</a>).
+(<a href="https://github.com/francisrath/pdb-print/blob/main/docs/telemetry.md">what they contain</a>).
 Installs are reports per week: there is no install id.</p>
 {{if not .Reports}}<p>No reports yet.</p>{{else}}
 <div class="big">
@@ -236,7 +236,7 @@ Installs are reports per week: there is no install id.</p>
 {{template "t" (dict "T" "Jobs per source, all weeks" "R" .Jobs)}}
 {{template "t" (dict "T" "Errors, all weeks" "R" .Errors)}}
 </div>{{end}}
-<footer class="muted">Collected by <a href="https://github.com/francisrath/partdb-print-agent/tree/main/cmd/pdb-print-stats">pdb-print-stats</a>,
+<footer class="muted">Collected by <a href="https://github.com/francisrath/pdb-print/tree/main/cmd/pdb-print-stats">pdb-print-stats</a>,
 which stores no addresses. Turn reports off with <code>telemetry: false</code>.</footer>
 </body></html>
 {{define "t"}}<section><h2>{{.T}}</h2>{{if .R}}<table>{{range .R}}<tr><td>{{.Name}}</td><td class="n">{{.N}}</td><td class="bar"><span style="width: {{.Share}}%"></span></td></tr>{{end}}</table>{{else}}<p class="muted">none</p>{{end}}</section>{{end}}`))

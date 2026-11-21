@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // Replies as the friend's GK420d sent them (zebra-probe log, 2026-11-18).

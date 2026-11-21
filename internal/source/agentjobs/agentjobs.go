@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/partdb"
 )
 
 const (

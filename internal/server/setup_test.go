@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
+	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +14,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/driver"
 	"github.com/zalando/go-keyring"
 )
 
@@ -230,7 +230,7 @@ func TestFixRoundsOfferReport(t *testing.T) {
 func TestReportDownload(t *testing.T) {
 	h := newHarness(t)
 	wizardToTest(t, h, partDBWith(t, h, nil))
-	if w := h.do("GET", "/setup/report", nil); !strings.Contains(w.Body.String(), "github.com/francisrath/partdb-print-agent/issues/new") {
+	if w := h.do("GET", "/setup/report", nil); !strings.Contains(w.Body.String(), "github.com/francisrath/pdb-print/issues/new") {
 		t.Errorf("report page: %s", w.Body)
 	}
 	w := h.post("/setup/report", url.Values{})
