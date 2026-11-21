@@ -25,7 +25,7 @@ pdb-print runs on the computer you work at, on a Raspberry Pi next to the printe
 with Part-DB as it is today. A Print button inside Part-DB and print jobs from any device (also a phone)
 are proposed upstream in [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625).
 
-**Status:** everything described here is in the latest release, v0.2.0. pdb-print is pre-1.0: the config
+**Status:** everything described here is in the [latest release](https://github.com/francisrath/partdb-print-agent/releases/latest). pdb-print is pre-1.0: the config
 format may still change between releases (the release notes say how). Which printers have been tested on
 real hardware, and which are implemented from the documentation only, is in [docs/printers.md](docs/printers.md).
 
