@@ -171,8 +171,8 @@ ITPP941; iDPRT SP410, SP420, iD4S-203/-300; HPRT HT300, N41 (`pdb-print media` l
 been tested on a real printer yet.** Over USB (Linux), the network (port 9100) on models with Ethernet, or
 Bluetooth Classic (`kind: bt`) on models with a Bluetooth serial option. They aren't recognised automatically
 (no USB ids or Bluetooth names are published): pick the model by hand. TSPL printers don't report the loaded
-label, so set `media:` to it: a die-cut size from `pdb-print media` (`label-102x152` for 4×6") or
-`continuous-102`/`-76`/`-57`. Die-cut labels are sent with a 3 mm gap; the printer finds the gap itself.
+label, so set `media:` to it: a size `pdb-print media` lists for your model, die-cut (`label-102x152` for 4×6")
+or continuous (`continuous-102`/`-76`/`-57` on the 4" and 3" models; the 2" TDP-225 takes die-cut only). Die-cut labels are sent with a 3 mm gap; the printer finds the gap itself.
 
 ```yaml
 - id: xprinter
@@ -185,7 +185,8 @@ label, so set `media:` to it: a die-cut size from `pdb-print media` (`label-102x
 
 Every label goes as one bitmap. Status is the printer's one-byte answer to `<ESC>!?` (head open, paper out
 or jam, ribbon out, paused); after a job pdb-print waits for the "printing" flag to clear and reports
-"printed". A printer that doesn't answer (many clones over Bluetooth) prints "sent (unconfirmed)". Black-mark
+"printed". A short label can finish before pdb-print sees the flag: then it reports "sent, probably printed"
+(not confirmed). A printer that doesn't answer (many clones over Bluetooth) gives "sent (unconfirmed)". Black-mark
 media (`BLINE`) isn't supported yet.
 
 ### Bluetooth label printers ("cat printers" and Bluetooth Classic)

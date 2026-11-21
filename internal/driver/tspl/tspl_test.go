@@ -80,7 +80,7 @@ func gray(w, h int, black ...image.Point) *image.Gray {
 func TestEncodeGolden(t *testing.T) {
 	m := &devicedb.Model{ID: "T", Driver: "tspl", DPI: 203, HeadPins: 832}
 	d := &tspl{model: m}
-	die := &driver.Media{ID: "label-38x25", Kind: driver.DieCut, WidthMM: 38, LengthMM: 25}
+	die := &devicedb.Media{ID: "label-38x25", Kind: devicedb.DieCut, WidthMM: 38, LengthMM: 25}
 	var b bytes.Buffer
 	// 10×2 dots: (0,0) and (9,1) black → row 0 = 0x7F 0xFF, row 1 = 0xFF 0xBF
 	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{gray(10, 2, image.Pt(0, 0), image.Pt(9, 1))}, Media: die}); err != nil {
@@ -95,7 +95,7 @@ func TestEncodeGolden(t *testing.T) {
 	// continuous: as long as the page (16 rows at 8 dots/mm = 2 mm), no gap
 	m.Quirks = map[string]any{"cutter": true}
 	b.Reset()
-	cont := &driver.Media{ID: "continuous-57", Kind: driver.Continuous, WidthMM: 57}
+	cont := &devicedb.Media{ID: "continuous-57", Kind: devicedb.Continuous, WidthMM: 57}
 	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{gray(8, 16)}, Media: cont, Cut: "per_label"}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,14 +106,19 @@ func TestEncodeGolden(t *testing.T) {
 
 func TestEncodeCutModes(t *testing.T) {
 	m := &devicedb.Model{ID: "T", Driver: "tspl", DPI: 203, HeadPins: 832, Quirks: map[string]any{"cutter": true}}
-	md := &driver.Media{ID: "x", Kind: driver.DieCut, WidthMM: 50, LengthMM: 30}
-	for cut, want := range map[string]string{"per_label": "SET CUTTER 1", "last": "SET CUTTER BATCH", "none": "SET CUTTER OFF"} {
+	md := &devicedb.Media{ID: "x", Kind: devicedb.DieCut, WidthMM: 50, LengthMM: 30}
+	for cut, want := range map[string]string{"per_label": "SET CUTTER 1", "none": "SET CUTTER OFF"} {
 		var b bytes.Buffer
 		if err := (&tspl{model: m}).Encode(&b, &driver.Job{Pages: []*image.Gray{gray(8, 8)}, Media: md, Cut: cut}); err != nil || !strings.Contains(b.String(), want+"\r\n") {
 			t.Errorf("cut %q: %v %q", cut, err, b.String())
 		}
 	}
 	var b bytes.Buffer
+	two := &driver.Job{Pages: []*image.Gray{gray(8, 8), gray(8, 8)}, Media: md, Cut: "last"}
+	if err := (&tspl{model: m}).Encode(&b, two); err != nil || strings.Count(b.String(), "SET CUTTER OFF\r\n") != 1 ||
+		strings.Index(b.String(), "SET CUTTER OFF") > strings.Index(b.String(), "SET CUTTER BATCH\r\nCLS") {
+		t.Errorf("cut last: %v %q", err, b.String())
+	}
 	for _, d := range []*tspl{{model: m}, {model: &devicedb.Model{DPI: 203, HeadPins: 832}}} {
 		cut := map[bool]string{true: "", false: "per_label"}[d.model.QuirkBool("cutter")]
 		b.Reset()
@@ -131,7 +136,7 @@ func TestEncodeHeadClamp(t *testing.T) {
 	d := &tspl{model: &devicedb.Model{DPI: 203, HeadPins: 12}}
 	var b bytes.Buffer
 	pg := gray(20, 1, image.Pt(11, 0), image.Pt(15, 0))
-	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{pg}, Media: &driver.Media{Kind: driver.DieCut, WidthMM: 2, LengthMM: 1}}); err != nil {
+	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{pg}, Media: &devicedb.Media{Kind: devicedb.DieCut, WidthMM: 2, LengthMM: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "BITMAP 0,0,2,1,0,\xFF\xEF\r\n") {

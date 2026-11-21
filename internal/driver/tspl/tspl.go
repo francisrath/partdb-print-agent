@@ -61,8 +61,8 @@ func (d *tspl) Encode(w io.Writer, job *driver.Job) error {
 		switch job.Cut {
 		case "per_label":
 			cut = "SET CUTTER 1"
-		case "last":
-			cut = "SET CUTTER BATCH"
+		case "last": // BATCH cuts after each PRINT, and every page is its own PRINT: cut only after the last
+			cut = "SET CUTTER OFF"
 		case "none":
 			cut = "SET CUTTER OFF"
 		}
@@ -73,13 +73,16 @@ func (d *tspl) Encode(w io.Writer, job *driver.Job) error {
 		return fmt.Errorf("tspl: unknown cut mode %q", job.Cut)
 	}
 	var b bytes.Buffer
-	for _, pg := range job.Pages {
+	for i, pg := range job.Pages {
 		length, gap := m.LengthMM, mm(float64(d.model.Quirk("gap_mm", 3)))
-		if m.Kind == driver.Continuous || length == 0 {
+		if m.Kind == devicedb.Continuous || length == 0 {
 			length, gap = float64(pg.Bounds().Dy())/d.dpm(), "0"
 		}
 		fmt.Fprintf(&b, "SIZE %s mm,%s mm\r\nGAP %s mm,0 mm\r\nDIRECTION 0,0\r\nREFERENCE 0,0\r\n", mm(m.WidthMM), mm(math.Round(length*10)/10), gap)
-		if cut != "" {
+		switch {
+		case job.Cut == "last" && cut != "" && i == len(job.Pages)-1:
+			b.WriteString("SET CUTTER BATCH\r\n")
+		case cut != "":
 			b.WriteString(cut + "\r\n")
 		}
 		b.WriteString("CLS\r\n")
