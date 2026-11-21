@@ -477,7 +477,7 @@ func (s *Server) setupPrint(ctx context.Context, d *Draft) {
 	s.setupPrints.Add(1) // serve waits for it before exiting
 	defer s.setupPrints.Done()
 	res, err := s.Svc.Print(ctx, p, "", printing.TestCard(p.Model, s.Version))
-	s.record(jobFor("setup wizard", "test label", p.ID, res, err))
+	s.finish("setup wizard", "test label", p.ID, res, err)
 	if err != nil {
 		d.Msg = "The test label didn't print: " + err.Error()
 		return
@@ -594,12 +594,17 @@ func (s *Server) setupDone(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 		return
 	}
-	s.setupPage(w, r, "setup-done", 5, nil)
+	cfg := s.config()
+	s.setupPage(w, r, "setup-done", 5, map[string]any{"TelemetryOn": cfg.Telemetry == nil || *cfg.Telemetry})
 }
 
 func (s *Server) setupDonePost(w http.ResponseWriter, r *http.Request) {
 	sess, d, unlock := lockDraft(r)
 	defer unlock()
+	on := r.FormValue("telemetry") == "1" // passing this step records the choice (docs/telemetry.md)
+	if err := s.update(func(c *config.Config) error { c.Telemetry = &on; return nil }); err != nil {
+		s.Log.Warn("setup: couldn't save the usage report choice", "err", err)
+	}
 	if r.FormValue("action") == "another" {
 		d.resetPrinter(config.Printer{})
 		http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)

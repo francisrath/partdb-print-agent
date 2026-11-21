@@ -39,6 +39,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/server"
 	"github.com/francisrath/partdb-print-agent/internal/source/agentjobs"
 	"github.com/francisrath/partdb-print-agent/internal/source/hotfolder"
+	"github.com/francisrath/partdb-print-agent/internal/telemetry"
 	"github.com/francisrath/partdb-print-agent/internal/transport/serial"
 	"github.com/francisrath/partdb-print-agent/internal/update"
 )
@@ -69,6 +70,7 @@ commands:
   media                            list known media and the models that take them
   discover [--subnet CIDR]... [--no-usb] [--no-network]
                                    find printers on USB and the local network (read-only)
+  telemetry show                   print the next weekly usage report and whether it will be sent
   report [--identify] [--print] [--raw] [--port N] [--out FILE] [HOST|usb]...
                                    collect what's needed to support a printer into a file for a
                                    GitHub issue (asks before sending anything to a printer)
@@ -193,6 +195,8 @@ func run(ctx context.Context, args []string) error {
 		return a.print(ctx, rest)
 	case "printers":
 		return a.printers(ctx, rest)
+	case "telemetry":
+		return a.telemetry(os.Stdout, rest)
 	}
 	g.Usage()
 	return fmt.Errorf("unknown command %q", cmd)
@@ -359,6 +363,13 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		}()
 	}
 	jobsDone := a.startAgentJobs(ctx, srv)
+	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
+	stats := &telemetry.Sender{Store: srv.Stats, Version: appVersion(), Config: srv.Config, AgentAPI: jobsDone.hasAPI, Log: a.log,
+		Renderer: func() string { name, _, _ := strings.Cut(a.renderer(), " "); return name }}
+	go stats.Run(ctx)
+	if why := telemetry.Off(srv.Config()); why == "" {
+		a.log.Info("weekly anonymous usage report on (docs/telemetry.md); turn it off in the web UI or with telemetry: false")
+	}
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
 	setupDone := srv.StartSetupLoop(ctx, tick.C)
@@ -537,6 +548,18 @@ func (j *agentJobs) start(in config.Instance) {
 		}
 		_ = l.loop.Run(ctx)
 	}()
+}
+
+// hasAPI: a connected Part-DB answered with the print agent API.
+func (j *agentJobs) hasAPI() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, l := range j.loops {
+		if l.loop.HasAPI() {
+			return true
+		}
+	}
+	return false
 }
 
 // wait stops new loops from starting and waits for the running ones (after ctx is done).
@@ -802,4 +825,27 @@ func confirm(ctx context.Context, in *bufio.Reader, q string) bool {
 		fmt.Println()
 		return false
 	}
+}
+
+// telemetry show prints the report the next weekly send would carry (docs/telemetry.md).
+func (a *app) telemetry(w io.Writer, args []string) error {
+	if len(args) != 1 || args[0] != "show" {
+		return errors.New("usage: pdb-print telemetry show")
+	}
+	s := &telemetry.Sender{Store: telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json")), Version: appVersion(),
+		Config: func() *config.Config { return a.cfg }, Renderer: func() string { name, _, _ := strings.Cut(a.renderer(), " "); return name }}
+	b, err := json.MarshalIndent(s.Build(), "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "%s\n", b)
+	switch why := telemetry.Off(a.cfg); {
+	case why != "":
+		fmt.Fprintf(w, "\nNot sent: %s.\n", why)
+	case !update.Released(appVersion()):
+		fmt.Fprintln(w, "\nNot sent: development builds never send.")
+	default:
+		fmt.Fprintf(w, "\nSent once a week to %s (agent_api is filled in by the running agent).\n", telemetry.Endpoint)
+	}
+	return nil
 }

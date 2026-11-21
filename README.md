@@ -115,6 +115,13 @@ how to update this install (Homebrew, the `.deb`, the Windows zip or the Docker 
 so once. Development builds never ask; `update_check: false` in the config turns it off. pdb-print
 doesn't update itself.
 
+**Usage statistics:** `pdb-print serve` can send an anonymous usage report once a week: version, OS,
+printer models and connection types, and that week's job and label counts. No addresses, names, serial
+numbers, Part-DB URL or label content, and no install id. Nothing is sent until you've made a choice in
+the setup wizard's last step or the web UI's "Usage statistics" section (the box is ticked by default).
+`telemetry: false`, `DO_NOT_TRACK=1` or `PDB_PRINT_TELEMETRY=off` turn it off;
+`pdb-print telemetry show` prints the next report. Every field: [docs/telemetry.md](docs/telemetry.md).
+
 ## Set up
 
 **On a print server** (Debian package or Docker): on any computer on the same network, open the address

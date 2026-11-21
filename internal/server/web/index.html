@@ -18,6 +18,7 @@
 </header>
 
 {{with .Update}}<p class="flash" role="status">pdb-print {{.Version}} is out (this is {{$.Version}}): <a href="{{.URL}}">release notes</a>. To update: <code>{{.Hint}}</code></p>{{end}}
+{{if not .TelemetryDecided}}<p class="flash" role="status">pdb-print can send an anonymous usage report once a week. Nothing is sent until you choose: see <a href="#usage-stats">Usage statistics</a> below.</p>{{end}}
 {{with .Flash}}<p class="flash {{if .Err}}err{{end}}" role="status">{{.Text}}</p>{{end}}
 
 <main>
@@ -130,6 +131,20 @@
     </tbody>
   </table>
   {{else}}<p class="muted">No jobs since the agent started.</p>{{end}}
+</section>
+
+<section id="usage-stats">
+  <h2>Usage statistics</h2>
+  <p>Once a week pdb-print can send an anonymous report: its version, the operating system, the printer
+  models and connection types you use, and how many jobs and labels each printed. No addresses, names,
+  serial numbers, Part-DB URL or label content, and no ID that ties reports together.
+  <a href="https://github.com/francisrath/partdb-print-agent/blob/main/docs/telemetry.md">Every field</a>.</p>
+  {{with .TelemetryOff}}<p class="muted">Not sent: {{.}}.</p>{{end}}
+  <form method="post" action="/telemetry">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label><input type="checkbox" name="on" value="1"{{if .TelemetryOn}} checked{{end}}> Send the weekly usage report</label>
+    <button>Save</button>
+  </form>
 </section>
 </main>
 </body>
