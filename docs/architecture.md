@@ -454,8 +454,8 @@ The sketch in 7.1 was the starting point; the code now works like this:
   Clean-room from Zebra's EPL Programming Guide 14245L-003. Per job `ZT`, `q` (width, centred on the
   head), `Q` (gap `Q<len>,<3 mm>`, black mark `Q<len>,B<mm>+0` from `black_mark_mm`, continuous
   `Q<len>,0`) and `D` (density, `darkness` ±3); per page `N`, one `GW` graphic (0 bit = black), `P1`.
-  Status `^ee` is documented over USB and serial only, so USB jobs are confirmed (busy `50`, then `00`)
-  and TCP jobs (ZebraNet print server) go blind. Untested on hardware.
+  Status `^ee` is documented over USB and serial only, so USB jobs are confirmed when seen busy (`50`, then `00`);
+  never seen busy, silent or stopped = sent unconfirmed. TCP jobs (ZebraNet print server) go blind. Untested on hardware.
 
 * **`dymo` driver family** (`internal/driver/dymo`): LabelWriter 400/450 series, 4XL (dialect `lw400`) and
   330 (`lw300`) over USB (usblp: they are printer-class devices), clean-room from DYMO's LabelWriter 400 and

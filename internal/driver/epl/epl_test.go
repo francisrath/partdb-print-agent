@@ -20,15 +20,16 @@ import (
 // fake is an EPL printer behind a transport of the given kind: it records what it gets and answers
 // each ^ee with the next of replies (the last one repeats); no replies = silent.
 type fake struct {
-	kind    string
-	mu      sync.Mutex
-	replies []string
-	sent    bytes.Buffer
-	pending []byte
+	kind     string
+	mu       sync.Mutex
+	replies  []string
+	sent     bytes.Buffer
+	pending  []byte
+	closeErr error
 }
 
 func (f *fake) Open(context.Context) error { return nil }
-func (f *fake) Close() error               { return nil }
+func (f *fake) Close() error               { return f.closeErr }
 func (f *fake) Kind() string               { return f.kind }
 
 func (f *fake) Write(p []byte) (int, error) {
@@ -132,6 +133,7 @@ func TestEncodeForms(t *testing.T) {
 		{"gap 300 dpi", "TLP3842", driver.Options{}, dieCut(8, 30), "\nQ30,36\n"},
 		{"black mark", "LP2844", driver.Options{BlackMarkMM: 4}, dieCut(8, 30), "\nQ30,B32+0\n"},
 		{"black mark below the minimum", "LP2844", driver.Options{BlackMarkMM: 0.5}, dieCut(8, 30), "\nQ30,B16+0\n"},
+		{"black mark below the 300 dpi minimum", "TLP3842", driver.Options{BlackMarkMM: 0.5}, dieCut(8, 30), "\nQ30,B18+0\n"},
 		{"continuous: page length", "LP2844", driver.Options{}, &devicedb.Media{ID: "roll", Kind: devicedb.Continuous, PrintableWidthDots: 8}, "\nQ30,0\n"},
 		{"continuous ignores black mark", "LP2844", driver.Options{BlackMarkMM: 4}, &devicedb.Media{ID: "roll", Kind: devicedb.Continuous, PrintableWidthDots: 8}, "\nQ30,0\n"},
 		{"light", "LP2844", driver.Options{Darkness: "light"}, dieCut(8, 30), "\nD7\n"},
@@ -166,6 +168,7 @@ func TestStatus(t *testing.T) {
 		{"11", driver.CoverOpen, true, true},
 		{"12", driver.Paused, true, true},
 		{"81", driver.CutterJam, true, true},
+		{"83", driver.Unknown, true, true}, // needs feed or reset: blocks like the others
 		{"84", driver.MediaMismatch, true, true},
 		{"02", driver.OK, true, true}, // an earlier job's error doesn't stop the printer
 	} {
@@ -226,6 +229,8 @@ func TestPrintErrors(t *testing.T) {
 	}{
 		{"out of labels while printing", "00", []string{"50", "07"}, driver.NoMedia},
 		{"our job's error", "00", []string{"02"}, driver.Unknown},
+		{"old error cleared, then ours", "02", []string{"00", "50", "02"}, driver.Unknown},
+		{"illegal interrupt", "00", []string{"50", "83"}, driver.Unknown},
 	} {
 		job := &driver.Job{Pages: []*image.Gray{white(8, 2)}, Media: dieCut(8, 2), Status: &driver.Status{Code: driver.OK, Raw: tc.before}}
 		_, err := newDriver(t, "LP2844", driver.Options{}).Print(context.Background(), &fake{kind: "usb", replies: tc.replies}, job)
@@ -239,6 +244,16 @@ func TestPrintErrors(t *testing.T) {
 	res, err := newDriver(t, "LP2844", driver.Options{}).Print(context.Background(), &fake{kind: "usb", replies: []string{"50", "02"}}, job)
 	if err != nil || !res.Confirmed {
 		t.Errorf("old error: %+v %v", res, err)
+	}
+}
+
+// A lost tail on close (USB drain) fails the job instead of watching ^ee.
+func TestPrintCloseError(t *testing.T) {
+	_, err := newDriver(t, "LP2844", driver.Options{}).Print(context.Background(), &fake{kind: "usb", replies: []string{"00"}, closeErr: errors.New("drain: unplugged")},
+		&driver.Job{Pages: []*image.Gray{white(8, 2)}, Media: dieCut(8, 2)})
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CommsError {
+		t.Errorf("%v", err)
 	}
 }
 

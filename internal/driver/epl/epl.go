@@ -64,8 +64,12 @@ func (e *epl) Encode(w io.Writer, job *driver.Job) error {
 	switch {
 	case job.Media.Kind == devicedb.Continuous:
 		form = fmt.Sprintf("Q%d,0", length)
-	case e.opts.BlackMarkMM > 0: // p2 = B + line thickness, p3 required in this mode (p.139)
-		form = fmt.Sprintf("Q%d,B%d+0", length, min(max(int(math.Round(e.opts.BlackMarkMM*e.dpm())), 16), 240))
+	case e.opts.BlackMarkMM > 0: // p2 = B + line thickness (16–240 dots at 203 dpi, 18–240 at 300), p3 required (p.139)
+		least := 16
+		if e.model.DPI >= 300 {
+			least = 18
+		}
+		form = fmt.Sprintf("Q%d,B%d+0", length, min(max(int(math.Round(e.opts.BlackMarkMM*e.dpm())), least), 240))
 	default:
 		// ponytail: a fixed 3 mm gap; the sensor finds the real one. Add a gap_mm setting if a roll needs it.
 		form = fmt.Sprintf("Q%d,%d", length, int(3*e.dpm()))
@@ -143,6 +147,7 @@ var codes = map[string]struct {
 	"12": {driver.Paused, "printer is paused: press the feed button"},
 	"81": {driver.CutterJam, "cutter jammed or not installed"},
 	"82": {driver.MediaMismatch, "AutoSense or sensor failure: recalibrate the printer"},
+	"83": {driver.Unknown, "illegal interrupt: press feed or reset the printer"},
 	"84": {driver.MediaMismatch, "excessive media feeding: no gap or black mark found (wrong media or sensing?)"},
 }
 
@@ -180,7 +185,9 @@ func (e *epl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	_, err := t.Write(b.Bytes())
-	t.Close()
+	if cerr := t.Close(); err == nil {
+		err = cerr // USB close drains: a lost tail fails the job (never resent: it may have printed)
+	}
 	if err != nil {
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
@@ -192,6 +199,10 @@ func (e *epl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	sent := time.Now()
 	deadline := sent.Add(10*time.Second + 2*time.Second*time.Duration(len(job.Pages)))
 	seen := false
+	old := "" // the error left by an earlier job; once ^ee reads clean, a repeat of it is ours
+	if job.Status != nil {
+		old = job.Status.Raw
+	}
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -206,7 +217,9 @@ func (e *epl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		if st.Code != driver.OK {
 			return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 		}
-		if st.Detail != "" && (job.Status == nil || job.Status.Raw != st.Raw) { // a new job error: ours
+		if st.Raw == "00" { // clean (50 = busy only says nothing about errors)
+			old = ""
+		} else if st.Detail != "" && st.Raw != old { // a new job error: ours
 			return nil, &driver.Error{Code: driver.Unknown, Detail: st.Detail}
 		}
 		switch {

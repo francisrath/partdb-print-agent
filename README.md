@@ -178,7 +178,8 @@ use the Zebra (ZPL) section. **Untested**: written from Zebra's EPL Programming 
 ```
 
 Each label is sent as one graphic. Over USB the agent asks the printer for errors (`^ee`: out of labels,
-head open, paused) and confirms each job; over the network EPL has no status, so jobs are sent unconfirmed.
+head open, paused) and confirms a job once it saw the printer busy and done; if it finished too fast to see, or
+the printer stays silent, the job counts as sent but unconfirmed. Over the network EPL has no status, so jobs are sent unconfirmed.
 Serial (RS-232) and parallel connections aren't supported, so the LP/TLP 2622, LP 2443 and Strata aren't either.
 
 ### TSC and other TSPL printers
