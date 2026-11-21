@@ -17,7 +17,7 @@ func (db *DB) MarkdownMatrix() string {
 		models = append(models, m)
 	}
 	slices.SortFunc(models, func(a, b *Model) int {
-		return cmp.Or(cmp.Compare(a.Vendor, b.Vendor), cmp.Compare(a.Driver, b.Driver), cmp.Compare(a.Dialect, b.Dialect), cmp.Compare(a.ID, b.ID))
+		return cmp.Or(cmp.Compare(strings.ToLower(a.Vendor), strings.ToLower(b.Vendor)), cmp.Compare(a.Driver, b.Driver), cmp.Compare(a.Dialect, b.Dialect), cmp.Compare(a.ID, b.ID))
 	})
 	var b strings.Builder
 	for i, m := range models {
