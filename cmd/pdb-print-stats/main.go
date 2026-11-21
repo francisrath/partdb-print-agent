@@ -49,10 +49,8 @@ func (c *collector) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/report", c.report)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("pdb-print usage statistics collector: https://github.com/francisrath/partdb-print-agent/blob/main/docs/telemetry.md\n"))
-	})
+	mux.HandleFunc("GET /{$}", c.stats)
+	mux.HandleFunc("GET /v1/badge/installs.json", c.badge)
 	return mux
 }
 

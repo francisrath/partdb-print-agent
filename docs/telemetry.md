@@ -58,4 +58,10 @@ collector only accepts word-like values (letters, digits, `. _ + -`), so free te
 The collector is `cmd/pdb-print-stats` in this repository. It checks each report against the list above,
 appends it with the day it arrived to a file, and keeps nothing else: it doesn't read or store the
 sender's address, the web server in front of it doesn't log the address for this site, and no cookies
-are set. Reports are kept for the statistics; aggregate numbers may be published.
+are set. Reports are kept for the statistics. The totals are public at
+<https://pdb-print-stats.cloudline.no/>: installs per week and, for the latest week, versions, platforms,
+printer models and connections. A badge with the latest week's installs:
+
+```markdown
+![active installs](https://img.shields.io/endpoint?url=https://pdb-print-stats.cloudline.no/v1/badge/installs.json)
+```
