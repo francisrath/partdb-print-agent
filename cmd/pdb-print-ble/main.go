@@ -306,9 +306,15 @@ func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 }
 
 func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*blecore.Chunker, *bluetooth.DeviceCharacteristic, int, error) {
-	service := bluetooth.New16BitUUID(req.Service)
-	write, notify := bluetooth.New16BitUUID(req.Write), bluetooth.New16BitUUID(req.Notify)
-	tx, rx, err := bleradio.Characteristics(dev, service, write, notify)
+	var uuids [3]bluetooth.UUID
+	for i, s := range []string{req.Service, req.Write, req.Notify} {
+		u, err := bluetooth.ParseUUID(s)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("uuid %q: %w", s, err)
+		}
+		uuids[i] = u
+	}
+	tx, rx, err := bleradio.Characteristics(dev, uuids[0], uuids[1], uuids[2])
 	if err != nil {
 		return nil, nil, 0, err
 	}

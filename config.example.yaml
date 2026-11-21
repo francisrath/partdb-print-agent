@@ -49,6 +49,14 @@ printers:
   #   transport: {kind: ble, name: MX10, address: "AA:BB:CC:DD:EE:FF"}
   #   media: paper-57
   #   darkness: normal          # light | normal | dark (darker prints slower)
+  # Niimbot (B1, B21, B21S, D11, D110, …) or Phomemo (M02, M110, M220, D30, Q30, …) label maker over
+  # Bluetooth LE (untested). Narrow heads take labels lengthwise: a 40×12 mm D11 label is niimbot-12x40.
+  # - id: niimbot
+  #   name: Desk B21S
+  #   model: B21S
+  #   transport: {kind: ble, name: B21S-H123456789}
+  #   media: niimbot-50x30
+  #   darkness: normal          # light | normal | dark (density)
   # Bluetooth Classic ESC/POS printer (RG-MLP80B, ESCPOS-80, ESCPOS-58; 80/58 mm paper). address is the MAC
   # on every OS; channel is optional (Linux: 1 unless set; Windows/macOS look up the SPP service).
   # - id: rego

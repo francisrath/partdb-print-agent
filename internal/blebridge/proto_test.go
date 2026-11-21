@@ -64,7 +64,7 @@ func TestOpenRequestKind(t *testing.T) {
 	if err := json.Unmarshal(b, &out); err != nil || out != in {
 		t.Fatalf("round trip %s: %+v %v", b, out, err)
 	}
-	b, _ = json.Marshal(OpenRequest{Name: "MX10", Service: 0xae30})
+	b, _ = json.Marshal(OpenRequest{Name: "MX10", Service: "0000ae30-0000-1000-8000-00805f9b34fb"})
 	if bytes.Contains(b, []byte("kind")) || bytes.Contains(b, []byte("channel")) {
 		t.Errorf("BLE request %s carries kind or channel", b)
 	}

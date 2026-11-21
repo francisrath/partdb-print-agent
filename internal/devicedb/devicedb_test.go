@@ -229,6 +229,29 @@ func TestCatModels(t *testing.T) {
 	}
 }
 
+func TestQuirkUUID(t *testing.T) {
+	m := &devicedb.Model{Quirks: map[string]any{"ble_service": "E7810A71-73AE-499D-8C15-FAA9AEF0C3F2", "ble_write": 0xff02}}
+	for _, tc := range []struct{ key, want string }{
+		{"ble_service", "e7810a71-73ae-499d-8c15-faa9aef0c3f2"},
+		{"ble_write", "0000ff02-0000-1000-8000-00805f9b34fb"},
+		{"ble_notify", "0000ae02-0000-1000-8000-00805f9b34fb"},
+	} {
+		if got := m.QuirkUUID(tc.key, 0xae02); got != tc.want {
+			t.Errorf("%s = %s, want %s", tc.key, got, tc.want)
+		}
+	}
+	var nilModel *devicedb.Model
+	if got := nilModel.QuirkUUID("ble_service", 0xae30); got != "0000ae30-0000-1000-8000-00805f9b34fb" {
+		t.Errorf("nil model: %s", got)
+	}
+	for _, q := range []string{`"e781"`, `0x10000`, `true`} {
+		fsys := fstest.MapFS{"data/a.yaml": &fstest.MapFile{Data: []byte("models:\n  - {id: A, driver: cat, dialect: gb, quirks: {ble_service: " + q + "}}\n")}}
+		if _, err := devicedb.Load(fsys); err == nil || !strings.Contains(err.Error(), "ble_service") {
+			t.Errorf("%s: err = %v", q, err)
+		}
+	}
+}
+
 func TestBadBLEName(t *testing.T) {
 	fsys := fstest.MapFS{"data/a.yaml": &fstest.MapFile{Data: []byte("models:\n  - {id: A, driver: cat, dialect: gb, match: {ble_name: \"MX(\"}}\n")}}
 	if _, err := devicedb.Load(fsys); err == nil || !strings.Contains(err.Error(), "ble_name") {
@@ -340,5 +363,17 @@ func TestLintGeometry(t *testing.T) {
 		if _, err := devicedb.Load(fsys); err == nil {
 			t.Errorf("%s: loaded", name)
 		}
+	}
+	// a geometry that trims the edges lets an mm label wider than the head through
+	ok := "media:\n  - {id: wide-mm, name: w, kind: die_cut, width_mm: 50, length_mm: 30}\n" +
+		"geometry:\n  - {media: wide-mm, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 240, edge_mm: 1}\n" +
+		"models:\n  - {id: N, driver: zpl, dialect: zpl, dpi: 203, head_pins: 384, media: [wide-mm]}\n"
+	if _, err := devicedb.Load(fstest.MapFS{"data/m.yaml": {Data: []byte(ok)}}); err != nil {
+		t.Errorf("trimmed geometry: %v", err)
+	}
+	// without width_dots the geometry would shrink it to the head: refused
+	shrunk := strings.Replace(ok, "width_dots: 400, ", "", 1)
+	if _, err := devicedb.Load(fstest.MapFS{"data/m.yaml": {Data: []byte(shrunk)}}); err == nil {
+		t.Error("geometry without the full width: loaded")
 	}
 }

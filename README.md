@@ -233,6 +233,32 @@ Bluetooth LE printers, per OS:
   printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
 
+#### Niimbot and Phomemo label makers (`kind: ble`, untested)
+
+Same `ble` transport and discovery as the cat printers, recognised by the advertised name. No one has
+tried these on a printer yet: the protocols come from public write-ups and MIT/Apache projects, so treat
+them as experimental and report what happens (`pdb-print report`).
+
+- **Niimbot** (`driver: niimbot`): B1, B21, B21S, B21-PRO, B1-PRO (wide heads; labels across, e.g.
+  `niimbot-50x30`), D11, D11S, D110, D11-H, B18 and D101 (narrow heads; labels lengthwise, so a 40×12 mm
+  label is `niimbot-12x40`). They advertise `<model>-<serial>`. `darkness` sets the density. Some units
+  refuse rolls without Niimbot's RFID tag; the status shows how many labels the tag says are left.
+- **Phomemo** (`driver: phomemo`): M02, M02S, M02-PRO, T02 (pocket printers, continuous paper), M110,
+  M120, M200, M220, M221 (label printers; `darkness` sets the density), Q30 and D30, D35 (12 mm label
+  makers, labels lengthwise: `phomemo-12x40`). The M200 and M220 advertise names we don't know yet:
+  set `model:` yourself.
+
+```yaml
+- id: niimbot
+  name: Desk B21S
+  model: B21S
+  transport: {kind: ble, name: B21S-H123456789}
+  media: niimbot-50x30
+  darkness: normal            # light | normal | dark
+```
+
+`pdb-print media` lists each model's label sizes. `pdb-print try` doesn't cover these yet.
+
 #### Bluetooth Classic receipt printers (`kind: bt`)
 
 `model:` RG-MLP80B (REGO, 80 mm paper, 576 dots; recognised by its Bluetooth name), ESCPOS-80 or ESCPOS-58
