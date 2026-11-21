@@ -17,6 +17,7 @@
   <span class="muted">{{.Version}} · {{.Addr}}</span>
 </header>
 
+{{with .Update}}<p class="flash" role="status">pdb-print {{.Version}} is out (this is {{$.Version}}): <a href="{{.URL}}">release notes</a>. To update: <code>{{.Hint}}</code></p>{{end}}
 {{with .Flash}}<p class="flash {{if .Err}}err{{end}}" role="status">{{.Text}}</p>{{end}}
 
 <main>

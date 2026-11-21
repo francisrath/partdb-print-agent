@@ -40,6 +40,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/source/agentjobs"
 	"github.com/francisrath/partdb-print-agent/internal/source/hotfolder"
 	"github.com/francisrath/partdb-print-agent/internal/transport/serial"
+	"github.com/francisrath/partdb-print-agent/internal/update"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -336,6 +337,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	if a.cfg.UpdateCheckOn() {
+		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log}
+		go srv.Updates.Run(ctx)
+	}
 	var folderDone chan struct{} // closed when the hot folder has stopped
 	if hf := a.cfg.HotFolder; hf.Enabled {
 		dir, err := hf.Path()

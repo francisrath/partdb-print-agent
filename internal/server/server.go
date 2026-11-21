@@ -39,6 +39,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
+	"github.com/francisrath/partdb-print-agent/internal/update"
 	"github.com/zalando/go-keyring"
 )
 
@@ -70,6 +71,7 @@ type Server struct {
 	Log     *slog.Logger
 	Addr    string // host:port the listener is bound to (loopback)
 	Version string
+	Updates *update.Checker // the release check; nil = none
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
@@ -275,7 +277,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config()
 	data := map[string]any{
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
-		"Printers": cfg.Printers, "Models": formModels(),
+		"Printers": cfg.Printers, "Models": formModels(), "Update": s.Updates.Latest(),
 	}
 	data["Media"] = formMedia()
 

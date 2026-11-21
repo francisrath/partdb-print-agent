@@ -109,6 +109,12 @@ poppler-utils) are on `PATH`; `pdftoppm: off` in the config (or `PDB_PRINT_PDFTO
 off, `on` uses it on any system. Note that poppler parses PDFs natively, while the built-in renderer
 runs in a WebAssembly sandbox.
 
+**Updates:** `pdb-print serve` asks GitHub once a day for the latest release (that request only; nothing
+about your setup is sent). When a newer one is out, the web UI shows a notice with the release notes and
+how to update this install (Homebrew, the `.deb`, the Windows zip or the Docker image), and the log says
+so once. Development builds never ask; `update_check: false` in the config turns it off. pdb-print
+doesn't update itself.
+
 ## Set up
 
 **On a print server** (Debian package or Docker): on any computer on the same network, open the address
