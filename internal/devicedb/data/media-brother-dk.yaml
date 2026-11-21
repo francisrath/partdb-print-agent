@@ -1,6 +1,14 @@
 # Brother DK rolls for QL printers at 300 dpi. Values from Brother's "Raster Command Reference"
-# (QL-800/810W/820NWB). offset_pins = the spec's "right margin" pins; QL labels are rendered at the
-# printable width (no width_dots, never trimmed).
+# (QL-800/810W/820NWB; the QL-600/710W/720NW and QL-500…1060N references give the same pins).
+# offset_pins = the spec's "right margin" pins; QL labels are rendered at the printable width (no
+# width_dots, never trimmed). On the 1296-pin head of the wide QLs (QL-1050/1060N, QL-1100/1110NWB/
+# 1115NWB) the rolls sit on other pins: the geometry list below, from "Raster Command Reference
+# QL-1100/1110NWB/1115NWB" v1.00 p.19–20, cross-checked with the QL-1050/1060N tables of the older
+# reference (where the QL-1100 one doesn't add up to 1296 pins – 62 mm continuous, 62×29 and 62×100 –
+# the older reference's 544 + 696 + 56 is used). The 102/103 mm rolls fit the wide head only, so
+# their own entries carry its pins. Brother calls the 103.6 mm roll "104 mm" in ESC i z and the
+# status (the driver rounds width_mm). Part numbers: Brother's supply pages (DK-2243/2246/1240/1241/1247
+# in the Americas). untested: wide rolls added from Brother's references, 2026-11-20.
 media:
   - {id: dk-22214, name: 12 mm continuous, kind: continuous, width_mm: 12, printable_width_dots: 106, dpi: 300, offset_pins: 29}
   - {id: dk-22210, name: 29 mm continuous, kind: continuous, width_mm: 29, printable_width_dots: 306, dpi: 300, offset_pins: 6}
@@ -13,3 +21,20 @@ media:
   - {id: dk-11208, name: 38×90 mm die-cut, kind: die_cut, width_mm: 38, length_mm: 90, printable_width_dots: 413, printable_length_dots: 991, dpi: 300, offset_pins: 12}
   - {id: dk-11209, name: 62×29 mm die-cut, kind: die_cut, width_mm: 62, length_mm: 29, printable_width_dots: 696, printable_length_dots: 271, dpi: 300, offset_pins: 12}
   - {id: dk-11202, name: 62×100 mm die-cut, kind: die_cut, width_mm: 62, length_mm: 100, printable_width_dots: 696, printable_length_dots: 1109, dpi: 300, offset_pins: 12}
+  - {id: dk-22243, name: 102 mm continuous, kind: continuous, width_mm: 102, printable_width_dots: 1164, dpi: 300, offset_pins: 56}
+  - {id: dk-22246, name: 103 mm continuous, kind: continuous, width_mm: 103.6, printable_width_dots: 1200, dpi: 300, offset_pins: 38}
+  - {id: dk-11240, name: 102×51 mm die-cut, kind: die_cut, width_mm: 102, length_mm: 51, printable_width_dots: 1164, printable_length_dots: 526, dpi: 300, offset_pins: 56}
+  - {id: dk-11241, name: 102×152 mm die-cut, kind: die_cut, width_mm: 102, length_mm: 152, printable_width_dots: 1164, printable_length_dots: 1660, dpi: 300, offset_pins: 56}
+  - {id: dk-11247, name: 103×164 mm die-cut, kind: die_cut, width_mm: 103.6, length_mm: 164, printable_width_dots: 1200, printable_length_dots: 1822, dpi: 300, offset_pins: 38}
+geometry:
+  - {media: dk-22214, head_pins: 1296, dpi: 300, printable_width_dots: 106, offset_pins: 74}
+  - {media: dk-22210, head_pins: 1296, dpi: 300, printable_width_dots: 306, offset_pins: 50}
+  - {media: dk-22225, head_pins: 1296, dpi: 300, printable_width_dots: 413, offset_pins: 56}
+  - {media: dk-22223, head_pins: 1296, dpi: 300, printable_width_dots: 554, offset_pins: 56}
+  - {media: dk-n55224, head_pins: 1296, dpi: 300, printable_width_dots: 590, offset_pins: 44}
+  - {media: dk-22205, head_pins: 1296, dpi: 300, printable_width_dots: 696, offset_pins: 56}
+  - {media: dk-11204, head_pins: 1296, dpi: 300, printable_width_dots: 165, offset_pins: 44}
+  - {media: dk-11201, head_pins: 1296, dpi: 300, printable_width_dots: 306, offset_pins: 50}
+  - {media: dk-11208, head_pins: 1296, dpi: 300, printable_width_dots: 413, offset_pins: 56}
+  - {media: dk-11209, head_pins: 1296, dpi: 300, printable_width_dots: 696, offset_pins: 56}
+  - {media: dk-11202, head_pins: 1296, dpi: 300, printable_width_dots: 696, offset_pins: 56}

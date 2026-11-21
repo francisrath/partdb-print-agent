@@ -3,6 +3,8 @@
 // (from the device database) picks the protocol variant:
 //   - "ql": QL-800/810W/820NWB, "Raster Command Reference" (ESC i z, 720 pins, TIFF compression)
 //   - "pt-cbp": PT-9500PC, "Command Reference, CBP-RASTER Mode" (ESC i c, 384 pins, page-paced)
+//   - "pt-raster": the newer P-touch printers (PT-E550W/P750W/P710BT, PT-H500/P700/E500,
+//     PT-P900 series), their "Raster Command Reference" (raster mode: ESC i z, 128 or 560 pins)
 package brother
 
 import (
@@ -24,6 +26,8 @@ func New(m *devicedb.Model, o driver.Options) (driver.Driver, error) {
 		return newQL(m, o), nil
 	case "pt-cbp":
 		return newPT(m), nil
+	case "pt-raster":
+		return newPTRaster(m, o), nil
 	}
 	return nil, &driver.Error{Code: driver.Unsupported, Detail: fmt.Sprintf("%s: unknown Brother dialect %q", m.ID, m.Dialect)}
 }

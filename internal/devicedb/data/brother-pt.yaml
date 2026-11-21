@@ -1,5 +1,9 @@
 # Brother P-touch PT-9500PC (Command Reference, CBP-RASTER Mode, 2003). Cut bytes ([ESC i M, ESC i K])
 # and pin order were settled by printing on the real printer (2026-11-18).
+# The raster-mode P-touch printers (dialect pt-raster) follow below, from Brother's "Raster Command
+# Reference" PT-E550W/P750W/P710BT v1.02, PT-H500/P700/E500 v1.11 and PT-P900/P900W/P950NW/P910BT
+# v1.02. cut_modes = [ESC i M, ESC i K]: M bit 6 auto cut; K bit 2 half cut, bit 3 no chain printing
+# (feed and cut after the last label). chain and none leave the last label in the printer like on the PT-9500PC.
 models:
   - id: PT-9500PC
     vendor: Brother
@@ -26,3 +30,115 @@ models:
     defaults: {cut: chain}
     tested: maintainer
     tested_note: USB on a Raspberry Pi, 2026-11
+  # untested: added from "Raster Command Reference PT-E550W/P750W/P710BT" v1.02, 2026-11-20.
+  # 128 pins, 180 dpi; 31–7086 dots long, 14-dot (2 mm) minimum feed (p.17–18); TIFF on all three.
+  # ESC i ! not on the PT-E550W/P750W; no ESC i A and no half cut on the PT-P710BT (p.5, 33).
+  # The PT-P750W's USB id is the reference's (usb.ids lists 0x2065 for it). The reference gives no
+  # PT-P710BT model code. PT-P710BT: Bluetooth Classic (SPP), per Brother's product page.
+  - id: PT-E550W
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 180
+    head_pins: 128
+    transports: [tcp, usb]
+    match: {status_code: 0x66, usb: ["04f9:2060"], ieee1284_model: PT-E550W, snmp_descr: "PT-E550W"}
+    media: &tze128 [tze-6, tze-9, tze-12, tze-18, tze-24]
+    quirks: &ptr128 {min_lines: 31, max_lines: 7086, feed_margin: 14, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
+    defaults: {cut: chain}
+  - id: PT-P750W
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 180
+    head_pins: 128
+    transports: [tcp, usb]
+    match: {status_code: 0x68, usb: ["04f9:2062"], ieee1284_model: PT-P750W, snmp_descr: "PT-P750W"}
+    media: *tze128
+    quirks: *ptr128
+    defaults: {cut: chain}
+  - id: PT-P710BT
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 180
+    head_pins: 128
+    transports: [usb, bt]
+    match: {usb: ["04f9:20af"], ieee1284_model: PT-P710BT, bt_name: "^PT-P710BT"}
+    media: *tze128
+    quirks: {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00]}}
+    defaults: {cut: chain}
+  # untested: added from "Raster Command Reference PT-H500/P700/E500" v1.11, 2026-11-20. Like the
+  # PT-P750W, but no ESC i A and no half cut (ESC i K bits 0–2 unused). The PT-H500 is left out.
+  - id: PT-P700
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 180
+    head_pins: 128
+    transports: [usb]
+    match: {status_code: 0x67, usb: ["04f9:2061"], ieee1284_model: PT-P700}
+    media: *tze128
+    quirks: &ptr128b {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00]}}
+    defaults: {cut: chain}
+  - id: PT-E500
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 180
+    head_pins: 128
+    transports: [usb]
+    match: {status_code: 0x65, usb: ["04f9:205f"], ieee1284_model: PT-E500}
+    media: *tze128
+    quirks: *ptr128b
+    defaults: {cut: chain}
+  # untested: added from "Raster Command Reference PT-P900/P900W/P950NW/P910BT" v1.02, 2026-11-20.
+  # 560 pins, 360 dpi (standard resolution only); 57–14173 dots long, 14-dot (1 mm) minimum feed
+  # (p.17–18); ESC i z page byte 2 on the last page (p.34); ESC i ! only on the PT-P910BT, which
+  # needs it to report while printing (p.33). The PT-P900W's model code is left out: the reference
+  # gives "o" (6Fh) and 69h. PT-P910BT: Bluetooth Classic (Brother's product page); the PT-P950NW's
+  # Bluetooth is an add-on interface, not listed.
+  - id: PT-P900
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 360
+    head_pins: 560
+    transports: [usb]
+    match: {status_code: 0x71, usb: ["04f9:2083"], ieee1284_model: PT-P900}
+    media: &tze560 [tze-6, tze-9, tze-12, tze-18, tze-24, tze-36]
+    quirks: &ptr560 {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
+    defaults: {cut: chain}
+  - id: PT-P900W
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 360
+    head_pins: 560
+    transports: [tcp, usb]
+    match: {usb: ["04f9:2085"], ieee1284_model: PT-P900W, snmp_descr: "PT-P900W"}
+    media: *tze560
+    quirks: *ptr560
+    defaults: {cut: chain}
+  - id: PT-P950NW
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 360
+    head_pins: 560
+    transports: [tcp, usb]
+    match: {status_code: 0x70, usb: ["04f9:2086"], ieee1284_model: PT-P950NW, snmp_descr: "PT-P950NW"}
+    media: *tze560
+    quirks: *ptr560
+    defaults: {cut: chain}
+  - id: PT-P910BT
+    vendor: Brother
+    driver: brother
+    dialect: pt-raster
+    dpi: 360
+    head_pins: 560
+    transports: [usb, bt]
+    match: {status_code: 0x78, usb: ["04f9:20c7"], ieee1284_model: PT-P910BT, bt_name: "^PT-P910BT"}
+    media: *tze560
+    quirks: {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
+    defaults: {cut: chain}

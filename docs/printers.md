@@ -11,8 +11,8 @@ Which label printers pdb-print can drive, how well each one is tested, and how t
 
 The tables below are generated from the device database (`internal/devicedb/data/*.yaml`). Don't edit
 them by hand: change the data and run `go test ./internal/devicedb -run TestPrintersDoc -update`.
-Driver pull requests adding TSPL, DYMO LabelWriter 300/400/450, Zebra EPL2, Niimbot/Phomemo and more
-Brother and Zebra models are in review; their models appear here once merged.
+Driver pull requests adding TSPL, DYMO LabelWriter 300/400/450, Zebra EPL2, Niimbot/Phomemo are
+in review; their models appear here once merged.
 
 <!-- printers:begin -->
 
@@ -21,6 +21,26 @@ Brother and Zebra models are in review; their models appear here once merged.
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
 | ✅ maintainer | PT-9500PC | USB | brother/pt-cbp | USB on a Raspberry Pi, 2026-11 |
+| 🟡 | PT-E500 | USB | brother/pt-raster |  |
+| 🟡 | PT-E550W | Network, USB | brother/pt-raster |  |
+| 🟡 | PT-P700 | USB | brother/pt-raster |  |
+| 🟡 | PT-P710BT | USB, Bluetooth Classic | brother/pt-raster |  |
+| 🟡 | PT-P750W | Network, USB | brother/pt-raster |  |
+| 🟡 | PT-P900 | USB | brother/pt-raster |  |
+| 🟡 | PT-P900W | Network, USB | brother/pt-raster |  |
+| 🟡 | PT-P910BT | USB, Bluetooth Classic | brother/pt-raster |  |
+| 🟡 | PT-P950NW | Network, USB | brother/pt-raster |  |
+| 🟡 | QL-1050 | USB | brother/ql |  |
+| 🟡 | QL-1060N | Network, USB | brother/ql |  |
+| 🟡 | QL-1100 | USB | brother/ql |  |
+| 🟡 | QL-1110NWB | Network, USB | brother/ql |  |
+| 🟡 | QL-1115NWB | Network, USB | brother/ql |  |
+| 🟡 | QL-560 | USB | brother/ql |  |
+| 🟡 | QL-570 | USB | brother/ql |  |
+| 🟡 | QL-580N | Network, USB | brother/ql |  |
+| 🟡 | QL-700 | USB | brother/ql |  |
+| 🟡 | QL-710W | Network, USB | brother/ql |  |
+| 🟡 | QL-720NW | Network, USB | brother/ql |  |
 | 🟡 | QL-800 | USB | brother/ql |  |
 | ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10 |
 | 🟡 | QL-820NWB | Network, USB | brother/ql |  |
@@ -72,6 +92,33 @@ Brother and Zebra models are in review; their models appear here once merged.
 | 🟡 | ZD621-300 | Network, USB | zpl |  |
 | 🟡 | ZP450 | Network, USB | zpl |  |
 | 🟡 | ZP500 | Network, USB | zpl |  |
+| 🟡 | ZQ310 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ320 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ510 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ511 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ520 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ521 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ610 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ620 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZQ630 | Network, USB, Bluetooth Classic | zpl |  |
+| 🟡 | ZT230-203 | Network, USB | zpl |  |
+| 🟡 | ZT230-300 | Network, USB | zpl |  |
+| 🟡 | ZT231-203 | Network, USB | zpl |  |
+| 🟡 | ZT231-300 | Network, USB | zpl |  |
+| 🟡 | ZT410-203 | Network, USB | zpl |  |
+| 🟡 | ZT410-300 | Network, USB | zpl |  |
+| 🟡 | ZT411-203 | Network, USB | zpl |  |
+| 🟡 | ZT411-300 | Network, USB | zpl |  |
+| 🟡 | ZT420-203 | Network, USB | zpl |  |
+| 🟡 | ZT420-300 | Network, USB | zpl |  |
+| 🟡 | ZT421-203 | Network, USB | zpl |  |
+| 🟡 | ZT421-300 | Network, USB | zpl |  |
+| 🟡 | ZT510-203 | Network, USB | zpl |  |
+| 🟡 | ZT510-300 | Network, USB | zpl |  |
+| 🟡 | ZT610-203 | Network, USB | zpl |  |
+| 🟡 | ZT610-300 | Network, USB | zpl |  |
+| 🟡 | ZT620-203 | Network, USB | zpl |  |
+| 🟡 | ZT620-300 | Network, USB | zpl |  |
 
 <!-- printers:end -->
 

@@ -237,3 +237,302 @@ models:
     match: {hi_model: "^ZD621"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
     media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # Industrial ZT series. untested: added from Zebra's tech specs/spec sheets, 2026-11-20 (ZT200 series
+  # tech specs, ZT231, ZT410, ZT411, ZT420, ZT421 tech specs, ZT510 and ZT600 series spec sheets).
+  # Head = maximum print width × dots/mm (104 mm: 832/1248 dots, 168 mm: 1344/2016 dots). hi_model is
+  # the model name as a prefix, like the tested entries (Zebra's guides don't list each ~HI reply).
+  # The 600 dpi ZT410/ZT411/ZT610 heads are left out. USB id only where usb.ids has it (ZT411).
+  # Wider rolls for the 168 mm models aren't in media-labels.yaml yet: they list the 4" sizes.
+  # ZT200 series tech specs: 104 mm print width at 203 and 300 dpi
+  - id: ZT230-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT230"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT230-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT230"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT231 tech specs: 104 mm print width at 203 and 300 dpi
+  - id: ZT231-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT231"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT231-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT231"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT410 tech specs: 104 mm print width at 203 and 300 dpi
+  - id: ZT410-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT410"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT410-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT410"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT411 tech specs: 104 mm print width at 203 and 300 dpi
+  - id: ZT411-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT411", usb: ["0a5f:0172"]}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT411-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT411"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT420 tech specs: 168 mm print width at 203 and 300 dpi
+  - id: ZT420-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 1344
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT420"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT420-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 2016
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT420"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT421 tech specs: 168 mm print width at 203 and 300 dpi
+  - id: ZT421-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 1344
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT421"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT421-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 2016
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT421"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT510 spec sheet: 104 mm print width at 203 and 300 dpi
+  - id: ZT510-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT510"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT510-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT510"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT600 series spec sheet: 104 mm print width at 203 and 300 dpi
+  - id: ZT610-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT610"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT610-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 1248
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT610"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZT600 series spec sheet: 168 mm print width at 203 and 300 dpi
+  - id: ZT620-203
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 1344
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT620"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  - id: ZT620-300
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 300
+    head_pins: 2016
+    transports: [tcp, usb]
+    match: {hi_model: "^ZT620"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # Mobile ZQ series, 203 dpi, ZPL and CPCL (set the printer to ZPL). untested: added from Zebra's spec
+  # sheets, 2026-11-20 (ZQ300 Plus series, ZQ500 series, ZQ511/ZQ521, ZQ600 Plus series). One entry
+  # covers a model and its Plus version (same head; hi_model is a prefix, so "ZQ620 Plus" matches
+  # too – unverified what ~HI returns). Bluetooth Classic (SPP) on all; tcp for the Wi-Fi versions.
+  # No USB ids: usb.ids lists none. Only labels no wider than the head are listed (lint rule).
+  # ZQ300 Plus spec sheet: 48 mm print width
+  - id: ZQ310
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 384
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ310"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-38x25, label-32x25, label-25x13]
+  # ZQ300 Plus spec sheet: 72 mm print width
+  - id: ZQ320
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 576
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ320"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ500 series spec sheet: 72 mm print width
+  - id: ZQ510
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 576
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ510"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ500 series spec sheet: 104 mm print width
+  - id: ZQ520
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ520"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ511/ZQ521 spec sheet: 72 mm print width
+  - id: ZQ511
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 576
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ511"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ511/ZQ521 spec sheet: 104 mm print width
+  - id: ZQ521
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ521"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ600 Plus series spec sheet: 48 mm print width
+  - id: ZQ610
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 384
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ610"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-38x25, label-32x25, label-25x13]
+  # ZQ600 Plus series spec sheet: 72 mm print width
+  - id: ZQ620
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 576
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ620"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+  # ZQ600 Plus series spec sheet: 104 mm print width
+  - id: ZQ630
+    vendor: Zebra
+    driver: zpl
+    dialect: zpl
+    dpi: 203
+    head_pins: 832
+    transports: [tcp, usb, bt]
+    match: {hi_model: "^ZQ630"}
+    quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
+    media: [label-100x150, label-100x100, label-100x50, label-102x152, label-102x102, label-102x76, label-102x64, label-102x51, label-102x25, label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]

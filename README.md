@@ -33,9 +33,9 @@ printers) is on `main` and comes with the next release; until then, [build from 
 
 | Family | Connections | Models | Tested |
 |---|---|---|---|
-| Brother QL | Network, USB | QL-800, QL-810W, QL-820NWB | ✅ QL-810W |
-| Brother P-touch | USB | PT-9500PC | ✅ PT-9500PC |
-| Zebra (ZPL) | Network, USB | GK, GX, GC, ZD, ZP series, LP2844-Z | ✅ GK420d (community) |
+| Brother QL | Network, USB | QL-560 … QL-820NWB, wide QL-1050/1060N/1100/1110NWB/1115NWB | ✅ QL-810W |
+| Brother P-touch | USB, Network, Bluetooth Classic | PT-9500PC, PT-E550W, PT-P750W, PT-P710BT, PT-P900 series … | ✅ PT-9500PC |
+| Zebra (ZPL) | Network, USB, Bluetooth Classic | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
 
@@ -222,9 +222,11 @@ Over the network (port 9100), or USB on Linux through the `usblp` driver (add th
 On the network the agent reads the printer over SNMP (UDP 161) before each job: the loaded roll, errors
 (cover open, wrong media, empty) and, after sending, whether the label actually printed.
 
-### Brother P-touch (PT-9500PC)
+### Brother P-touch
 
-Over USB on Linux through the `usblp` driver (add the user to group `lp`). It reads the loaded tape and
+The PT-9500PC, and the newer P-touch printers (PT-E550W, PT-P750W, PT-P900 series …, see
+[docs/printers.md](docs/printers.md)), over USB on Linux through the `usblp` driver (add the user to group
+`lp`); the network models also over the network, the PT-P710BT and PT-P910BT over Bluetooth Classic. It reads the loaded tape and
 errors before each job, sends a batch label by label and waits for each to be printed. Labels print at
 true size: design the Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm
 on 36 mm tape, about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for
@@ -237,7 +239,8 @@ next print (or press the cut button); a batch on laminated tape comes out as one
 
 ### Zebra (ZPL)
 
-Over the network (port 9100) or USB on Linux, at 203 or 300 dpi. Zebras don't report their label *width*,
+Over the network (port 9100) or USB on Linux, at 203 or 300 dpi; the mobile ZQ printers also over
+Bluetooth Classic (`kind: bt`, with the printer set to ZPL). Zebras don't report their label *width*,
 so set `media:` to the loaded size (`label-102x102` for 4×4", `label-102x152` for 4×6" …; `pdb-print media`
 lists them); the printer's reported label length is checked against it. Every label goes as one compressed
 graphic; the agent reads the printer's status and waits for the print buffer to empty to confirm a label.
