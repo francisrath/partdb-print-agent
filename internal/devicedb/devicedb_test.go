@@ -329,10 +329,11 @@ func TestAddedModels(t *testing.T) {
 func TestLintGeometry(t *testing.T) {
 	media := "media:\n  - {id: tape-a, name: a, kind: continuous, width_mm: 6, printable_width_dots: 64, dpi: 360}\n"
 	for name, geo := range map[string]string{
-		"unknown media": "geometry:\n  - {media: tape-x, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
-		"twice":         "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
-		"no dpi":        "geometry:\n  - {media: tape-a, head_pins: 128, printable_width_dots: 32}\n",
-		"too wide":      "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 120, offset_pins: 20}\nmodels:\n  - {id: P, driver: brother, dialect: pt-raster, head_pins: 128, media: [tape-a]}\n",
+		"unknown media":                "geometry:\n  - {media: tape-x, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
+		"twice":                        "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 32}\n",
+		"no dpi":                       "geometry:\n  - {media: tape-a, head_pins: 128, printable_width_dots: 32}\n",
+		"mm media wider than the head": "media:\n  - {id: wide-mm, name: w, kind: die_cut, width_mm: 57, length_mm: 32}\nmodels:\n  - {id: Z, driver: zpl, dialect: zpl, dpi: 203, head_pins: 384, media: [wide-mm]}\n",
+		"too wide":                     "geometry:\n  - {media: tape-a, head_pins: 128, dpi: 180, printable_width_dots: 120, offset_pins: 20}\nmodels:\n  - {id: P, driver: brother, dialect: pt-raster, head_pins: 128, media: [tape-a]}\n",
 	} {
 		fsys := fstest.MapFS{"data/m.yaml": {Data: []byte(media)}, "data/g.yaml": {Data: []byte(geo)}}
 		if _, err := devicedb.Load(fsys); err == nil {

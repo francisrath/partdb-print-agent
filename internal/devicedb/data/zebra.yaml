@@ -434,7 +434,7 @@ models:
   # sheets, 2026-11-20 (ZQ300 Plus series, ZQ500 series, ZQ511/ZQ521, ZQ600 Plus series). One entry
   # covers a model and its Plus version (same head; hi_model is a prefix, so "ZQ620 Plus" matches
   # too – unverified what ~HI returns). Bluetooth Classic (SPP) on all; tcp for the Wi-Fi versions.
-  # No USB ids: usb.ids lists none.
+  # No USB ids: usb.ids lists none. Only labels no wider than the head are listed (lint rule).
   # ZQ300 Plus spec sheet: 48 mm print width
   - id: ZQ310
     vendor: Zebra
@@ -445,7 +445,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ310"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-38x25, label-32x25, label-25x13]
   # ZQ300 Plus spec sheet: 72 mm print width
   - id: ZQ320
     vendor: Zebra
@@ -456,7 +456,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ320"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZQ500 series spec sheet: 72 mm print width
   - id: ZQ510
     vendor: Zebra
@@ -467,7 +467,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ510"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZQ500 series spec sheet: 104 mm print width
   - id: ZQ520
     vendor: Zebra
@@ -489,7 +489,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ511"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZQ511/ZQ521 spec sheet: 104 mm print width
   - id: ZQ521
     vendor: Zebra
@@ -511,7 +511,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ610"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-38x25, label-32x25, label-25x13]
   # ZQ600 Plus series spec sheet: 72 mm print width
   - id: ZQ620
     vendor: Zebra
@@ -522,7 +522,7 @@ models:
     transports: [tcp, usb, bt]
     match: {hi_model: "^ZQ620"}
     quirks: {needs_status: true} # a silent Zebra is paused, open or out of labels: don't queue blind
-    media: [label-76x51, label-76x25, label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
+    media: [label-57x32, label-51x25, label-38x25, label-32x25, label-25x13]
   # ZQ600 Plus series spec sheet: 104 mm print width
   - id: ZQ630
     vendor: Zebra
