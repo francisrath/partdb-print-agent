@@ -96,12 +96,15 @@ func (t *Transport) Read(p []byte) (int, error) {
 	}
 }
 
+// drainTimeout bounds how long Close waits for the last write to leave.
+const drainTimeout = 10 * time.Second
+
 func (t *Transport) Close() error {
 	if t.f == nil {
 		return nil
 	}
-	drain(t.f, 10*time.Second) // let the last write reach the printer before close cancels it
-	err := t.f.Close()
+	err := drain(t.f, drainTimeout) // let the last write reach the printer before close cancels it
+	err = errors.Join(err, t.f.Close())
 	t.f = nil
 	return err
 }

@@ -492,6 +492,12 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	job.PrevUnconfirmed = s.unconfirmed[p.ID]
 	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
+	if err == nil {
+		// closing can fail when the last data never left (USB: usblp still holds it)
+		if cerr := t.Close(); cerr != nil {
+			err = &driver.Error{Code: driver.CommsError, Detail: cerr.Error()}
+		}
+	}
 	s.noteBluetooth(p, err)
 	s.mu.Lock()
 	if s.unconfirmed == nil {

@@ -8,4 +8,4 @@ import (
 )
 
 // drain is Linux only: usblp is a Linux driver.
-func drain(io.ReadWriteCloser, time.Duration) {}
+func drain(io.ReadWriteCloser, time.Duration) error { return nil }
