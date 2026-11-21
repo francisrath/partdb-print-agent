@@ -40,6 +40,16 @@ builds:
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     mod_timestamp: "{{ .CommitTimestamp }}"
+  # the usage report collector (docs/telemetry.md), shipped only as an image (dockers_v2 below)
+  - id: pdb-print-stats
+    main: ./cmd/pdb-print-stats
+    binary: pdb-print-stats
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: default
@@ -107,6 +117,7 @@ changelog:
 
 dockers_v2:
   - images: ["ghcr.io/francisrath/partdb-print-agent"]
+    ids: [pdb-print]
     tags:
       - "{{ .Version }}"
       - "{{ if not .Prerelease }}latest{{ end }}" # empty tags are skipped: pre-releases don't move latest
@@ -116,3 +127,16 @@ dockers_v2:
       org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
+  - id: stats
+    images: ["ghcr.io/francisrath/pdb-print-stats"]
+    ids: [pdb-print-stats]
+    dockerfile: packaging/docker/stats.Dockerfile
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.source: https://github.com/francisrath/partdb-print-agent
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.description: pdb-print usage report collector (docs/telemetry.md)

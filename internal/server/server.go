@@ -39,6 +39,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
 	"github.com/francisrath/partdb-print-agent/internal/render"
+	"github.com/francisrath/partdb-print-agent/internal/telemetry"
 	"github.com/francisrath/partdb-print-agent/internal/update"
 	"github.com/zalando/go-keyring"
 )
@@ -71,7 +72,8 @@ type Server struct {
 	Log     *slog.Logger
 	Addr    string // host:port the listener is bound to (loopback)
 	Version string
-	Updates *update.Checker // the release check; nil = none
+	Updates *update.Checker  // the release check; nil = none
+	Stats   *telemetry.Store // usage report counters; nil = not counted
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
@@ -142,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /printers/{id}/test", s.testPrint)
 	mux.HandleFunc("GET /printers/{id}/status", s.printerStatus)
 	mux.HandleFunc("POST /routes", s.saveRoute)
+	mux.HandleFunc("POST /telemetry", s.saveTelemetry)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
 	mux.HandleFunc("POST /v1/pair", s.pairAPI)
 	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +255,9 @@ func (s *Server) updateUndo(fn func(c *config.Config) (undo func(), err error)) 
 	return nil
 }
 
+// Config is the current config (replaced, never changed in place, when the web UI saves).
+func (s *Server) Config() *config.Config { return s.config() }
+
 func (s *Server) config() *config.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,6 +284,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
 		"Printers": cfg.Printers, "Models": formModels(), "Update": s.Updates.Latest(),
+		// undecided installs get the box ticked: saving without touching it means yes
+		"TelemetryDecided": cfg.Telemetry != nil, "TelemetryOn": cfg.Telemetry == nil || *cfg.Telemetry,
+		"TelemetryOff": telemetryOffReason(cfg),
 	}
 	data["Media"] = formMedia()
 
@@ -525,6 +534,32 @@ func (s *Server) saveRoute(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "Profile "+name+" → "+printer, err)
 }
 
+func (s *Server) saveTelemetry(w http.ResponseWriter, r *http.Request) {
+	on := r.FormValue("on") == "1"
+	err := s.setTelemetry(on)
+	s.redirect(w, r, map[bool]string{true: "Weekly usage report on", false: "Weekly usage report off"}[on], err)
+}
+
+// setTelemetry saves the usage report choice; switching it on starts counting afresh, so nothing
+// counted before the choice is ever sent.
+func (s *Server) setTelemetry(on bool) error {
+	was := s.config().Telemetry
+	err := s.update(func(c *config.Config) error { c.Telemetry = &on; return nil })
+	if err == nil && on && (was == nil || !*was) && s.Stats != nil {
+		s.Stats.Reset()
+	}
+	return err
+}
+
+// telemetryOffReason is shown under the toggle when an opt-out other than the toggle applies.
+func telemetryOffReason(cfg *config.Config) string {
+	why := telemetry.Off(cfg)
+	if cfg.Telemetry == nil || !*cfg.Telemetry {
+		return "" // the toggle itself says it
+	}
+	return why
+}
+
 func (s *Server) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	profile, _ := strconv.Atoi(r.PathValue("profile"))
 	instance := r.FormValue("instance")
@@ -557,7 +592,7 @@ func (s *Server) testPrint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.Svc.Print(r.Context(), p, "", printing.TestCard(p.Model, s.Version))
-	s.record(jobFor("web UI", "test label", p.ID, res, err))
+	s.finish("web UI", "test label", p.ID, res, err)
 	s.redirect(w, r, "Test label "+resultText(res), err)
 }
 
@@ -615,7 +650,7 @@ func (s *Server) PrintFile(ctx context.Context, source, printerID, path string) 
 	if err == nil {
 		res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
 	}
-	s.record(jobFor(source, filepath.Base(path), p.ID, res, err))
+	s.finish(source, filepath.Base(path), p.ID, res, err)
 	return err
 }
 
@@ -660,7 +695,7 @@ func (s *Server) PrintJob(ctx context.Context, instanceID string, job partdb.Job
 	what := fmt.Sprintf("%s %s · profile %d", pl.ElementType, pl.ElementIDs, pl.ProfileID)
 	p, err := s.printer(job.Printer)
 	if err != nil {
-		s.record(jobFor("Part-DB job", what, job.Printer, nil, err))
+		s.finish("Part-DB job", what, job.Printer, nil, err)
 		return "", err
 	}
 	var res *printing.Result
@@ -671,7 +706,7 @@ func (s *Server) PrintJob(ctx context.Context, instanceID string, job partdb.Job
 			res, err = s.Svc.Print(ctx, p, "", printing.PDF(pdf))
 		}
 	}
-	s.record(jobFor("Part-DB job", what, p.ID, res, err))
+	s.finish("Part-DB job", what, p.ID, res, err)
 	if err != nil {
 		return "", err
 	}
@@ -684,6 +719,33 @@ func defaultStr(s, def string) string {
 	}
 	return s
 }
+
+// finish records a job in the history and counts it for the usage report.
+func (s *Server) finish(source, what, printer string, res *printing.Result, err error) {
+	s.record(jobFor(source, what, printer, res, err))
+	if s.Stats == nil || telemetry.Off(s.config()) != "" { // nothing is counted while reports are off or undecided
+		return
+	}
+	model := ""
+	if p, perr := s.config().Printer(printer); perr == nil {
+		model = p.Model
+	}
+	pages, code := 0, ""
+	var de *driver.Error
+	switch {
+	case errors.As(err, &de):
+		code = string(de.Code)
+	case err != nil:
+		code = "OTHER"
+	case res != nil:
+		pages = res.Pages
+	}
+	s.Stats.Job(cmp.Or(jobSources[source], "other"), model, pages, code)
+}
+
+// jobSources names the job sources in the usage report.
+var jobSources = map[string]string{"browser": "bookmarklet", "Part-DB job": "part-db", "hot folder": "hot-folder",
+	"web UI": "web-ui", "setup wizard": "setup"}
 
 func jobFor(source, what, printer string, res *printing.Result, err error) Job {
 	j := Job{Source: source, What: what, Printer: printer}
@@ -809,7 +871,7 @@ func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
 				var res *printing.Result
 				res, err = s.Svc.Print(r.Context(), p, "", printing.PDF(pdf))
 				v.Result = resultText(res)
-				s.record(jobFor("browser", v.What, p.ID, res, err))
+				s.finish("browser", v.What, p.ID, res, err)
 			}
 		}
 	}

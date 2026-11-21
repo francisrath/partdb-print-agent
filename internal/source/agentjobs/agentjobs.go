@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
@@ -31,6 +32,7 @@ type Loop struct {
 	Log   *slog.Logger
 
 	noAPILogged bool
+	apiSeen     atomic.Bool     // a heartbeat got through: this Part-DB has the agent API
 	unreported  []report        // results Part-DB didn't accept yet; retried every round
 	offer       *partdb.Mercure // push subscription from the last heartbeat, nil without push
 	pushFailing bool            // the last subscription failed; logged once until one works again
@@ -126,6 +128,9 @@ func (l *Loop) subscribe(ctx context.Context, m partdb.Mercure, wake chan<- stru
 	ended <- ok
 }
 
+// HasAPI: a heartbeat got through since the loop started (the Part-DB has the print agent API).
+func (l *Loop) HasAPI() bool { return l.apiSeen.Load() }
+
 // tick does one round and returns how long to wait before the next one.
 func (l *Loop) tick(ctx context.Context) time.Duration {
 	reply, err := l.Client.Heartbeat(ctx, l.AgentID, partdb.Heartbeat{Name: l.Name, Version: l.Version, Printers: l.Printers()})
@@ -145,6 +150,7 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		}
 		return defaultPoll
 	}
+	l.apiSeen.Store(true)
 	if l.noAPILogged {
 		l.Log.Info("Part-DB print agent API available; fetching print jobs")
 		l.noAPILogged = false
