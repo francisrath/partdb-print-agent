@@ -278,7 +278,7 @@ func (s *Server) SetupLoop(ctx context.Context, tick <-chan time.Time) {
 	bound := map[netip.Addr]bool{}
 	failed := map[netip.Addr]bool{} // warned about once per window
 	_, portS, _ := net.SplitHostPort(s.Addr)
-	port, _ := strconv.Atoi(portS)
+	port, _ := strconv.ParseUint(portS, 10, 16) // 16 bits: the conversion below can't wrap
 	stop := func() {
 		if hs != nil {
 			// let answers in flight (e.g. the "All set" page) go out, then drop the rest
@@ -501,7 +501,10 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	// Secure only over TLS: the setup window is plain HTTP on the LAN, where a Secure cookie would
+	// never come back and pairing would fail. SameSite=Strict and HttpOnly hold either way.
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
 	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 }
 
