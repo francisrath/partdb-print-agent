@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewer(t *testing.T) {
@@ -84,8 +85,9 @@ func TestRunSkipsDevBuilds(t *testing.T) {
 	asked := false
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { asked = true }))
 	defer srv.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// a live context: a cancelled one would stop the request even without the Released guard
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	(&Checker{Current: "dev", URL: srv.URL}).Run(ctx)
 	if asked {
 		t.Error("dev build asked GitHub")
