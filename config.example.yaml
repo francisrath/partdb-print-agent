@@ -32,6 +32,13 @@ printers:
   #   model: GK420d
   #   transport: {kind: tcp, host: 192.168.1.60}
   #   media: label-102x102
+  # Zebra EPL2-only (LP/TLP 2824, 2844, TLP 3842 …; untested). Status and confirmation over USB only.
+  # - id: lp2844
+  #   model: LP2844
+  #   transport: {kind: usb, usb_id: "0a5f:0009"}
+  #   media: label-102x51
+  #   darkness: normal          # light | normal | dark
+  #   black_mark_mm: 4          # black-mark media instead of gaps (0 = gaps)
   # TSC or another TSPL printer (TE200, XP-420B, …). They don't report the label: set media to the loaded roll
   # (label-102x152, continuous-102, …). Over USB (Linux) {kind: usb, device: /dev/usb/lp0}, Bluetooth {kind: bt, address: …}.
   # - id: xprinter

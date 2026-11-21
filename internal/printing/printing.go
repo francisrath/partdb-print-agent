@@ -24,6 +24,7 @@ import (
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/dymo"    // registers the dymo family (LabelWriter)
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/epl"     // registers the epl family (Zebra EPL2)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/niimbot" // registers the niimbot family (BLE label makers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/phomemo" // registers the phomemo family (BLE label printers)
@@ -261,7 +262,7 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness,
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness, BlackMarkMM: p.BlackMarkMM,
 		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 

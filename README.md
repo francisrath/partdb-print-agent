@@ -161,7 +161,26 @@ the print buffer to empty to confirm a label. It never saves settings or calibra
 Zebras that don't answer SNMP (older G-series) show up as "unknown" in `discover`; `pdb-print try` and the
 setup wizard can ask them what they are (a few bytes a non-Zebra might print).
 
-EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
+### Zebra EPL2 (LP/TLP 2824, 2844 …)
+
+Older Zebra/Eltron desktops that speak only EPL2: `model:` LP2824, TLP2824, LP2844, TLP2844, TLP3842 (300 dpi)
+and TLP2746e over USB (Linux) or their internal ZebraNet print server (TCP 9100); LP/TLP2722, LP/TLP2742 and
+TLP3742 only through an external ZebraNet PrintServer II (they have no USB). Models with "-Z" or "Plus" speak ZPL:
+use the Zebra (ZPL) section. **Untested**: written from Zebra's EPL Programming Guide, no EPL printer was at hand.
+
+```yaml
+- id: lp2844
+  model: LP2844
+  transport: {kind: usb, usb_id: "0a5f:0009"}
+  media: label-102x51         # set the loaded size: EPL printers don't report it
+  darkness: normal            # light | normal | dark (EPL density 7 / 10 / 13 on a 2844)
+  # black_mark_mm: 4          # media with black marks on the back instead of gaps
+```
+
+Each label is sent as one graphic. Over USB the agent asks the printer for errors (`^ee`: out of labels,
+head open, paused) and confirms a job once it saw the printer busy and done; if it finished too fast to see, or
+the printer stays silent, the job counts as sent but unconfirmed. Over the network EPL has no status, so jobs are sent unconfirmed.
+Serial (RS-232) and parallel connections aren't supported, so the LP/TLP 2622, LP 2443 and Strata aren't either.
 
 ### TSC and other TSPL printers
 

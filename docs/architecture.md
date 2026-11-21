@@ -449,6 +449,13 @@ The sketch in 7.1 was the starting point; the code now works like this:
 * **`escpos` driver family** (`internal/driver/escpos`): ESC/POS raster (`GS v 0`) in bands for
   RG-MLP80B (576 dots) and generic ESCPOS-80/-58; real-time status by `DLE EOT`; after a job `GS r 1`
   confirms the paper state, and a printer that stays silent gives "sent (unconfirmed)" after 20 s.
+* **`epl` driver family** (`internal/driver/epl`, models in `zebra-epl.yaml`): Zebra/Eltron desktops
+  that speak only EPL2 (LP/TLP 2824, 2844, 3842 …; ZPL-capable "-Z"/"Plus" models stay in `zpl`).
+  Clean-room from Zebra's EPL Programming Guide 14245L-003. Per job `ZT`, `q` (width, centred on the
+  head), `Q` (gap `Q<len>,<3 mm>`, black mark `Q<len>,B<mm>+0` from `black_mark_mm`, continuous
+  `Q<len>,0`) and `D` (density, `darkness` ±3); per page `N`, one `GW` graphic (0 bit = black), `P1`.
+  Status `^ee` is documented over USB and serial only, so USB jobs are confirmed when seen busy (`50`, then `00`);
+  never seen busy, silent or stopped = sent unconfirmed. TCP jobs (ZebraNet print server) go blind. Untested on hardware.
 
 * **`niimbot` and `phomemo` driver families** (`internal/driver/niimbot`, `internal/driver/phomemo`; untested,
   no printer on hand): Bluetooth LE label makers on the `ble` transport, whose `ble_service`/`ble_write`/
@@ -524,7 +531,7 @@ type Transport interface {
 | `brother-ql` | QL-500…1110, QL-8xx two-colour | USB, TCP 9100, (BT on QL-820NWB/1115NWB via SPP) | continuous, die-cut, auto-cut per N, chain, 2-colour (62 mm red/black), high-res 600 dpi mode | 32-byte status (media width/type/errors). Network: SNMP | **MVP** | Brother "Raster Command Reference" (public PDF). *Do not copy brother_ql (GPLv3).* |
 | `brother-pt` | **PT-9500PC (done)**; PT-P700/P750W/P900/E550W, PT-P300BT later | USB (Linux usblp; empty reads return 0 bytes, so poll), TCP, BT SPP / BLE (P300BT) | TZe/HG tapes 6–36 mm, half-cut, chain, mirror | 32-byte status, like QL but no model byte on the PT-9500PC | P2 | PT-9500PC: Brother "PT-9500PC Command Reference, CBP-RASTER Mode" (2003): older dialect, `ESC i c` print info, 384 pins, no compression, pages sent one at a time. PT-P900: Brother "Raster Command Reference" (`ESC i z`, 560 pins, TIFF) |
 | `zpl` | Zebra ZPL II, many clones | USB, TCP 9100, serial | `^PW ^LL ^LH ^MN{N,Y,M} ^MM{T,P,C}` cutter/peel, darkness `~SD`, speed `^PR`; image via `^GFA` (hex/Z64) | `~HS`, `~HQES` | **MVP** | public ZPL manual |
-| `epl` | Zebra EPL2 (LP/TLP 2844 etc.) | USB, serial, TCP | `q`, `Q gap`, `GW` bitmap, `P n` | limited (`^ee`) | P2 | public EPL2 manual |
+| `epl` | **Zebra EPL2-only (LP/TLP 2824, 2844, 3842 …; done, untested)** | USB, TCP (serial needs a transport) | `q`, `Q` gap/black mark/continuous, `D`, `GW` bitmap (0 = black), `P1` | `^ee` over USB only | P2 | Zebra EPL Programming Guide 14245L-003 |
 | `tspl` | TSC, Xprinter, HPRT, Munbyn, most AliExpress 4" | USB, TCP, serial, BT SPP | `SIZE`, `GAP`/`BLINE`, `DENSITY`, `SPEED`, `DIRECTION`, `BITMAP` (note: inverted bit sense, 0 = black), `CUT`, `PRINT n` | `<ESC>!?` status byte | **MVP** | TSPL/TSPL2 manual (public) |
 | `escpos` | ESC/POS label/receipt (Xprinter XP-T…, Rongta, some Munbyn) | USB, TCP, serial, BT SPP | `GS v 0` raster, `GS V` cut; label mode varies by vendor (quirks in devices DB) | `DLE EOT n` | P2 | Epson ESC/POS reference |
 | `dymo` | **LabelWriter 330/400/450/4XL (done, untested)** | USB (usblp) | die-cut (`ESC L`), continuous, density | `ESC A` status byte (paper, jam) | P2 | DYMO LabelWriter 400 and 450 Series Technical Reference Manuals. **LW 550/5XL: chip-locked labels, not supported.** |
