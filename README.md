@@ -87,8 +87,9 @@ docker run --rm --network host --stop-timeout 130 \
   -v pdb-print:/home/nonroot/.config/pdb-print \
   ghcr.io/francisrath/pdb-print:latest
 ```
-The image used to be `ghcr.io/francisrath/partdb-print-agent` (up to v0.3.1); it has moved with the
-repository, so switch to `ghcr.io/francisrath/pdb-print` to keep getting updates.
+The image moved with the repository: it used to be `ghcr.io/francisrath/partdb-print-agent`. New
+releases are published under both names until v0.5.0, then only as `ghcr.io/francisrath/pdb-print`,
+so switch to the new name.
 On stop, the agent lets a print in progress finish (up to 2 minutes), hence `--stop-timeout 130`.
 The web UI binds loopback only, so `--network host` makes it reachable at `http://127.0.0.1:8631`
 on the host (and lets it find network printers). Until Part-DB is connected, the setup wizard is

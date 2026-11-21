@@ -80,3 +80,18 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
 - **Don't re-run the release jobs of an old tag:** it can move the "latest" badge back to it.
 
 Local macOS dry run: `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew`
+
+## Don't move a release tag
+
+Never force-push or re-create a tag that has a release. GitHub turns the published release back into a
+draft, and the tag push starts `release.yml` again, which builds into a second draft and replaces the
+macOS archive and the Homebrew cask in the first one. That happened with v0.3.1 after a history
+rewrite: the fix was to delete the extra draft and publish the original again
+(`gh api -X PATCH repos/francisrath/pdb-print/releases/ID -F draft=false -f make_latest=true`), after
+checking that its assets and the cask's checksum agree.
+
+## New container packages
+
+A new image name (`ghcr.io/francisrath/pdb-print` from the release after v0.3.1) gets a new package on
+its first push. Check it on GitHub (Packages) and make it **public** if it isn't, or `docker pull` fails
+with 401 for users. `pdb-print-stats` stays private: only srv1 pulls it.

@@ -116,7 +116,9 @@ changelog:
     exclude: ["^docs", "^test", "^ci", "^chore"]
 
 dockers_v2:
-  - images: ["ghcr.io/francisrath/pdb-print"]
+  # also under the old name for a few releases, so installs on it (and v0.3.1 and older, whose update
+  # notice names it) keep getting updates; drop it from v0.5.0 on
+  - images: ["ghcr.io/francisrath/pdb-print", "ghcr.io/francisrath/partdb-print-agent"]
     ids: [pdb-print]
     tags:
       - "{{ .Version }}"

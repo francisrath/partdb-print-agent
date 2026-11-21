@@ -844,14 +844,14 @@ gantt
 >
 > Direct label printing comes up regularly (#489, discussions #746, #946 and #1195). In #489 you wrote that it would need "a browser plugin or companion app". We built that companion app as a separate project, and it works with Part-DB as it is today:
 >
-> **[pdb-print](https://github.com/francisrath/pdb-print)** (MIT, Go, single binary, [v0.1.0](https://github.com/francisrath/pdb-print/releases/tag/v0.1.0)) takes the label PDF that Part-DB already generates, rasterises it at the printer's native resolution (no driver scaling, crisp QR codes) and sends it straight to the printer. It uses the `POST /api/labels/generate` endpoint from #1234 (thanks @MayNiklas, who wrote that he wanted exactly this) with a **read-only** API token. Part-DB's HTML/Twig → PDF stays the only template system.
+> **[partdb-print-agent](https://github.com/francisrath/partdb-print-agent)** (MIT, Go, single binary, [v0.1.0](https://github.com/francisrath/partdb-print-agent/releases/tag/v0.1.0)) takes the label PDF that Part-DB already generates, rasterises it at the printer's native resolution (no driver scaling, crisp QR codes) and sends it straight to the printer. It uses the `POST /api/labels/generate` endpoint from #1234 (thanks @MayNiklas, who wrote that he wanted exactly this) with a **read-only** API token. Part-DB's HTML/Twig → PDF stays the only template system.
 >
 > What works today, verified on a Brother QL-810W with 29 mm continuous and 29×90 mm die-cut rolls:
 > - a local web UI, plus a signed bookmarklet: one click on a part or storage-location page prints its label;
 > - a hot folder: "Download" in the label dialog prints automatically;
 > - a CLI (`pdb-print print --profile 2 --ids 32`);
 > - printer status over SNMP: the loaded roll is checked before printing, a label whose size doesn't fit the roll is refused, and completion is confirmed;
-> - installs via `brew install --cask pdb-print` (tap `francisrath/tap`), Docker (`ghcr.io/francisrath/pdb-print`) or a download for Windows, macOS and Linux.
+> - installs via `brew install --cask pdb-print` (tap `francisrath/tap`), Docker (`ghcr.io/francisrath/partdb-print-agent`) or a download for Windows, macOS and Linux.
 >
 > Brother QL is the first printer family; the driver layer is built for Zebra/ZPL, TSPL, DYMO, Niimbot, Phomemo and office printers with A4 label sheets.
 >
