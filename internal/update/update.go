@@ -143,12 +143,16 @@ func Install() string {
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real // brew links /opt/homebrew/bin/pdb-print into its Caskroom
 	}
+	return install(runtime.GOOS, exe, fileExists("/.dockerenv"))
+}
+
+func install(goos, exe string, docker bool) string {
 	switch {
-	case runtime.GOOS == "darwin" && strings.Contains(exe, "/Caskroom/"):
+	case goos == "darwin" && strings.Contains(exe, "/Caskroom/"):
 		return "brew"
-	case runtime.GOOS == "windows":
+	case goos == "windows":
 		return "zip"
-	case fileExists("/.dockerenv"):
+	case docker:
 		return "docker"
 	case exe == "/usr/bin/pdb-print": // the .deb
 		return "deb"
