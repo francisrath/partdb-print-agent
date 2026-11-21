@@ -11,6 +11,7 @@ import (
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
 	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/partdb-print-agent/internal/transport/serial"
 	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
 )
 
@@ -187,6 +188,11 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		case <-time.After(timeout):
 			return false, done
 		}
+	case "serial":
+		// ponytail: says only that the port is there (adapter plugged in); whether the printer is on needs a
+		// status reply, which the status check asks for
+		close(done)
+		return serial.Present(t.Device), done
 	case "ble", "bt": // config.Bluetooth
 		close(done)
 		s.mu.Lock()

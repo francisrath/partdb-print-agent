@@ -151,16 +151,16 @@ var codes = map[string]struct {
 	"84": {driver.MediaMismatch, "excessive media feeding: no gap or black mark found (wrong media or sensing?)"},
 }
 
-// Status asks ^ee over USB; on other transports EPL has no documented read-back.
+// Status asks ^ee over USB or serial; over the network EPL has no documented read-back.
 func (e *epl) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
-	if t.Kind() != "usb" {
+	if !readback(t) {
 		return nil, fmt.Errorf("%w: EPL printers report status only over USB or serial", driver.ErrNoReadback)
 	}
 	code, err := query(ctx, t)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", driver.ErrNoReadback, err)
 	}
-	st := &driver.Status{Code: driver.OK, Via: "usb", Idle: code != "50", Raw: code}
+	st := &driver.Status{Code: driver.OK, Via: t.Kind(), Idle: code != "50", Raw: code}
 	switch c, known := codes[code]; {
 	case known:
 		st.Code, st.Detail = c.code, c.detail
@@ -192,8 +192,8 @@ func (e *epl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 	}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID, Bytes: b.Len()}
-	if t.Kind() != "usb" {
-		res.Message = "sent (not confirmed: EPL printers report status only over USB)"
+	if !readback(t) {
+		res.Message = "sent (not confirmed: EPL printers report status only over USB or serial)"
 		return res, nil
 	}
 	sent := time.Now()
@@ -236,3 +236,6 @@ func (e *epl) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*
 	res.Message = "sent (not confirmed: the printer is still busy)"
 	return res, nil
 }
+
+// readback: ^ee answers over USB and RS-232 (a serial line wired one way just stays silent).
+func readback(t driver.Transport) bool { return t.Kind() == "usb" || t.Kind() == "serial" }

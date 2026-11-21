@@ -193,12 +193,18 @@ func TestStatusNoReadback(t *testing.T) {
 	}
 }
 
-func TestPrintConfirmsOverUSB(t *testing.T) {
+func TestPrintConfirmsOverUSBAndSerial(t *testing.T) {
 	defer epl.SetTiming(5*time.Millisecond, 200*time.Millisecond)()
-	tr := &fake{kind: "usb", replies: []string{"50", "50", "00"}}
-	res, err := newDriver(t, "LP2844", driver.Options{}).Print(context.Background(), tr, &driver.Job{Pages: []*image.Gray{white(8, 2), white(8, 2)}, Media: dieCut(8, 2)})
-	if err != nil || !res.Confirmed || res.Pages != 2 || res.Bytes != tr.sent.Len() || strings.Count(tr.sent.String(), "P1\n") != 2 {
-		t.Errorf("%+v %v", res, err)
+	for _, kind := range []string{"usb", "serial"} {
+		tr := &fake{kind: kind, replies: []string{"50", "50", "00"}}
+		res, err := newDriver(t, "LP2844", driver.Options{}).Print(context.Background(), tr, &driver.Job{Pages: []*image.Gray{white(8, 2), white(8, 2)}, Media: dieCut(8, 2)})
+		if err != nil || !res.Confirmed || res.Pages != 2 || res.Bytes != tr.sent.Len() || strings.Count(tr.sent.String(), "P1\n") != 2 {
+			t.Errorf("%s: %+v %v", kind, res, err)
+		}
+		st, err := newDriver(t, "LP2844", driver.Options{}).Status(context.Background(), &fake{kind: kind, replies: []string{"00"}})
+		if err != nil || st.Via != kind {
+			t.Errorf("%s status: %+v %v", kind, st, err)
+		}
 	}
 }
 
@@ -279,7 +285,7 @@ func TestModels(t *testing.T) {
 			t.Errorf("%s: %+v", m.ID, m)
 		}
 		for _, k := range m.Transports {
-			if !slices.Contains([]string{"usb", "tcp"}, k) {
+			if !slices.Contains([]string{"usb", "tcp", "serial"}, k) {
 				t.Errorf("%s: transport %s", m.ID, k)
 			}
 		}
