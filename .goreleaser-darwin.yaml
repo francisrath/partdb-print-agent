@@ -34,10 +34,14 @@ universal_binaries:
     ids: [pdb-print-darwin]
     name_template: pdb-print
     replace: true
+    hooks:
+      post: ./scripts/macos-sign.sh "{{ .Path }}" # before archives: Developer ID + notarisation on release
   - id: pdb-print-ble-universal
     ids: [pdb-print-ble]
     name_template: pdb-print-ble
     replace: true
+    hooks:
+      post: ./scripts/macos-sign.sh "{{ .Path }}" # keeps the -sectcreate Info.plist; codesign seals it
 
 archives:
   - ids: [pdb-print-universal, pdb-print-ble-universal]
@@ -70,11 +74,3 @@ homebrew_casks:
       owner: francisrath
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    # ponytail: the binaries aren't signed/notarised yet, so clear the quarantine flag
-    # (GoReleaser docs, homebrew_casks); drop this once Developer ID signing is in place.
-    hooks:
-      post:
-        install_steps: |
-          on_macos do
-            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pdb-print", "{{ .StagedPath }}/pdb-print-ble"]
-          end
