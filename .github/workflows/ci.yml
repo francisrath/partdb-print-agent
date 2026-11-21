@@ -31,10 +31,12 @@ jobs:
       # Tests never print: printers and Part-DB are faked on localhost.
       - run: go test ./...
         if: matrix.os != 'ubuntu-latest'
-      - name: go test with coverage
+      # with the race detector (needs cgo, which Linux runners have): the code shares state between
+      # goroutines in many places (printer locks, Bluetooth bridge, usage counters, job loops)
+      - name: go test with coverage and the race detector
         if: matrix.os == 'ubuntu-latest'
         run: |
-          go test -coverpkg=./... -coverprofile=coverage.out ./...
+          CGO_ENABLED=1 go test -race -coverpkg=./... -coverprofile=coverage.out ./...
           { echo '### Test coverage'; echo; awk -f .github/coverage-summary.awk coverage.out; } >> "$GITHUB_STEP_SUMMARY"
       # the macOS Bluetooth helper needs cgo (pdb-print itself stays cgo-free, see lint)
       - name: build pdb-print-ble with cgo
