@@ -80,6 +80,31 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The Developer ID certificate goes into a throwaway keychain and the notary key into a file;
+      # scripts/macos-sign.sh (a GoReleaser hook) signs and notarises with them before the archive is
+      # made. Missing secrets fail the job: a release is never unsigned (docs/releasing.md).
+      - name: set up signing
+        run: |
+          for v in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY; do
+            if [ -z "${!v}" ]; then echo "::error::secret $v is not set (docs/releasing.md)"; exit 1; fi
+          done
+          kc=$RUNNER_TEMP/signing.keychain-db
+          kp=$(openssl rand -hex 24)
+          security create-keychain -p "$kp" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          base64 --decode <<<"$MACOS_SIGN_P12" >"$RUNNER_TEMP/sign.p12"
+          security import "$RUNNER_TEMP/sign.p12" -k "$kc" -P "$MACOS_SIGN_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/sign.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kp" "$kc" >/dev/null
+          id=$(security find-identity -v -p codesigning "$kc" | awk '/"Developer ID Application: / {print $2; exit}')
+          if [ -z "$id" ]; then echo "::error::no Developer ID Application identity in MACOS_SIGN_P12"; exit 1; fi
+          (umask 077; printf '%s\n' "$MACOS_NOTARY_KEY" >"$RUNNER_TEMP/notary.p8")
+          { echo "MACOS_SIGN_KEYCHAIN=$kc"; echo "MACOS_SIGN_IDENTITY=$id"; echo "MACOS_NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8"; } >>"$GITHUB_ENV"
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
@@ -89,6 +114,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # fine-grained token with Contents: read/write on francisrath/homebrew-tap only
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      - name: remove the signing keychain and notary key
+        if: always()
+        run: |
+          if [ -n "${MACOS_SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$MACOS_SIGN_KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/notary.p8"
+      # What gets published must be Developer-ID signed and notarised, whatever the hook did
+      - name: check the macOS archive is signed and notarised
+        run: |
+          mkdir "$RUNNER_TEMP/check"
+          tar xzf dist/pdb-print_*_darwin_universal.tar.gz -C "$RUNNER_TEMP/check"
+          for b in pdb-print pdb-print-ble; do
+            codesign --verify --strict "$RUNNER_TEMP/check/$b"
+            spctl --assess --type install "$RUNNER_TEMP/check/$b"
+          done
       # The only release for the tag must be a draft with every archive; then publish it. The cask
       # pushed by GoReleaser points at it from here on.
       - name: publish the draft
