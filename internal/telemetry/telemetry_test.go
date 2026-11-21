@@ -152,36 +152,54 @@ func TestOffWeeksAreDropped(t *testing.T) {
 	}
 }
 
+// A dev build's Run returns at once: it never even touches the counters file (a tick would, before
+// sending), whatever else would stop the send.
 func TestDevBuildsNeverSend(t *testing.T) {
 	sent := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { sent++ }))
 	defer srv.Close()
 	now := mon
 	s := sender(t, &config.Config{Telemetry: on()}, srv.URL, &now)
+	s.Store.c.Since = "2026-W46" // a report is due
 	s.Version = "dev"
-	s.Store.Job("bookmarklet", "QL-810W", 1, "")
-	now = next
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	s.Run(ctx)
-	if sent != 0 {
-		t.Error("a dev build sent a report")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run didn't return for a dev build")
+	}
+	if _, err := os.Stat(s.Store.Path); err == nil || sent != 0 {
+		t.Errorf("dev build touched the store or sent (%d)", sent)
 	}
 }
 
 func TestValidate(t *testing.T) {
-	good := Report{Schema: 1, Week: "2026-W47", Version: "0.3.0", OS: "linux", Arch: "arm", Install: "deb", Renderer: "pdftoppm",
-		OSVersion: "debian 13", Board: "Raspberry Pi 2 Model B", Models: map[string]int{"QL-810W": 1}}
+	good := Report{Schema: 1, ID: "0123456789abcdef", Week: "2026-W47", Version: "0.3.0", OS: "linux", Arch: "arm", Install: "deb",
+		Renderer: "pdftoppm", OSVersion: "debian 13", Board: "Raspberry Pi 2 Model B", Models: map[string]int{"QL-810W": 1},
+		Transports: map[string]int{"usb": 1}, Jobs: map[string]int{"part-db": 3}, Labels: map[string]int{"QL-810W": 9},
+		Errors: map[string]int{"NO_MEDIA": 1}}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string]func(r *Report){
-		"schema":        func(r *Report) { r.Schema = 2 },
-		"week":          func(r *Report) { r.Week = "2026-47" },
-		"dev version":   func(r *Report) { r.Version = "dev" },
-		"free text key": func(r *Report) { r.Models = map[string]int{"my printer in Bob's office": 1} },
-		"email":         func(r *Report) { r.Board = "bob@example.org" },
-		"negative":      func(r *Report) { r.Labels = map[string]int{"QL-810W": -1} },
+		"schema":            func(r *Report) { r.Schema = 2 },
+		"no id":             func(r *Report) { r.ID = "" },
+		"week":              func(r *Report) { r.Week = "2026-47" },
+		"dev version":       func(r *Report) { r.Version = "dev" },
+		"plain words model": func(r *Report) { r.Models = map[string]int{"Bobs office printer": 1} },
+		"host as model":     func(r *Report) { r.Labels = map[string]int{"bobs-pi.lan": 1} },
+		"ip as transport":   func(r *Report) { r.Transports = map[string]int{"192.168.1.50": 1} },
+		"job source":        func(r *Report) { r.Jobs = map[string]int{"visit spam.example.com": 1} },
+		"error code":        func(r *Report) { r.Errors = map[string]int{"AA-BB-CC-DD-EE-FF": 1} },
+		"board host":        func(r *Report) { r.Board = "bob.example.org" },
+		"os_version text":   func(r *Report) { r.OSVersion = "bobs laptop" },
+		"os":                func(r *Report) { r.OS = "plan9" },
+		"install":           func(r *Report) { r.Install = "bobs-script" },
+		"negative":          func(r *Report) { r.Labels = map[string]int{"QL-810W": -1} },
+		"huge":              func(r *Report) { r.Labels = map[string]int{"QL-810W": 9e18} },
 	} {
 		r := good
 		bad(&r)
@@ -193,9 +211,16 @@ func TestValidate(t *testing.T) {
 
 func TestLinuxRelease(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "os-release")
-	_ = os.WriteFile(p, []byte("PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nID=debian\nVERSION_ID=\"13\"\n"), 0o600)
-	if got := linuxRelease(p); got != "debian 13" {
-		t.Errorf("%q", got)
+	for content, want := range map[string]string{
+		"PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nID=debian\nVERSION_ID=\"13\"\n": "debian 13",
+		"ID=ubuntu\nVERSION_ID=\"24.04\"\n":                                            "ubuntu 24",
+		"ID=bobs-own-distro\nVERSION_ID=1\n":                                           "linux", // not in the list: no free text
+		"ID=arch\n":                                                                    "arch",
+	} {
+		_ = os.WriteFile(p, []byte(content), 0o600)
+		if got := linuxRelease(p); got != want {
+			t.Errorf("%q: %q, want %q", content, got, want)
+		}
 	}
 }
 
@@ -212,5 +237,52 @@ func TestDocListsEveryField(t *testing.T) {
 		if !strings.Contains(string(doc), "`"+f+"`") {
 			t.Errorf("docs/telemetry.md doesn't list `%s`", f)
 		}
+	}
+}
+
+// Reset (reports switched on) drops what was counted before, and gives the next report a new id.
+func TestResetOnOptIn(t *testing.T) {
+	s := &Store{Path: filepath.Join(t.TempDir(), "t.json"), Now: func() time.Time { return mon }}
+	s.Job("bookmarklet", "QL-810W", 200, "")
+	c, _ := s.due()
+	s.Reset()
+	c2, _ := s.due()
+	if len(c2.Labels) != 0 || c2.ID == c.ID || c2.ID == "" {
+		t.Errorf("before %+v, after %+v", c, c2)
+	}
+}
+
+// A report that can't be remembered as sent isn't sent (it would go out again after a restart).
+func TestNoSendWithoutPersistence(t *testing.T) {
+	sent := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { sent++ }))
+	defer srv.Close()
+	now := next
+	s := sender(t, &config.Config{Telemetry: on()}, srv.URL, &now)
+	s.Store.c.Since = "2026-W47"
+	s.Store.Path = filepath.Join(t.TempDir(), "missing-dir", "sub", "t.json")
+	if err := os.WriteFile(filepath.Dir(filepath.Dir(s.Store.Path)), nil, 0o600); err != nil { // a file where the dir should be
+		t.Fatal(err)
+	}
+	s.tick(context.Background())
+	if sent != 0 {
+		t.Error("sent although the store can't be saved")
+	}
+}
+
+// Only a refusal of the report itself drops the week; a proxy's 429 or 403 is retried.
+func TestRejectedVsRetried(t *testing.T) {
+	for code, dropped := range map[int]bool{400: true, 413: true, 422: true, 429: false, 403: false, 503: false} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }))
+		now := next
+		s := sender(t, &config.Config{Telemetry: on()}, srv.URL, &now)
+		s.Store.c.Since = "2026-W47"
+		s.Store.Job("bookmarklet", "QL-810W", 1, "")
+		s.tick(context.Background())
+		c, _ := s.Store.due()
+		if gone := c.Since == "2026-W48"; gone != dropped {
+			t.Errorf("HTTP %d: dropped %v, want %v", code, gone, dropped)
+		}
+		srv.Close()
 	}
 }

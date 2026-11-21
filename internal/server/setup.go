@@ -602,7 +602,7 @@ func (s *Server) setupDonePost(w http.ResponseWriter, r *http.Request) {
 	sess, d, unlock := lockDraft(r)
 	defer unlock()
 	on := r.FormValue("telemetry") == "1" // passing this step records the choice (docs/telemetry.md)
-	if err := s.update(func(c *config.Config) error { c.Telemetry = &on; return nil }); err != nil {
+	if err := s.setTelemetry(on); err != nil {
 		s.Log.Warn("setup: couldn't save the usage report choice", "err", err)
 	}
 	if r.FormValue("action") == "another" {

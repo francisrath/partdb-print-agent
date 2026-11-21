@@ -54,7 +54,7 @@ func (s *Sender) Build() Report {
 	c, _ := s.Store.due()
 	cfg := s.Config()
 	r := Report{
-		Schema: Schema, Week: c.Since, Version: strings.TrimPrefix(s.Version, "v"), OS: runtime.GOOS, Arch: runtime.GOARCH,
+		Schema: Schema, ID: c.ID, Week: c.Since, Version: strings.TrimPrefix(s.Version, "v"), OS: runtime.GOOS, Arch: runtime.GOARCH,
 		OSVersion: osVersion(), Board: board(), Install: update.Install(),
 		Models: map[string]int{}, Transports: map[string]int{}, Jobs: c.Jobs, Labels: c.Labels, Errors: c.Errors,
 	}
@@ -99,18 +99,24 @@ func (s *Sender) tick(ctx context.Context) {
 		return
 	}
 	if Off(s.Config()) != "" {
-		s.Store.reset(false)
+		_ = s.Store.reset(false)
+		return
+	}
+	if err := s.Store.persistable(); err != nil {
+		if s.Log != nil {
+			s.Log.Debug("usage report not sent: can't save its state, so it might be sent twice", "err", err)
+		}
 		return
 	}
 	switch err := s.send(ctx); {
 	case errors.Is(err, errRejected):
-		s.Store.reset(false) // the collector won't take it: don't retry every hour
+		_ = s.Store.reset(false) // the collector won't take it: don't retry every hour
 	case err != nil:
 		if s.Log != nil && ctx.Err() == nil {
 			s.Log.Debug("usage report not sent; next try in an hour", "err", err)
 		}
 	default:
-		s.Store.reset(true)
+		_ = s.Store.reset(true)
 	}
 }
 
@@ -139,7 +145,8 @@ func (s *Sender) send(ctx context.Context) error {
 	}
 	resp.Body.Close()
 	switch {
-	case resp.StatusCode/100 == 4:
+	case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusRequestEntityTooLarge,
+		resp.StatusCode == http.StatusUnprocessableEntity: // the report itself is refused; anything else is retried
 		return fmt.Errorf("%w: HTTP %d", errRejected, resp.StatusCode)
 	case resp.StatusCode/100 != 2:
 		return fmt.Errorf("HTTP %d", resp.StatusCode)

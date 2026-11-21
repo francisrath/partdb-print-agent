@@ -536,8 +536,19 @@ func (s *Server) saveRoute(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) saveTelemetry(w http.ResponseWriter, r *http.Request) {
 	on := r.FormValue("on") == "1"
-	err := s.update(func(c *config.Config) error { c.Telemetry = &on; return nil })
+	err := s.setTelemetry(on)
 	s.redirect(w, r, map[bool]string{true: "Weekly usage report on", false: "Weekly usage report off"}[on], err)
+}
+
+// setTelemetry saves the usage report choice; switching it on starts counting afresh, so nothing
+// counted before the choice is ever sent.
+func (s *Server) setTelemetry(on bool) error {
+	was := s.config().Telemetry
+	err := s.update(func(c *config.Config) error { c.Telemetry = &on; return nil })
+	if err == nil && on && (was == nil || !*was) && s.Stats != nil {
+		s.Stats.Reset()
+	}
+	return err
 }
 
 // telemetryOffReason is shown under the toggle when an opt-out other than the toggle applies.
@@ -712,7 +723,7 @@ func defaultStr(s, def string) string {
 // finish records a job in the history and counts it for the usage report.
 func (s *Server) finish(source, what, printer string, res *printing.Result, err error) {
 	s.record(jobFor(source, what, printer, res, err))
-	if s.Stats == nil {
+	if s.Stats == nil || telemetry.Off(s.config()) != "" { // nothing is counted while reports are off or undecided
 		return
 	}
 	model := ""
