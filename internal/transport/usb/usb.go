@@ -4,8 +4,10 @@ package usb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/francisrath/partdb-print-agent/internal/config"
@@ -81,6 +83,9 @@ func (t *Transport) Read(p []byte) (int, error) {
 		if n > 0 {
 			return n, nil
 		}
+		if errors.Is(err, syscall.EINVAL) { // usblp on a unidirectional interface: reads are refused
+			return 0, fmt.Errorf("%w: %w", driver.ErrNoReadback, err)
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return 0, err
 		}
@@ -91,11 +96,15 @@ func (t *Transport) Read(p []byte) (int, error) {
 	}
 }
 
+// drainTimeout bounds how long Close waits for the last write to leave.
+const drainTimeout = 10 * time.Second
+
 func (t *Transport) Close() error {
 	if t.f == nil {
 		return nil
 	}
-	err := t.f.Close()
+	err := drain(t.f, drainTimeout) // let the last write reach the printer before close cancels it
+	err = errors.Join(err, t.f.Close())
 	t.f = nil
 	return err
 }
