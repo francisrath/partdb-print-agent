@@ -1,6 +1,8 @@
 package telemetry
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +13,7 @@ import (
 
 // counts is what the agent remembers between reports (a small JSON file next to the config).
 type counts struct {
+	ID     string         `json:"id"`    // the report's random id, new with every count (Report.ID)
 	Since  string         `json:"since"` // ISO week counting started
 	Sent   string         `json:"sent"`  // ISO week of the last report sent
 	Jobs   map[string]int `json:"jobs"`
@@ -60,7 +63,7 @@ func (s *Store) Job(source, model string, pages int, errCode string) {
 	} else if model != "" {
 		add(&s.c.Labels, model, pages)
 	}
-	s.save()
+	_ = s.save() // a lost count only costs statistics
 }
 
 func add(m *map[string]int, k string, n int) {
@@ -74,6 +77,9 @@ func add(m *map[string]int, k string, n int) {
 func (s *Store) start() {
 	if s.c.Since == "" {
 		s.c.Since = Week(s.now())
+	}
+	if s.c.ID == "" {
+		s.c.ID = newID()
 	}
 }
 
@@ -101,7 +107,7 @@ func clone(m map[string]int) map[string]int {
 }
 
 // reset starts a new count this week; sent records that a report went out.
-func (s *Store) reset(sent bool) {
+func (s *Store) reset(sent bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w := Week(s.now())
@@ -109,21 +115,39 @@ func (s *Store) reset(sent bool) {
 	if sent {
 		last = w
 	}
-	s.c = counts{Since: w, Sent: last}
-	s.save()
+	s.c = counts{Since: w, Sent: last, ID: newID()}
+	return s.save()
 }
 
-// save writes the file atomically; failures only cost statistics (caller holds mu).
-func (s *Store) save() {
+// Reset drops everything counted so far: called when reports are switched on, so nothing counted
+// before the choice is ever sent.
+func (s *Store) Reset() { _ = s.reset(false) }
+
+// persistable: the counters file can be written, so a sent report is remembered and not sent again.
+func (s *Store) persistable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save()
+}
+
+func newID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// save writes the file atomically (caller holds mu).
+func (s *Store) save() error {
 	if s.Path == "" {
-		return
+		return nil
 	}
 	b, _ := json.Marshal(s.c)
 	tmp := s.Path + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
-		return
+		return err
 	}
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, s.Path)
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
 	}
+	return os.Rename(tmp, s.Path)
 }

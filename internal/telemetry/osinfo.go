@@ -13,7 +13,10 @@ func board() string {
 		return ""
 	}
 	m, _, _ := strings.Cut(strings.TrimRight(string(b), "\x00\n"), " Rev ")
-	return clip(m)
+	if m = clip(m); !boardRe.MatchString(m) {
+		return "" // only Raspberry Pi models are named; other boards' strings are free-form
+	}
+	return m
 }
 
 // linuxRelease is "<ID> <major VERSION_ID>" from os-release: "debian 13", "ubuntu 24".
@@ -31,8 +34,15 @@ func linuxRelease(path string) string {
 			kv[k] = strings.Trim(v, `"'`)
 		}
 	}
+	id := kv["ID"]
+	if !distros[id] {
+		return "linux"
+	}
 	major, _, _ := strings.Cut(kv["VERSION_ID"], ".")
-	return clip(strings.TrimSpace(kv["ID"] + " " + major))
+	if v := id + " " + major; major != "" && osVersionRe.MatchString(v) {
+		return v
+	}
+	return id
 }
 
 // clip keeps only what Validate accepts (letters, digits, space . _ + -; 64 characters).

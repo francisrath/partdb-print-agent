@@ -342,6 +342,8 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	// before any job source starts: they count into it
+	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	if a.cfg.UpdateCheckOn() {
 		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log}
 		go srv.Updates.Run(ctx)
@@ -364,11 +366,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		}()
 	}
 	jobsDone := a.startAgentJobs(ctx, srv)
-	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	stats := &telemetry.Sender{Store: srv.Stats, Version: appVersion(), Config: srv.Config, AgentAPI: jobsDone.hasAPI, Log: a.log,
 		Renderer: func() string { name, _, _ := strings.Cut(a.renderer(), " "); return name }}
 	go stats.Run(ctx)
-	if why := telemetry.Off(srv.Config()); why == "" {
+	if why := telemetry.Off(srv.Config()); why == "" && update.Released(appVersion()) {
 		a.log.Info("weekly anonymous usage report on (docs/telemetry.md); turn it off in the web UI or with telemetry: false")
 	}
 	tick := time.NewTicker(5 * time.Second)

@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // weeksShown is how many weeks the installs chart covers.
@@ -70,10 +72,15 @@ func summary(path string) (*page, error) {
 	}
 	p.Week = weeks[len(weeks)-1]
 	p.Installs = perWeek[p.Week]
-	shown := weeks[max(0, len(weeks)-weeksShown):]
+	// every week from the first shown to the latest, weeks without reports as zero
+	last, _ := weekStart(p.Week)
+	first, ok := weekStart(weeks[0])
+	if !ok || last.Sub(first) > (weeksShown-1)*7*24*time.Hour {
+		first = last.AddDate(0, 0, -7*(weeksShown-1))
+	}
 	pw := map[string]int{}
-	for _, w := range shown {
-		pw[w] = perWeek[w]
+	for t := first; !t.After(last); t = t.AddDate(0, 0, 7) {
+		pw[week(t)] = perWeek[week(t)]
 	}
 	p.PerWeek = rows(pw, false)
 	ver, osv, inst, board, models, trans, jobs, labels, errs := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{},
@@ -133,8 +140,39 @@ func rows(m map[string]int, byCount bool) []row {
 	return out
 }
 
+// summary is the cached page numbers, recomputed after a new report arrives.
+func (c *collector) summary() (*page, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cache == nil {
+		p, err := summary(c.path)
+		if err != nil {
+			return nil, err
+		}
+		c.cache = p
+	}
+	return c.cache, nil
+}
+
+// weekStart is the Monday (UTC) an ISO week "2026-W47" starts on.
+func weekStart(w string) (time.Time, bool) {
+	var y, n int
+	if _, err := fmt.Sscanf(w, "%4d-W%2d", &y, &n); err != nil || n < 1 || n > 53 {
+		return time.Time{}, false
+	}
+	jan4 := time.Date(y, 1, 4, 0, 0, 0, 0, time.UTC)
+	monday := jan4.AddDate(0, 0, -((int(jan4.Weekday()) + 6) % 7))
+	t := monday.AddDate(0, 0, 7*(n-1))
+	return t, week(t) == w // week 53 of a 52-week year is rejected
+}
+
+func week(t time.Time) string {
+	y, n := t.ISOWeek()
+	return fmt.Sprintf("%04d-W%02d", y, n)
+}
+
 func (c *collector) stats(w http.ResponseWriter, _ *http.Request) {
-	p, err := summary(c.path)
+	p, err := c.summary()
 	if err != nil {
 		http.Error(w, "can't read the reports", http.StatusInternalServerError)
 		return
@@ -206,7 +244,7 @@ which stores no addresses. Turn reports off with <code>telemetry: false</code>.<
 // badge is a shields.io endpoint (https://shields.io/badges/endpoint-badge): the installs that reported
 // in the latest week. README: ![installs](https://img.shields.io/endpoint?url=https://pdb-print-stats.cloudline.no/v1/badge/installs.json)
 func (c *collector) badge(w http.ResponseWriter, _ *http.Request) {
-	p, err := summary(c.path)
+	p, err := c.summary()
 	if err != nil {
 		http.Error(w, "can't read the reports", http.StatusInternalServerError)
 		return

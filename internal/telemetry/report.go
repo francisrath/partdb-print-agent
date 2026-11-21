@@ -4,9 +4,11 @@
 package telemetry
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
+	"strings"
+
+	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 )
 
 // Schema is bumped on any change to Report.
@@ -23,6 +25,7 @@ const MaxBytes = 8 << 10
 // content or config value: only the fields below.
 type Report struct {
 	Schema    int    `json:"schema"`
+	ID        string `json:"id"`         // random, new every week: a resent report counts once
 	Week      string `json:"week"`       // ISO week the counts cover: 2026-W47
 	Version   string `json:"version"`    // pdb-print release: 0.3.0
 	OS        string `json:"os"`         // linux | darwin | windows
@@ -48,11 +51,42 @@ type Report struct {
 var (
 	weekRe    = regexp.MustCompile(`^\d{4}-W\d{2}$`)
 	versionRe = regexp.MustCompile(`^\d{1,4}\.\d{1,4}\.\d{1,4}$`)
-	wordRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,63}$`) // model ids, codes, OS names
+	idRe      = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	// os_version: an allowed distribution with its major version, "macos 15", or "windows 11 build 26100"
+	osVersionRe = regexp.MustCompile(`^(?:(?:[a-z-]+)(?: \d{1,3})?|windows (?:10|11|server) build \d{4,6})$`)
+	boardRe     = regexp.MustCompile(`^Raspberry Pi [0-9A-Za-z][0-9A-Za-z +.]{0,30}$`)
 )
 
-// Validate is what the collector accepts: schema 1, sane sizes, only word-like keys and values (no free
-// text, so nothing personal can be smuggled in a field).
+// maxCount caps every count: a week of a busy print server is far below it.
+const maxCount = 1_000_000
+
+// The closed sets of values a report may carry. Anything else is rejected, so a forged report can only
+// repeat known words, never put free text (a host name, an address) on the public stats page.
+var (
+	oses       = set("linux", "darwin", "windows", "freebsd", "netbsd", "openbsd")
+	arches     = set("amd64", "arm64", "arm", "386", "riscv64", "ppc64le", "s390x", "loong64")
+	installs   = set("deb", "brew", "docker", "zip", "archive")
+	renderers  = set("pdfium", "pdftoppm", "unknown")
+	transports = set("tcp", "usb", "ble", "bt", "serial")
+	jobSources = set("bookmarklet", "part-db", "hot-folder", "web-ui", "setup", "other")
+	errorCodes = set("BUSY", "NO_MEDIA", "MEDIA_MISMATCH", "MEDIA_END_SOON", "COVER_OPEN", "CUTTER_JAM", "PAPER_JAM",
+		"OVERHEAT", "PAUSED", "RIBBON_OUT", "COMMS_ERROR", "UNSUPPORTED", "RENDER_ERROR", "UNKNOWN", "OTHER")
+	// distros: os-release IDs reported by name; others are reported as "linux".
+	distros = set("debian", "ubuntu", "raspbian", "fedora", "centos", "rhel", "rocky", "almalinux", "arch", "manjaro",
+		"alpine", "opensuse-leap", "opensuse-tumbleweed", "linuxmint", "pop", "nixos", "gentoo", "void", "elementary",
+		"zorin", "kali", "linux", "macos", "windows")
+)
+
+func set(v ...string) map[string]bool {
+	m := make(map[string]bool, len(v))
+	for _, s := range v {
+		m[s] = true
+	}
+	return m
+}
+
+// Validate is what the collector accepts (and the agent checks before sending): schema 1, known values
+// only, models from the device database, counts up to maxCount.
 func (r *Report) Validate() error {
 	if r.Schema != Schema {
 		return fmt.Errorf("schema %d, want %d", r.Schema, Schema)
@@ -63,25 +97,42 @@ func (r *Report) Validate() error {
 	if !versionRe.MatchString(r.Version) {
 		return fmt.Errorf("version %q", r.Version)
 	}
-	for name, v := range map[string]string{"os": r.OS, "arch": r.Arch, "install": r.Install, "renderer": r.Renderer} {
-		if !wordRe.MatchString(v) {
-			return fmt.Errorf("%s %q", name, v)
+	if !idRe.MatchString(r.ID) {
+		return fmt.Errorf("id %q", r.ID)
+	}
+	for name, c := range map[string]struct {
+		v  string
+		ok map[string]bool
+	}{"os": {r.OS, oses}, "arch": {r.Arch, arches}, "install": {r.Install, installs}, "renderer": {r.Renderer, renderers}} {
+		if !c.ok[c.v] {
+			return fmt.Errorf("%s %q", name, c.v)
 		}
 	}
-	for name, v := range map[string]string{"os_version": r.OSVersion, "board": r.Board} {
-		if v != "" && !wordRe.MatchString(v) {
-			return fmt.Errorf("%s %q", name, v)
+	if r.OSVersion != "" {
+		name, _, _ := strings.Cut(r.OSVersion, " ")
+		if !osVersionRe.MatchString(r.OSVersion) || !distros[name] {
+			return fmt.Errorf("os_version %q", r.OSVersion)
 		}
 	}
-	if r.ModelsUnknown < 0 {
-		return errors.New("models_unknown < 0")
+	if r.Board != "" && !boardRe.MatchString(r.Board) {
+		return fmt.Errorf("board %q", r.Board)
 	}
-	for name, m := range map[string]map[string]int{"models": r.Models, "transports": r.Transports, "jobs": r.Jobs, "labels": r.Labels, "errors": r.Errors} {
-		if len(m) > 64 {
-			return fmt.Errorf("%s: %d keys", name, len(m))
-		}
-		for k, n := range m {
-			if !wordRe.MatchString(k) || n < 0 {
+	if r.ModelsUnknown < 0 || r.ModelsUnknown > maxCount {
+		return fmt.Errorf("models_unknown %d", r.ModelsUnknown)
+	}
+	db := devicedb.Default()
+	model := func(k string) bool { _, ok := db.Model(k); return ok }
+	for name, c := range map[string]struct {
+		m  map[string]int
+		ok func(string) bool
+	}{
+		"models": {r.Models, model}, "labels": {r.Labels, model},
+		"transports": {r.Transports, func(k string) bool { return transports[k] }},
+		"jobs":       {r.Jobs, func(k string) bool { return jobSources[k] }},
+		"errors":     {r.Errors, func(k string) bool { return errorCodes[k] }},
+	} {
+		for k, n := range c.m {
+			if !c.ok(k) || n < 0 || n > maxCount {
 				return fmt.Errorf("%s: %q = %d", name, k, n)
 			}
 		}

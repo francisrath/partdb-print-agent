@@ -643,7 +643,14 @@ func TestTelemetryChoice(t *testing.T) {
 
 func TestJobsAreCounted(t *testing.T) {
 	h := newHarness(t)
+	t.Setenv("DO_NOT_TRACK", "")
+	t.Setenv("PDB_PRINT_TELEMETRY", "")
 	h.srv.Stats = telemetry.Open(filepath.Join(t.TempDir(), "telemetry.json"))
+	h.post("/printers/ql/test", nil) // undecided: not counted
+	if r := (&telemetry.Sender{Store: h.srv.Stats, Version: "0.3.0", Config: h.srv.Config}).Build(); len(r.Jobs) != 0 {
+		t.Fatalf("counted while undecided: %+v", r.Jobs)
+	}
+	h.post("/telemetry", url.Values{"on": {"1"}})
 	h.post("/printers/ql/test", nil)
 	h.srv.finish("hot folder", "x.pdf", "ql", nil, &driver.Error{Code: driver.NoMedia})
 	h.srv.finish("something new", "x.pdf", "nope", nil, errors.New("boom"))
