@@ -131,7 +131,7 @@ type Transport struct {
 	Channel int    `yaml:"channel,omitempty"` // bt only, 0-30
 	// serial: the line settings; defaults 9600, 8N1, no flow control.
 	Baud    int    `yaml:"baud,omitempty"`
-	Framing string `yaml:"framing,omitempty"` // data bits, parity N/E/O, stop bits: 8N1, 7E1 …
+	Framing string `yaml:"framing,omitempty"` // 8 data bits, parity N/E/O, stop bits: 8N1, 8E1, 8N2
 	Flow    string `yaml:"flow,omitempty"`    // none | xonxoff | rtscts
 }
 
@@ -351,7 +351,8 @@ var btAddrRe = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 // Bauds are the serial speeds every supported OS can set.
 var Bauds = []int{1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400}
 
-var framingRe = regexp.MustCompile(`^[78][NEO][12]$`)
+// framingRe: 8 data bits only; every driver sends binary raster data, which 7 bits would corrupt.
+var framingRe = regexp.MustCompile(`^8[NEO][12]$`)
 
 var usbIDRe = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{4}$`)
 
@@ -416,7 +417,7 @@ func (p *Printer) validate() error {
 		case t.Baud != 0 && !slices.Contains(Bauds, t.Baud):
 			return fmt.Errorf("baud %d must be one of %v", t.Baud, Bauds)
 		case t.Framing != "" && !framingRe.MatchString(t.Framing):
-			return fmt.Errorf("framing %q must be data bits 7 or 8, parity N, E or O, stop bits 1 or 2 (e.g. 8N1)", t.Framing)
+			return fmt.Errorf("framing %q must be 8 data bits, parity N, E or O, stop bits 1 or 2 (8N1, 8E1, 8N2 …)", t.Framing)
 		case t.Flow != "" && t.Flow != "none" && t.Flow != "xonxoff" && t.Flow != "rtscts":
 			return fmt.Errorf("flow %q must be none, xonxoff or rtscts", t.Flow)
 		}

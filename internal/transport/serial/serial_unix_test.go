@@ -58,7 +58,7 @@ func open(t *testing.T, dev string, l Line) *Transport {
 
 // Graphics are binary: newlines, CRs and XON/XOFF bytes must arrive unchanged (raw mode).
 func TestWriteIsRaw(t *testing.T) {
-	for _, l := range []Line{{}, {Baud: 115200, Framing: "7E2"}, {Baud: 19200, Framing: "8O1", Flow: "rtscts"}} {
+	for _, l := range []Line{{}, {Baud: 115200, Framing: "8E2"}, {Baud: 19200, Framing: "8O1", Flow: "rtscts"}} {
 		m, dev := fakePrinter(t)
 		tr := open(t, dev, l)
 		job := []byte("GW0,0,2,3,\x00\n\r\x11\x13\xff\r\nP1\n")

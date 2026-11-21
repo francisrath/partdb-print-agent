@@ -61,7 +61,7 @@ func (p *winPort) setup(l Line) error {
 		return fmt.Errorf("not a serial port? %w", err)
 	}
 	d.BaudRate = uint32(l.Baud)
-	d.ByteSize = l.Framing[0] - '0'
+	d.ByteSize = 8 // config allows 8 data bits only (binary raster data)
 	d.Flags = dcbBinary | dcbDtrControlEnable | dcbRtsControlEnable
 	switch l.Framing[1] {
 	case 'E':
@@ -126,9 +126,25 @@ func (p *winPort) write(b []byte) (int, error) {
 	return int(n), err
 }
 
-// drain: a synchronous WriteFile has handed everything to the driver; FlushFileBuffers waits until it
-// was sent. ponytail: no timeout of its own (the write timeouts bound it in practice).
-func (p *winPort) drain(time.Duration) error { return windows.FlushFileBuffers(p.h) }
+// drain waits until the driver's output queue is empty. Not FlushFileBuffers: write timeouts don't bound
+// it, so a printer holding XOFF or CTS would keep Close (and the port) forever.
+func (p *winPort) drain(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var errs uint32
+		var st windows.ComStat
+		if err := windows.ClearCommError(p.h, &errs, &st); err != nil {
+			return err
+		}
+		if st.CBOutQue == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%d bytes still queued after %v: the end of the job may be lost", st.CBOutQue, timeout)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 func (p *winPort) close() error { return windows.CloseHandle(p.h) }
 

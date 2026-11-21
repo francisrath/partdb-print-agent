@@ -285,7 +285,7 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	<-h.jobs
 
 	w := h.do("GET", "/printers/ql/status", nil)
-	if !strings.Contains(w.Body.String(), "no status over TCP") || !strings.Contains(w.Body.String(), `"ok":true`) {
+	if !strings.Contains(w.Body.String(), "no status over tcp") || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Errorf("status: %s", w.Body)
 	}
 	// without media, a printer that reports nothing can't print: flag it

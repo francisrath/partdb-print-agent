@@ -342,7 +342,7 @@ fake printer on a pseudo-terminal.
   macOS `/dev/cu.usbserial-…`, on Windows `COM3`. `pdb-print discover` lists the ports it sees, but can't
   tell what is plugged into them: set `model` yourself.
 - `baud`: 1200 to 230400, default 9600; must match the printer (Zebra's factory setting is 9600 8N1).
-- `framing`: data bits, parity (N, E, O) and stop bits, default `8N1`.
+- `framing`: 8 data bits (label data is binary), parity (N, E, O) and stop bits: `8N1` (default), `8E1`, `8N2` …
 - `flow`: `none` (default), `xonxoff` (the printer's XOFF pauses pdb-print) or `rtscts`. Zebra's
   "hardware" handshake is DTR: use `xonxoff`, or a cable that wires the printer's DTR to the computer's CTS
   with `rtscts`. Without flow control a large label at 9600 baud can overrun the printer's buffer.
@@ -350,7 +350,8 @@ fake printer on a pseudo-terminal.
 Printers usually need a null-modem cable. A port takes one program at a time; pdb-print opens it only
 for a job or a status check. The printer shows online while its port is there (the adapter is plugged in);
 whether it answers shows in its status. Zebra (`~HS`), EPL (`^ee`) and DYMO status work over serial when the
-cable carries the printer's replies; a one-way cable makes jobs "sent (unconfirmed)".
+cable carries the printer's replies. On a one-way cable EPL and DYMO jobs are "sent (unconfirmed)", but
+Zebra ZPL printers that need a status reply before printing (e.g. the GK420d) refuse the job.
 
 ### Bluetooth LE "cat printers"
 

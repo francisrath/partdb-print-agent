@@ -26,7 +26,7 @@ func init() {
 // Line is how the port is set up. Zero values are config's defaults: 9600, 8N1, no flow control.
 type Line struct {
 	Baud    int
-	Framing string // data bits, parity (N/E/O), stop bits: "8N1"
+	Framing string // 8 data bits, parity (N/E/O), stop bits: "8N1"
 	Flow    string // none | xonxoff | rtscts
 }
 

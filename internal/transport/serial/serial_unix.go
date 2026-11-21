@@ -48,11 +48,7 @@ func (p *unixPort) setup(l Line) error {
 	t.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
 	t.Cflag &^= unix.CSIZE | unix.PARENB | unix.PARODD | unix.CSTOPB | unix.CRTSCTS
 	t.Cflag |= unix.CLOCAL | unix.CREAD
-	if l.Framing[0] == '7' {
-		t.Cflag |= unix.CS7
-	} else {
-		t.Cflag |= unix.CS8
-	}
+	t.Cflag |= unix.CS8 // config allows 8 data bits only (binary raster data)
 	switch l.Framing[1] {
 	case 'E':
 		t.Cflag |= unix.PARENB
@@ -65,6 +61,7 @@ func (p *unixPort) setup(l Line) error {
 	switch l.Flow {
 	case "xonxoff": // the printer's XOFF stops our output; we never pause it (we read only short replies)
 		t.Iflag |= unix.IXON
+		t.Cc[unix.VSTART], t.Cc[unix.VSTOP] = 0x11, 0x13 // the printer's XON/XOFF, whatever the port had
 	case "rtscts":
 		t.Cflag |= unix.CRTSCTS
 	}

@@ -559,7 +559,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 			switch {
 			case p.Transport.Kind == "usb" && p.Transport.USBID != "":
 				where = "usb " + strings.TrimSpace(p.Transport.USBID+" "+p.Transport.Serial)
-			case p.Transport.Kind == "usb":
+			case p.Transport.Kind == "usb", p.Transport.Kind == "serial":
 				where = p.Transport.Device
 			}
 			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where, p.Media)

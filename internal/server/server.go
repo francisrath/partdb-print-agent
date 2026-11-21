@@ -574,7 +574,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, driver.ErrNoReadback) && p.FallbackMedia() == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
-		writeJSON(w, map[string]any{"ok": true, "text": "reachable (no status over TCP)"})
+		writeJSON(w, map[string]any{"ok": true, "text": "reachable (it reports no status over " + p.Transport.Kind + ")"})
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
