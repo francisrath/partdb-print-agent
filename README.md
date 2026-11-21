@@ -320,8 +320,9 @@ protocol (LabelWriter 400/450 Series Technical Reference): one raster line per d
 set to the label length so the printer finds the next label, a short feed between labels and a feed to the
 tear bar after the last. DYMOs don't report which labels are loaded, so set `media:` to the roll's DYMO
 number (`dymo-99012`, `dymo-11354`, `dymo-30252`, `dymo-30256`, `dymo-1744907` on the 4XL …;
-`pdb-print media` lists them). The status byte (`ESC A`) is read before and after a job to catch an empty
-roll or a jam; DYMOs never report a finished label, so jobs end as "sent (unconfirmed)". `darkness:
+`pdb-print media` lists them). When the printer answers the status byte (`ESC A`), it is read before and
+after a job to catch an empty roll or a jam; a printer that gives no status is sent the job blind, with no
+fault reported. DYMOs never report a finished label, so jobs end as "sent (unconfirmed)" either way. `darkness:
 light | normal | dark` sets the print density (not on the 330). No cutter: `cut` must be empty or `none`.
 The LabelWriter Duo shows up as two USB printers (labels and tape) with one USB id: use
 `device: /dev/usb/lpN` for the label side instead of `usb_id`. The Twin Turbo prints on the roll the
