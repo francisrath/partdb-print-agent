@@ -110,30 +110,42 @@ func (p *phomemo) page(b []byte, img *image.Gray, media *devicedb.Media) []byte 
 	}
 }
 
-func (p *phomemo) encode(job *driver.Job) []byte {
+// maxRows is the most rows one GS v 0 block's two-byte height holds.
+const maxRows = 0xFFFF
+
+func (p *phomemo) encode(job *driver.Job) ([]byte, error) {
 	var b []byte
-	for _, pg := range job.Pages {
+	for i, pg := range job.Pages {
+		if band := p.model.Quirk("band_rows", 0); (band <= 0 || band > maxRows) && pg.Bounds().Dy() > maxRows {
+			return nil, &driver.Error{Code: driver.MediaMismatch,
+				Detail: fmt.Sprintf("page %d is %d rows long, %s takes at most %d", i+1, pg.Bounds().Dy(), p.model.ID, maxRows)}
+		}
 		b = p.page(b, pg, job.Media)
 	}
 	if p.model.Dialect == "m02" {
 		b = append(b, 0x1B, 0x64, 0x02) // and once more at the end
 	}
-	return b
+	return b, nil
 }
 
 func (p *phomemo) Encode(w io.Writer, job *driver.Job) error {
-	_, err := w.Write(p.encode(job))
+	b, err := p.encode(job)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
 	return err
 }
 
 // reader decodes `1A type value…` replies off the notification stream; BLE credit records (`01 n`,
 // `02 lo hi`) and anything else are skipped.
 type reader struct {
-	t    driver.Transport
-	buf  []byte
-	seen map[byte]byte // last value per reply type
-	done int           // 1A 0F 0C replies
-	fail byte          // a 1A 0F value other than 0C
+	t      driver.Transport
+	buf    []byte
+	seen   map[byte]byte // last value per reply type
+	done   int           // 1A 0F 0C replies
+	fail   byte          // a 1A 0F value other than 0C…
+	failed bool          // …when one came (00 is a failure code too)
 }
 
 // replyLen is a reply's value length by type (most are one byte).
@@ -166,7 +178,7 @@ func (r *reader) take() {
 				if typ == replyDone && v == doneOK {
 					r.done++
 				} else if typ == replyDone {
-					r.fail = v
+					r.fail, r.failed = v, true
 				}
 			}
 			r.buf = r.buf[2+n:]
@@ -240,7 +252,10 @@ func (p *phomemo) Print(ctx context.Context, t driver.Transport, job *driver.Job
 	if st := job.Status; st != nil && st.Code != driver.OK {
 		return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 	}
-	b := p.encode(job)
+	b, err := p.encode(job)
+	if err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -252,14 +267,18 @@ func (p *phomemo) Print(ctx context.Context, t driver.Transport, job *driver.Job
 	if job.Media != nil {
 		res.Media = job.Media.ID
 	}
-	for end := time.Now().Add(confirmBase + confirmPerPage*time.Duration(len(job.Pages))); r.done < len(job.Pages); {
+	// alarms are checked before the page count, so an alarm in the read that brings the last page still fails
+	for end := time.Now().Add(confirmBase + confirmPerPage*time.Duration(len(job.Pages))); ; {
 		if st := p.statusOf(r.seen); st.Code != driver.OK {
 			return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 		}
-		if r.fail != 0 {
+		if r.failed {
 			return nil, &driver.Error{Code: driver.Unknown, Detail: fmt.Sprintf("printer reports the print failed (1A 0F %02X)", r.fail)}
 		}
 		switch {
+		case r.done >= len(job.Pages):
+			res.Confirmed, res.Message = true, "printed"
+			return res, nil
 		case ctx.Err() != nil:
 			res.Message = "sent (not confirmed: stopped waiting)"
 			return res, nil
@@ -271,6 +290,4 @@ func (p *phomemo) Print(ctx context.Context, t driver.Transport, job *driver.Job
 			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error(), Err: err}
 		}
 	}
-	res.Confirmed, res.Message = true, "printed"
-	return res, nil
 }

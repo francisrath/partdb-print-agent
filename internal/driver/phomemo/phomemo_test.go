@@ -202,6 +202,8 @@ func TestPrint(t *testing.T) {
 		{"one page done", []byte{0x1A, 0x0F, 0x0C}, false, ""},
 		{"paper out", []byte{0x1A, 0x0F, 0x0C, 0x1A, 0x06, 0x88}, false, driver.NoMedia},
 		{"failed", []byte{0x1A, 0x0F, 0x01}, false, driver.Unknown},
+		{"failed with code 00", []byte{0x1A, 0x0F, 0x00}, false, driver.Unknown},
+		{"paper out with the last page", []byte{0x1A, 0x0F, 0x0C, 0x1A, 0x06, 0x88, 0x1A, 0x0F, 0x0C}, false, driver.NoMedia},
 	} {
 		f := &printer{onJob: tc.onJob}
 		res, err := d.Print(context.Background(), f, job())
@@ -225,6 +227,13 @@ func TestPrint(t *testing.T) {
 	j.Status = &driver.Status{Code: driver.CoverOpen}
 	if _, err := d.Print(context.Background(), f, j); err == nil || f.written.Len() != 0 {
 		t.Errorf("%v, %d bytes", err, f.written.Len())
+	}
+	// a page too long for one block's two-byte height sends nothing
+	f = &printer{}
+	j = job()
+	j.Pages = []*image.Gray{image.NewGray(image.Rect(0, 0, 8, maxRows+1))}
+	if _, err := d.Print(context.Background(), f, j); err == nil || f.written.Len() != 0 {
+		t.Errorf("long page: %v, %d bytes", err, f.written.Len())
 	}
 }
 
