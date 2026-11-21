@@ -15,6 +15,8 @@ printers:
     transport: {kind: tcp, host: 192.168.1.50, port: 9100}
     # over USB (Linux) instead: {kind: usb, usb_id: "04f9:209c"} – add serial: … to tell two
     # identical printers apart; or a fixed path: {kind: usb, device: /dev/usb/lp0}
+    # serial (models with an RS-232 port): {kind: serial, device: /dev/ttyUSB0, baud: 9600, framing: 8N1,
+    # flow: none} – flow none | xonxoff | rtscts; Windows: device: COM3
     media: auto                 # the roll the printer reports decides; a media id (dk-22210, see
                                 # `pdb-print media`) is a fallback for when it reports none
     # media_allowed: [dk-22210, dk-22214, dk-11204]   # refuse other rolls (default: any the model takes)

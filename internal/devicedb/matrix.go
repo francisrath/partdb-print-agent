@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var transportNames = map[string]string{"tcp": "Network", "usb": "USB", "ble": "Bluetooth LE", "bt": "Bluetooth Classic"}
+var transportNames = map[string]string{"tcp": "Network", "usb": "USB", "ble": "Bluetooth LE", "bt": "Bluetooth Classic", "serial": "Serial"}
 
 // MarkdownMatrix renders the support matrix of docs/printers.md: a table per vendor, one row per
 // model (by driver, dialect, id) with its tested status, connections, driver and note.

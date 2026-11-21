@@ -574,7 +574,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, driver.ErrNoReadback) && p.FallbackMedia() == "":
 		writeJSON(w, map[string]any{"ok": false, "text": "reachable, but it reports no status or roll: set media for this printer"})
 	case errors.Is(err, driver.ErrNoReadback):
-		writeJSON(w, map[string]any{"ok": true, "text": "reachable (no status over TCP)"})
+		writeJSON(w, map[string]any{"ok": true, "text": "reachable (it reports no status over " + p.Transport.Kind + ")"})
 	case err != nil:
 		writeJSON(w, map[string]any{"ok": false, "text": err.Error()})
 	default:
@@ -871,6 +871,8 @@ func checkHint(kind string) string {
 		return "check that it's switched on, paired with this computer and in range"
 	case "usb":
 		return "check the printer's power and USB cable"
+	case "serial":
+		return "check the printer's power, the serial cable (printers usually need a null-modem cable) and the baud setting"
 	}
 	return "check the printer's power and network connection"
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/server"
 	"github.com/francisrath/partdb-print-agent/internal/source/agentjobs"
 	"github.com/francisrath/partdb-print-agent/internal/source/hotfolder"
+	"github.com/francisrath/partdb-print-agent/internal/transport/serial"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -558,7 +559,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 			switch {
 			case p.Transport.Kind == "usb" && p.Transport.USBID != "":
 				where = "usb " + strings.TrimSpace(p.Transport.USBID+" "+p.Transport.Serial)
-			case p.Transport.Kind == "usb":
+			case p.Transport.Kind == "usb", p.Transport.Kind == "serial":
 				where = p.Transport.Device
 			}
 			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where, p.Media)
@@ -622,7 +623,7 @@ func discover(ctx context.Context, args []string, w io.Writer, scans discovery.O
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	var subnets multiFlag
 	fs.Var(&subnets, "subnet", "network to scan, e.g. 192.168.1.0/24 (repeatable; default: this computer's networks, each at most a /24)")
-	noUSB := fs.Bool("no-usb", false, "skip USB")
+	noUSB := fs.Bool("no-usb", false, "skip USB and serial ports")
 	noNet := fs.Bool("no-network", false, "skip the network")
 	noBLE := fs.Bool("no-ble", false, "skip the Bluetooth search (~8 s)")
 	port := fs.Int("port", 9100, "print port to look for")
@@ -679,7 +680,18 @@ func discover(ctx context.Context, args []string, w io.Writer, scans discovery.O
 	if bleNote != "" {
 		fmt.Fprintln(w, "\n"+bleNote)
 	}
+	if ports := serial.Ports(); len(ports) > 0 && !*noUSB {
+		printSerialPorts(w, ports)
+	}
 	return nil
+}
+
+// printSerialPorts lists serial ports: nothing says what is plugged in, so the user picks the model.
+func printSerialPorts(w io.Writer, ports []string) {
+	fmt.Fprintln(w, "\nSerial ports (pdb-print can't tell what is connected: set model and baud yourself):")
+	for _, p := range ports {
+		fmt.Fprintf(w, "  %s\n     transport: {kind: serial, device: %q, baud: 9600}\n", p, p)
+	}
 }
 
 // printCandidates writes one block per printer, a blank line between them.

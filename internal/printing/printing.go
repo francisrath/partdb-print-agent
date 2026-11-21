@@ -34,10 +34,11 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
 	"github.com/francisrath/partdb-print-agent/internal/render"
 	"github.com/francisrath/partdb-print-agent/internal/transport"
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble" // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"  // registers kind bt (Linux/Windows; macOS: transport/ble)
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp" // registers kind tcp
-	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb" // registers kind usb
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/ble"    // registers kind ble (in-process on Linux/Windows, via pdb-print-ble on macOS)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/bt"     // registers kind bt (Linux/Windows; macOS: transport/ble)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/serial" // registers kind serial (Linux, macOS, Windows)
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/tcp"    // registers kind tcp
+	_ "github.com/francisrath/partdb-print-agent/internal/transport/usb"    // registers kind usb
 )
 
 // Source returns the PDF to print once the media is known.
@@ -361,9 +362,9 @@ func (s *Service) Status(ctx context.Context, p *config.Printer) (st *driver.Sta
 	if err != nil {
 		return nil, err
 	}
-	// a printing PT must not be asked; a USB device opens only once at a time (usblp); a Bluetooth
-	// printer takes one connection, so a second one would drop the job's link
-	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || config.Bluetooth(p.Transport.Kind) {
+	// a printing PT must not be asked; a USB device opens only once at a time (usblp), a serial port too
+	// (opened exclusively); a Bluetooth printer takes one connection, so a second one would drop the job's link
+	if m.QuirkString("status_while_printing") == "busy" || p.Transport.Kind == "usb" || p.Transport.Kind == "serial" || config.Bluetooth(p.Transport.Kind) {
 		lock := s.printerLock(p.ID)
 		if !lock.TryLock() {
 			return &driver.Status{Code: driver.Busy, Detail: "printing a job", Model: m.ID}, nil

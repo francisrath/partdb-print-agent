@@ -231,6 +231,8 @@ func TestValidateModelTransport(t *testing.T) {
 		"darkness normal":      "printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: normal}]",
 		"ble by address":       "printers: [{id: a, model: MX10, transport: {kind: ble, address: \"AA:BB:CC:DD:EE:FF\"}, media: paper-57}]",
 		"epl black mark":       "printers: [{id: a, model: LP2844, transport: {kind: usb, usb_id: \"0a5f:0009\"}, media: label-102x51, black_mark_mm: 4, darkness: dark}]",
+		"serial defaults":      "printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyUSB0}}]",
+		"serial line":          "printers: [{id: a, model: GK420d, transport: {kind: serial, device: COM3, baud: 115200, framing: 8E2, flow: rtscts}}]",
 		"media auto":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: auto}]",
 		"allow-list":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: dk-22210, media_allowed: [dk-22210, dk-22214, dk-11204]}]",
 	} {
@@ -255,6 +257,12 @@ func TestValidateModelTransport(t *testing.T) {
 		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, black_mark_mm: 3}]":                           {"black mark", "QL-810W"},
 		"printers: [{id: a, model: LP2844, transport: {kind: tcp, host: x}, black_mark_mm: -1}]":                           {"black_mark_mm", "-1"},
 		"printers: [{id: a, model: LP2742, transport: {kind: usb, device: /dev/usb/lp0}}]":                                 {"LP2742", "usb"},
+		"printers: [{id: a, model: LP2844, transport: {kind: serial}}]":                                                    {"serial", "device"},
+		"printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyS0, baud: 9601}}]":                    {"baud", "9601"},
+		"printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyS0, framing: 8X1}}]":                  {"framing", "8X1"},
+		"printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyS0, framing: 7E1}}]":                  {"framing", "7E1"},
+		"printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyS0, flow: dtr}}]":                     {"flow", "dtr"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: serial, device: /dev/ttyS0}}]":                               {"QL-810W", "serial"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media_allowed: [dk-22210, tze-24]}]":          {"tze-24", "QL-810W"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: dk-22205, media_allowed: [dk-22210]}]": {"dk-22205", "media_allowed"},
 	} {

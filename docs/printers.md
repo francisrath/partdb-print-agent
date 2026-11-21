@@ -47,8 +47,8 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
-| 🟡 | LabelWriter-330 | USB | dymo/lw300 |  |
-| 🟡 | LabelWriter-330-Turbo | USB | dymo/lw300 |  |
+| 🟡 | LabelWriter-330 | USB, Serial | dymo/lw300 |  |
+| 🟡 | LabelWriter-330-Turbo | USB, Serial | dymo/lw300 |  |
 | 🟡 | LabelWriter-400 | USB | dymo/lw400 |  |
 | 🟡 | LabelWriter-400-Turbo | USB | dymo/lw400 |  |
 | 🟡 | LabelWriter-450 | USB | dymo/lw400 |  |
@@ -169,34 +169,34 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 |---|---|---|---|---|
 | 🟡 | LP2722 | Network | epl/epl2 |  |
 | 🟡 | LP2742 | Network | epl/epl2 |  |
-| 🟡 | LP2824 | USB, Network | epl/epl2 |  |
-| 🟡 | LP2844 | USB, Network | epl/epl2 |  |
+| 🟡 | LP2824 | USB, Network, Serial | epl/epl2 |  |
+| 🟡 | LP2844 | USB, Network, Serial | epl/epl2 |  |
 | 🟡 | TLP2722 | Network | epl/epl2 |  |
 | 🟡 | TLP2742 | Network | epl/epl2 |  |
 | 🟡 | TLP2746e | USB, Network | epl/epl2 |  |
-| 🟡 | TLP2824 | USB, Network | epl/epl2 |  |
-| 🟡 | TLP2844 | USB, Network | epl/epl2 |  |
+| 🟡 | TLP2824 | USB, Network, Serial | epl/epl2 |  |
+| 🟡 | TLP2844 | USB, Network, Serial | epl/epl2 |  |
 | 🟡 | TLP3742 | Network | epl/epl2 |  |
-| 🟡 | TLP3842 | USB, Network | epl/epl2 |  |
-| 🟡 | GC420d | Network, USB | zpl |  |
-| 🟡 | GC420t | Network, USB | zpl |  |
-| ✅ community | GK420d | Network, USB | zpl | tested by a friend of the maintainer, 2026-11 (ZPL over TCP) |
-| 🟡 | GK420t | Network, USB | zpl |  |
-| 🟡 | GX420d | Network, USB | zpl |  |
-| 🟡 | GX420t | Network, USB | zpl |  |
-| 🟡 | GX430t | Network, USB | zpl |  |
-| 🟡 | LP2844-Z | Network, USB | zpl |  |
+| 🟡 | TLP3842 | USB, Network, Serial | epl/epl2 |  |
+| 🟡 | GC420d | Network, USB, Serial | zpl |  |
+| 🟡 | GC420t | Network, USB, Serial | zpl |  |
+| ✅ community | GK420d | Network, USB, Serial | zpl | tested by a friend of the maintainer, 2026-11 (ZPL over TCP) |
+| 🟡 | GK420t | Network, USB, Serial | zpl |  |
+| 🟡 | GX420d | Network, USB, Serial | zpl |  |
+| 🟡 | GX420t | Network, USB, Serial | zpl |  |
+| 🟡 | GX430t | Network, USB, Serial | zpl |  |
+| 🟡 | LP2844-Z | Network, USB, Serial | zpl |  |
 | 🟡 | ZD220 | Network, USB | zpl |  |
 | 🟡 | ZD230 | Network, USB | zpl |  |
 | 🟡 | ZD410 | Network, USB | zpl |  |
-| 🟡 | ZD420-203 | Network, USB | zpl |  |
-| 🟡 | ZD420-300 | Network, USB | zpl |  |
-| 🟡 | ZD421-203 | Network, USB | zpl |  |
-| 🟡 | ZD421-300 | Network, USB | zpl |  |
-| 🟡 | ZD620-203 | Network, USB | zpl |  |
-| 🟡 | ZD620-300 | Network, USB | zpl |  |
-| 🟡 | ZD621-203 | Network, USB | zpl |  |
-| 🟡 | ZD621-300 | Network, USB | zpl |  |
+| 🟡 | ZD420-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD420-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD421-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD421-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD620-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD620-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD621-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZD621-300 | Network, USB, Serial | zpl |  |
 | 🟡 | ZP450 | Network, USB | zpl |  |
 | 🟡 | ZP500 | Network, USB | zpl |  |
 | 🟡 | ZQ310 | Network, USB, Bluetooth Classic | zpl |  |
@@ -208,24 +208,24 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | 🟡 | ZQ610 | Network, USB, Bluetooth Classic | zpl |  |
 | 🟡 | ZQ620 | Network, USB, Bluetooth Classic | zpl |  |
 | 🟡 | ZQ630 | Network, USB, Bluetooth Classic | zpl |  |
-| 🟡 | ZT230-203 | Network, USB | zpl |  |
-| 🟡 | ZT230-300 | Network, USB | zpl |  |
-| 🟡 | ZT231-203 | Network, USB | zpl |  |
-| 🟡 | ZT231-300 | Network, USB | zpl |  |
-| 🟡 | ZT410-203 | Network, USB | zpl |  |
-| 🟡 | ZT410-300 | Network, USB | zpl |  |
-| 🟡 | ZT411-203 | Network, USB | zpl |  |
-| 🟡 | ZT411-300 | Network, USB | zpl |  |
-| 🟡 | ZT420-203 | Network, USB | zpl |  |
-| 🟡 | ZT420-300 | Network, USB | zpl |  |
-| 🟡 | ZT421-203 | Network, USB | zpl |  |
-| 🟡 | ZT421-300 | Network, USB | zpl |  |
-| 🟡 | ZT510-203 | Network, USB | zpl |  |
-| 🟡 | ZT510-300 | Network, USB | zpl |  |
-| 🟡 | ZT610-203 | Network, USB | zpl |  |
-| 🟡 | ZT610-300 | Network, USB | zpl |  |
-| 🟡 | ZT620-203 | Network, USB | zpl |  |
-| 🟡 | ZT620-300 | Network, USB | zpl |  |
+| 🟡 | ZT230-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT230-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT231-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT231-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT410-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT410-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT411-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT411-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT420-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT420-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT421-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT421-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT510-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT510-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT610-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT610-300 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT620-203 | Network, USB, Serial | zpl |  |
+| 🟡 | ZT620-300 | Network, USB, Serial | zpl |  |
 
 <!-- printers:end -->
 
@@ -239,9 +239,9 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | ⏳ | Brother PT-D600 | Brother publishes no raster command reference for it. |
 | ⏳ | Brother PT-H500 | Unclear how its cutter is driven. |
 | ⏳ | DYMO LabelWriter SE450 | 203 dpi with its own command set; needs a driver. |
-| ⏳ | DYMO LabelWriter 300, 310, 320 | Serial-only; pdb-print has no serial transport yet. |
+| ⏳ | DYMO LabelWriter 300, 310, 320 | Serial-only, and no technical reference found (head width, commands). |
 | ⏳ | DYMO LabelWriter Duo tape side (D1) | A different tape protocol; the label side works. |
-| ⏳ | Zebra LP 2622, LP 2443, LP 2684 Strata (EPL) | Serial or parallel only; pdb-print has no serial transport yet. |
+| ⏳ | Zebra LP 2622, LP 2443, LP 2684 Strata (EPL) | Serial or parallel only; no spec sheet with head width and dpi found. |
 | ⏳ | Zebra LP 2442, LP 2348 (EPL) | No programming reference found. |
 | ⏳ | Niimbot B3S, D110_M, B21_L2B, H1S, K3, B203 | Protocol variants not covered by public write-ups yet (B3S Bluetooth is reported broken). |
 | ⏳ | Phomemo M02X, D50, P12, M03, M04S | Different pacing, 180 dpi, no print-done reply, or no permissively licensed reference. |

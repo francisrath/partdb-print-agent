@@ -100,14 +100,15 @@ models:
     media: *lw
     quirks: *lwq
   # 300 series: no tech ref found; 2.25 in / 300 dpi per DYMO's user guide spec table, raster commands
-  # assumed (ESC h and density are 400/450-only per the SE450 reference, so not sent). Untested.
+  # assumed (ESC h and density are 400/450-only per the SE450 reference, so not sent). Untested. The 330s
+  # also have an RS-232 port; its line settings are unverified (one DYMO spec table says 115200 8N1).
   - id: LabelWriter-330
     vendor: DYMO
     driver: dymo
     dialect: lw300
     dpi: 300
     head_pins: 672
-    transports: [usb]
+    transports: [usb, serial]
     match: {usb: ["0922:0007"]} # usb.ids
     media: *lw
   - id: LabelWriter-330-Turbo
@@ -116,6 +117,6 @@ models:
     dialect: lw300
     dpi: 300
     head_pins: 672
-    transports: [usb]
+    transports: [usb, serial]
     match: {usb: ["0922:0008"]} # unverified
     media: *lw

@@ -117,10 +117,10 @@ type Printer struct {
 type Adjust struct{ XDots, YDots, PrintWidthDots int }
 
 type Transport struct {
-	Kind   string `yaml:"kind"` // tcp | usb | ble | bt (allowed kinds come from the model)
+	Kind   string `yaml:"kind"` // tcp | usb | ble | bt | serial (allowed kinds come from the model)
 	Host   string `yaml:"host,omitempty"`
 	Port   int    `yaml:"port,omitempty"`   // tcp; default 9100
-	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux) …
+	Device string `yaml:"device,omitempty"` // usb: /dev/usb/lp0 (Linux) …; serial: /dev/ttyUSB0, COM3
 	USBID  string `yaml:"usb_id,omitempty"` // … or the printer's USB id ("04f9:209c"), found at each job
 	Serial string `yaml:"serial,omitempty"` // usb_id: tells two identical printers apart
 	// ble: the printer's address (a MAC on Linux/Windows, a CoreBluetooth UUID on macOS) or its
@@ -129,6 +129,10 @@ type Transport struct {
 	Address string `yaml:"address,omitempty"`
 	Name    string `yaml:"name,omitempty"`
 	Channel int    `yaml:"channel,omitempty"` // bt only, 0-30
+	// serial: the line settings; defaults 9600, 8N1, no flow control.
+	Baud    int    `yaml:"baud,omitempty"`
+	Framing string `yaml:"framing,omitempty"` // 8 data bits, parity N/E/O, stop bits: 8N1, 8E1, 8N2
+	Flow    string `yaml:"flow,omitempty"`    // none | xonxoff | rtscts
 }
 
 // DefaultPath is <user config dir>/pdb-print/config.yaml.
@@ -344,6 +348,12 @@ func Bluetooth(kind string) bool { return kind == "ble" || kind == "bt" }
 
 var btAddrRe = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$`)
 
+// Bauds are the serial speeds every supported OS can set.
+var Bauds = []int{1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400}
+
+// framingRe: 8 data bits only; every driver sends binary raster data, which 7 bits would corrupt.
+var framingRe = regexp.MustCompile(`^8[NEO][12]$`)
+
 var usbIDRe = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{4}$`)
 
 func (p *Printer) validate() error {
@@ -399,6 +409,17 @@ func (p *Printer) validate() error {
 	case "ble":
 		if t.Address == "" && t.Name == "" {
 			return errors.New("transport kind ble needs an address or a name")
+		}
+	case "serial":
+		switch {
+		case t.Device == "":
+			return errors.New("transport kind serial needs a device (/dev/ttyUSB0, COM3 …)")
+		case t.Baud != 0 && !slices.Contains(Bauds, t.Baud):
+			return fmt.Errorf("baud %d must be one of %v", t.Baud, Bauds)
+		case t.Framing != "" && !framingRe.MatchString(t.Framing):
+			return fmt.Errorf("framing %q must be 8 data bits, parity N, E or O, stop bits 1 or 2 (8N1, 8E1, 8N2 …)", t.Framing)
+		case t.Flow != "" && t.Flow != "none" && t.Flow != "xonxoff" && t.Flow != "rtscts":
+			return fmt.Errorf("flow %q must be none, xonxoff or rtscts", t.Flow)
 		}
 	case "usb":
 		switch {

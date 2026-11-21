@@ -285,7 +285,7 @@ func TestPrinterCRUDAndTestPrint(t *testing.T) {
 	<-h.jobs
 
 	w := h.do("GET", "/printers/ql/status", nil)
-	if !strings.Contains(w.Body.String(), "no status over TCP") || !strings.Contains(w.Body.String(), `"ok":true`) {
+	if !strings.Contains(w.Body.String(), "no status over tcp") || !strings.Contains(w.Body.String(), `"ok":true`) {
 		t.Errorf("status: %s", w.Body)
 	}
 	// without media, a printer that reports nothing can't print: flag it
@@ -575,17 +575,18 @@ func TestIndexAddressesAndRoutes(t *testing.T) {
 	h.srv.cfg.Printers = append(h.srv.cfg.Printers,
 		config.Printer{ID: "cat", Model: "MX10", Transport: config.Transport{Kind: "ble", Name: "MX10", Address: "AA:BB:CC:DD:EE:01"}},
 		config.Printer{ID: "rego", Model: "RG-MLP80B", Transport: config.Transport{Kind: "bt", Name: "RG-MLP80B"}},
-		config.Printer{ID: "pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", USBID: "04f9:2002"}})
+		config.Printer{ID: "pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", USBID: "04f9:2002"}},
+		config.Printer{ID: "lp", Model: "LP2844", Transport: config.Transport{Kind: "serial", Device: "/dev/ttyUSB0"}})
 	h.srv.cfg.Routes = append(h.srv.cfg.Routes, config.Route{Profile: 2, Printer: "ql"})
 	h.srv.mu.Unlock()
 	body := h.do("GET", "/", nil).Body.String()
-	for _, want := range []string{"Bluetooth AA:BB:CC:DD:EE:01", "Bluetooth RG-MLP80B", "04f9:2002"} {
+	for _, want := range []string{"Bluetooth AA:BB:CC:DD:EE:01", "Bluetooth RG-MLP80B", "04f9:2002", "<td>/dev/ttyUSB0</td>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("address %q missing", want)
 		}
 	}
 	if strings.Contains(body, ">:0<") {
-		t.Error("a Bluetooth printer shows as :0")
+		t.Error("a Bluetooth or serial printer shows as :0")
 	}
 	if !strings.Contains(body, "<td>2</td>") {
 		t.Error("route without a profile name should show just its number")

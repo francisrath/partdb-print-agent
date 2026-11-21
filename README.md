@@ -35,10 +35,10 @@ printers) is on `main` and comes with the next release; until then, [build from 
 |---|---|---|---|
 | Brother QL | Network, USB | QL-560 … QL-820NWB, wide QL-1050/1060N/1100/1110NWB/1115NWB | ✅ QL-810W |
 | Brother P-touch | USB, Network, Bluetooth Classic | PT-9500PC, PT-E550W, PT-P750W, PT-P710BT, PT-P900 series … | ✅ PT-9500PC |
-| Zebra (ZPL) | Network, USB, Bluetooth Classic | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
-| Zebra (EPL2) | USB, Network | LP/TLP 2824, 2844, 3842, 2722/2742 … | 🟡 not yet |
+| Zebra (ZPL) | Network, USB, Bluetooth Classic, Serial | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
+| Zebra (EPL2) | USB, Network, Serial | LP/TLP 2824, 2844, 3842, 2722/2742 … | 🟡 not yet |
 | TSC and TSPL clones | USB, Network, Bluetooth Classic | TSC, Xprinter, Munbyn, iDPRT, HPRT | 🟡 not yet |
-| DYMO LabelWriter | USB | 330, 400, 450 series, 4XL | 🟡 not yet |
+| DYMO LabelWriter | USB, Serial (330) | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | Niimbot, Phomemo | Bluetooth LE | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | 🟡 not yet |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
@@ -64,7 +64,7 @@ Or read it first: download `install.sh` from the release, read it (about 40 line
 The script picks the `.deb` package for your system, checks it against the release's `checksums.txt`,
 installs it with `apt-get` (the one step that needs `sudo`) and shows a setup code. The package adds:
 - `/usr/bin/pdb-print`;
-- a `pdb-print` system user, allowed to use USB printers (group `lp`) and Bluetooth (group `bluetooth`);
+- a `pdb-print` system user, allowed to use USB printers (group `lp`), Bluetooth (group `bluetooth`) and serial ports (group `dialout`);
 - a `pdb-print` systemd service; its config is `/var/lib/pdb-print/config.yaml`.
 
 Its scripts only create that user and an empty config, enable and (re)start the service, and stop
@@ -268,10 +268,11 @@ use the Zebra (ZPL) section. **Untested**: written from Zebra's EPL Programming 
   # black_mark_mm: 4          # media with black marks on the back instead of gaps
 ```
 
-Each label is sent as one graphic. Over USB the agent asks the printer for errors (`^ee`: out of labels,
-head open, paused) and confirms a job once it saw the printer busy and done; if it finished too fast to see, or
-the printer stays silent, the job counts as sent but unconfirmed. Over the network EPL has no status, so jobs are sent unconfirmed.
-Serial (RS-232) and parallel connections aren't supported, so the LP/TLP 2622, LP 2443 and Strata aren't either.
+Each label is sent as one graphic. Over USB or serial the agent asks the printer for errors (`^ee`: out of
+labels, head open, paused) and confirms a job once it saw the printer busy and done; if it finished too fast to
+see, or the printer stays silent, the job counts as sent but unconfirmed. Over the network EPL has no status, so
+jobs are sent unconfirmed. Over RS-232 see [Serial printers](#serial-printers-kind-serial). Parallel ports aren't
+supported, and the serial-only LP/TLP 2622, LP 2443 and Strata aren't in the device database yet (no spec sheet).
 
 ### TSC and other TSPL printers
 
@@ -316,8 +317,41 @@ printer picks.
 
 **Untested:** no DYMO printer was on hand; everything is built from DYMO's documents and checked against
 fakes. Not supported: the LabelWriter 5xx series (550, 550 Turbo, 5XL: chip-locked labels and another
-protocol), the SE450 (203 dpi, its own command set), the Duo's D1 tape side, and the serial-only
-LabelWriter 300/310/320.
+protocol), the SE450 (203 dpi, its own command set), the Duo's D1 tape side, and the
+serial-only LabelWriter 300/310/320 (no technical reference found). The 330s also print over their serial port
+(see [Serial printers](#serial-printers-kind-serial); line settings unverified, DYMO lists 115200 8N1).
+
+### Serial printers (`kind: serial`)
+
+Printers with an RS-232 port, through a USB-serial adapter, a built-in COM port or a Raspberry Pi's UART:
+the Zebra EPL2 and ZPL desktops and ZT printers with a serial port, and the DYMO LabelWriter 330 (each
+model's connections are in [docs/printers.md](docs/printers.md)). The printer language is the same as
+over USB; only the line is set up here. **Untested:** no serial printer was at hand; tested against a
+fake printer on a pseudo-terminal.
+
+```yaml
+- id: lp2844
+  model: LP2844
+  transport: {kind: serial, device: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A1B2C3-if00-port0}
+  # baud: 9600  framing: 8N1  flow: none   (the defaults)
+  media: label-102x51
+```
+
+- `device`: on Linux prefer `/dev/serial/by-id/…` (stays the same when the adapter is replugged; the
+  user running pdb-print needs the `dialout` group, which the `.deb` service has); `/dev/ttyUSB0`, `/dev/ttyAMA0` (Pi UART) work too. On
+  macOS `/dev/cu.usbserial-…`, on Windows `COM3`. `pdb-print discover` lists the ports it sees, but can't
+  tell what is plugged into them: set `model` yourself.
+- `baud`: 1200 to 230400, default 9600; must match the printer (Zebra's factory setting is 9600 8N1).
+- `framing`: 8 data bits (label data is binary), parity (N, E, O) and stop bits: `8N1` (default), `8E1`, `8N2` …
+- `flow`: `none` (default), `xonxoff` (the printer's XOFF pauses pdb-print) or `rtscts`. Zebra's
+  "hardware" handshake is DTR: use `xonxoff`, or a cable that wires the printer's DTR to the computer's CTS
+  with `rtscts`. Without flow control a large label at 9600 baud can overrun the printer's buffer.
+
+Printers usually need a null-modem cable. A port takes one program at a time; pdb-print opens it only
+for a job or a status check. The printer shows online while its port is there (the adapter is plugged in);
+whether it answers shows in its status. Zebra (`~HS`), EPL (`^ee`) and DYMO status work over serial when the
+cable carries the printer's replies. On a one-way cable EPL and DYMO jobs are "sent (unconfirmed)", but
+Zebra ZPL printers that need a status reply before printing (e.g. the GK420d) refuse the job.
 
 ### Bluetooth LE "cat printers"
 
