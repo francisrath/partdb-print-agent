@@ -181,6 +181,32 @@ Each label is sent as one graphic. Over USB the agent asks the printer for error
 head open, paused) and confirms each job; over the network EPL has no status, so jobs are sent unconfirmed.
 Serial (RS-232) and parallel connections aren't supported, so the LP/TLP 2622, LP 2443 and Strata aren't either.
 
+### TSC and other TSPL printers
+
+`model:` a TSPL/TSPL2 printer from the device database: TSC TE200/TE210/TE300/TE310, TTP-244Pro, TDP-244,
+TDP-247, TDP-225, DA210/DA220, TX200/TX300, TC200; Xprinter XP-420B, XP-470B, XP-D463B, XP-365B; Munbyn
+ITPP941; iDPRT SP410, SP420, iD4S-203/-300; HPRT HT300, N41 (`pdb-print media` lists them). **None of them has
+been tested on a real printer yet.** Over USB (Linux), the network (port 9100) on models with Ethernet, or
+Bluetooth Classic (`kind: bt`) on models with a Bluetooth serial option. They aren't recognised automatically
+(no USB ids or Bluetooth names are published): pick the model by hand. TSPL printers don't report the loaded
+label, so set `media:` to it: a size `pdb-print media` lists for your model, die-cut (`label-102x152` for 4×6")
+or continuous (`continuous-102`/`-76`/`-57` on the 4" and 3" models; the 2" TDP-225 takes die-cut only). Die-cut labels are sent with a 3 mm gap; the printer finds the gap itself.
+
+```yaml
+- id: xprinter
+  name: Xprinter XP-420B
+  model: XP-420B
+  transport: {kind: tcp, host: 192.168.1.70}
+  media: label-102x152
+  # cut: per_label            # only with a cutter fitted: per_label | last | none (the printer keeps it)
+```
+
+Every label goes as one bitmap. Status is the printer's one-byte answer to `<ESC>!?` (head open, paper out
+or jam, ribbon out, paused); after a job pdb-print waits for the "printing" flag to clear and reports
+"printed". A short label can finish before pdb-print sees the flag: then it reports "sent, probably printed"
+(not confirmed). A printer that doesn't answer (many clones over Bluetooth) gives "sent (unconfirmed)". Black-mark
+media (`BLINE`) isn't supported yet.
+
 ### Bluetooth label printers ("cat printers" and Bluetooth Classic)
 
 `model:` GB01, GB02, GB03, GT01, YT01, MX05, MX06, MX08 or MX10: small Bluetooth LE thermal printers
