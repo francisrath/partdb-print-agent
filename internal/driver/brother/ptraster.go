@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -23,7 +24,11 @@ import (
 const ptRasterInvalidateN = 200 // the PT-P900 reference sends 200, the others 100
 
 var ptRasterMediaTypes = map[byte]string{0x01: "laminated", 0x03: "non-laminated", 0x04: "fabric",
-	0x11: "heat-shrink 2:1", 0x13: "flexible", 0x17: "heat-shrink 3:1", 0xff: "incompatible"}
+	0x11: "heat-shrink 2:1", 0x13: "FLe label", 0x14: "flexible ID", 0x15: "satin", 0x17: "heat-shrink 3:1", 0xff: "incompatible"}
+
+// ptRasterTZe are the media types that are TZe tape of the reported width (PT-P900 reference p.27;
+// heat-shrink tube reports a width too, FLe is a 21×45 mm die-cut label).
+var ptRasterTZe = map[byte]bool{0x01: true, 0x03: true, 0x04: true, 0x14: true, 0x15: true}
 
 // ptRaster pairs the PT-9500PC's tape and cut handling with the QL's status and confirmation.
 type ptRaster struct {
@@ -76,8 +81,7 @@ func (d *ptRaster) parse(b []byte) (*driver.Status, error) {
 		}
 	}
 	if w := int(b[10]); w != 0 {
-		tze := b[11] == 0x01 || b[11] == 0x03 || b[11] == 0x04 // heat-shrink tube reports a width too
-		if m, ok := d.tape.mediaForWidth(w); ok && tze {
+		if m, ok := d.tape.mediaForWidth(w); ok && ptRasterTZe[b[11]] {
 			s.Media = &m
 		} else {
 			s.Media = &devicedb.Media{ID: "unknown", Kind: devicedb.Continuous, WidthMM: float64(w)}
@@ -93,14 +97,24 @@ func (d *ptRaster) parse(b []byte) (*driver.Status, error) {
 // Encode writes the job: initialise, raster mode, then per page print information, mode
 // settings, margin, compression, raster lines and the print command (p.5–7).
 func (d *ptRaster) Encode(w io.Writer, job *driver.Job) error {
-	if err := d.tape.validate(job); err != nil {
+	header, pages, err := d.encodePages(job)
+	if err != nil {
 		return err
+	}
+	_, err = w.Write(bytes.Join(append([][]byte{header}, pages...), nil))
+	return err
+}
+
+// encodePages returns the job header and one block per page.
+func (d *ptRaster) encodePages(job *driver.Job) ([]byte, [][]byte, error) {
+	if err := d.tape.validate(job); err != nil {
+		return nil, nil, err
 	}
 	model := d.tape.model
 	cut, _ := d.tape.resolveCut(job)
 	mk, ok := d.tape.cutBytes(cut)
 	if !ok {
-		return fmt.Errorf("%s has no cut mode %q", model.ID, cut)
+		return nil, nil, fmt.Errorf("%s has no cut mode %q", model.ID, cut)
 	}
 	m := job.Media
 	margin := model.Quirk("feed_margin", 14)
@@ -108,14 +122,16 @@ func (d *ptRaster) Encode(w io.Writer, job *driver.Job) error {
 	raw := model.QuirkBool("no_compression")
 	lineBytes := model.HeadPins / 8
 
-	var b bytes.Buffer
-	b.Write(make([]byte, ptRasterInvalidateN))
-	b.Write([]byte{0x1b, '@'})
-	b.Write([]byte{0x1b, 'i', 'a', 1}) // raster mode
+	var h bytes.Buffer
+	h.Write(make([]byte, ptRasterInvalidateN))
+	h.Write([]byte{0x1b, '@'})
+	h.Write([]byte{0x1b, 'i', 'a', 1}) // raster mode
 	if model.QuirkBool("status_notify") {
-		b.Write([]byte{0x1b, 'i', '!', 0}) // PT-P710BT/P910BT: report status while printing
+		h.Write([]byte{0x1b, 'i', '!', 0}) // PT-P710BT/P910BT: report status while printing
 	}
+	out := make([][]byte, len(job.Pages))
 	for i, p := range job.Pages {
+		var b bytes.Buffer
 		lines := p.Bounds().Dy()
 		padTop, padBottom := 0, 0
 		if lines < minLines { // short label: centre it in the minimum length
@@ -168,22 +184,59 @@ func (d *ptRaster) Encode(w io.Writer, job *driver.Job) error {
 		} else {
 			b.WriteByte(0x0c) // print
 		}
+		out[i] = b.Bytes()
 	}
-	_, err := w.Write(b.Bytes())
-	return err
+	return h.Bytes(), out, nil
 }
 
-// Print sends the whole job and waits like a QL: SNMP on the network, completion statuses over
-// USB and Bluetooth.
+// Print sends the job. When the printer answered the status request over its own connection
+// (USB, Bluetooth) each label goes only after the previous one reported "printing completed"
+// ("(2) through (4) are repeated", p.4, flow chart 5.1). Over the network the printer gives no
+// status (flow chart 5.6): the whole job goes at once and SNMP confirms it, like a QL.
 func (d *ptRaster) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	_, warning := d.tape.resolveCut(job)
-	var b bytes.Buffer
-	if err := d.Encode(&b, job); err != nil {
+	header, pages, err := d.encodePages(job)
+	if err != nil {
 		return nil, err
 	}
-	res, err := d.q.send(ctx, t, job, b.Bytes(), d.parse)
+	var res *driver.Result
+	if st := job.Status; st == nil || st.Via == "" || st.Via == "snmp" {
+		res, err = d.q.send(ctx, t, job, bytes.Join(append([][]byte{header}, pages...), nil), d.parse)
+	} else {
+		res, err = d.sendPaced(ctx, t, job, header, pages)
+	}
 	if res != nil && warning != "" {
 		res.Warnings = append(res.Warnings, warning)
 	}
 	return res, err
+}
+
+// sendPaced writes the header with the first label, then each label after the previous one's
+// "printing completed".
+func (d *ptRaster) sendPaced(ctx context.Context, t driver.Transport, job *driver.Job, header []byte, pages [][]byte) (*driver.Result, error) {
+	res := &driver.Result{Pages: len(pages), Media: job.Media.ID, Bytes: len(header)}
+	for i, pg := range pages {
+		if err := ctx.Err(); err != nil {
+			return nil, err // don't start a label after cancellation
+		}
+		if i == 0 {
+			pg = append(header[:len(header):len(header)], pg...)
+		}
+		if _, err := t.Write(pg); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+		}
+		res.Bytes += len(pages[i])
+		err := waitDoneWith(ctx, t, 1, ptPageTimeout, d.parse)
+		switch {
+		case errors.Is(err, driver.ErrNoReadback) && i == len(pages)-1:
+			res.Message = "sent (unconfirmed: no completion status received)"
+			return res, nil
+		case errors.Is(err, driver.ErrNoReadback):
+			return nil, &driver.Error{Code: driver.CommsError, Detail: fmt.Sprintf("label %d: printer never reported it printed", i+1)}
+		case err != nil:
+			return nil, err
+		}
+	}
+	res.Message, res.Confirmed = "printed", true
+	return res, nil
 }

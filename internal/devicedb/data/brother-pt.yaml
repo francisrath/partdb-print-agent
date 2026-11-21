@@ -3,7 +3,7 @@
 # The raster-mode P-touch printers (dialect pt-raster) follow below, from Brother's "Raster Command
 # Reference" PT-E550W/P750W/P710BT v1.02, PT-H500/P700/E500 v1.11 and PT-P900/P900W/P950NW/P910BT
 # v1.02. cut_modes = [ESC i M, ESC i K]: M bit 6 auto cut; K bit 2 half cut, bit 3 no chain printing
-# (feed and cut after the last label). chain leaves the last label in the printer like on the PT-9500PC.
+# (feed and cut after the last label). chain and none leave the last label in the printer like on the PT-9500PC.
 models:
   - id: PT-9500PC
     vendor: Brother
@@ -42,7 +42,7 @@ models:
     transports: [tcp, usb]
     match: {status_code: 0x66, usb: ["04f9:2060"], ieee1284_model: PT-E550W, snmp_descr: "PT-E550W"}
     media: &tze128 [tze-6, tze-9, tze-12, tze-18, tze-24]
-    quirks: &ptr128 {min_lines: 31, max_lines: 7086, feed_margin: 14, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x08], half: [0x40, 0x04]}}
+    quirks: &ptr128 {min_lines: 31, max_lines: 7086, feed_margin: 14, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
     defaults: {cut: chain}
   - id: PT-P750W
     vendor: Brother
@@ -64,7 +64,7 @@ models:
     transports: [usb, bt]
     match: {usb: ["04f9:20af"], ieee1284_model: PT-P710BT, bt_name: "^PT-P710BT"}
     media: *tze128
-    quirks: {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x08]}}
+    quirks: {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00]}}
     defaults: {cut: chain}
   # untested: added from "Raster Command Reference PT-H500/P700/E500" v1.11, 2026-11-20. Like the
   # PT-P750W, but no ESC i A and no half cut (ESC i K bits 0–2 unused). The PT-H500 is left out.
@@ -77,7 +77,7 @@ models:
     transports: [usb]
     match: {status_code: 0x67, usb: ["04f9:2061"], ieee1284_model: PT-P700}
     media: *tze128
-    quirks: &ptr128b {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x08]}}
+    quirks: &ptr128b {min_lines: 31, max_lines: 7086, feed_margin: 14, no_cut_count: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00]}}
     defaults: {cut: chain}
   - id: PT-E500
     vendor: Brother
@@ -105,7 +105,7 @@ models:
     transports: [usb]
     match: {status_code: 0x71, usb: ["04f9:2083"], ieee1284_model: PT-P900}
     media: &tze560 [tze-6, tze-9, tze-12, tze-18, tze-24, tze-36]
-    quirks: &ptr560 {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x08], half: [0x40, 0x04]}}
+    quirks: &ptr560 {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
     defaults: {cut: chain}
   - id: PT-P900W
     vendor: Brother
@@ -138,5 +138,5 @@ models:
     transports: [usb, bt]
     match: {status_code: 0x78, usb: ["04f9:20c7"], ieee1284_model: PT-P910BT, bt_name: "^PT-P910BT"}
     media: *tze560
-    quirks: {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x08], half: [0x40, 0x04]}}
+    quirks: {min_lines: 57, max_lines: 14173, feed_margin: 14, marks_last_page: true, status_notify: true, cut_modes: {chain: [0x40, 0x00], per_label: [0x40, 0x08], none: [0x00, 0x00], half: [0x40, 0x04]}}
     defaults: {cut: chain}

@@ -2,6 +2,7 @@ package brother
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"os"
@@ -243,6 +244,9 @@ func TestPTRasterStatus(t *testing.T) {
 		{"unsupported width", func(b []byte) { b[10] = 36 }, driver.OK, "PT-P750W", "unknown", "laminated", false},
 		{"completed", func(b []byte) { b[18] = 0x01 }, driver.OK, "PT-P750W", "tze-24", "laminated", true},
 		{"error status", func(b []byte) { b[18] = 0x02 }, driver.Unknown, "PT-P750W", "tze-24", "laminated", false},
+		{"flexible ID tape", func(b []byte) { b[11] = 0x14 }, driver.OK, "PT-P750W", "tze-24", "flexible ID", false},
+		{"satin tape", func(b []byte) { b[11] = 0x15 }, driver.OK, "PT-P750W", "tze-24", "satin", false},
+		{"FLe labels are no tape", func(b []byte) { b[10], b[11] = 21, 0x13 }, driver.OK, "PT-P750W", "unknown", "FLe label", false},
 	} {
 		s, err := d.parse(reply(tc.edit))
 		if err != nil {
@@ -254,5 +258,76 @@ func TestPTRasterStatus(t *testing.T) {
 	}
 	if _, err := d.parse(make([]byte, 32)); err == nil {
 		t.Error("garbage parsed")
+	}
+}
+
+// cut "none" leaves the last label in the printer uncut: no auto cut, chain printing (ESC i K
+// bit 3 off; on, it feeds and cuts after the last label, PT-E550W reference p.33).
+func TestPTRasterCutNone(t *testing.T) {
+	for _, model := range []string{"PT-E550W", "PT-P750W", "PT-P710BT", "PT-P700", "PT-E500", "PT-P900", "PT-P900W", "PT-P950NW", "PT-P910BT"} {
+		b := encodeFor(t, model, "tze-12", []*image.Gray{white(10, 40)}, "none")
+		_, mode, _, _, _ := ptRasterPage(t, b, 16)
+		if !bytes.HasPrefix(mode, []byte{0x1b, 'i', 'M', 0x00, 0x1b, 'i', 'K', 0x00}) {
+			t.Errorf("%s: modes % x", model, mode)
+		}
+	}
+}
+
+// pageTape answers each print command with "printing completed" once the page is fully sent,
+// recording what was written before each completion was read.
+type pageTape struct {
+	kind    string
+	written bytes.Buffer
+	pending [][]byte
+	seen    []int // bytes written when each reply was handed out
+}
+
+func (p *pageTape) Open(context.Context) error { return nil }
+func (p *pageTape) Close() error               { return nil }
+func (p *pageTape) Kind() string               { return p.kind }
+func (p *pageTape) Write(b []byte) (int, error) {
+	p.written.Write(b)
+	for range bytes.Count(b, []byte{0x0c}) + bytes.Count(b, []byte{0x1a}) {
+		r := make([]byte, 32)
+		r[0], r[1], r[2], r[3], r[4], r[10], r[11], r[18] = 0x80, 0x20, 'B', '0', 0x68, 24, 0x01, 0x01
+		p.pending = append(p.pending, r)
+	}
+	return len(b), nil
+}
+func (p *pageTape) Read(b []byte) (int, error) {
+	if len(p.pending) == 0 {
+		return 0, os.ErrDeadlineExceeded
+	}
+	p.seen = append(p.seen, p.written.Len())
+	n := copy(b, p.pending[0])
+	p.pending = p.pending[1:]
+	return n, nil
+}
+
+// Over USB/Bluetooth each label is sent only after the previous one reported "printing
+// completed" ("(2) through (4) are repeated", PT-E550W reference p.4 and flow chart 5.1).
+func TestPTRasterPrintWaitsPerPage(t *testing.T) {
+	m, md := modelMedia(t, "PT-P750W", "tze-24")
+	d := newPTRaster(m, driver.Options{NoSNMP: true})
+	pages := []*image.Gray{white(128, 40), white(128, 40), white(128, 40)}
+	job := &driver.Job{Pages: pages, Media: &md, Status: &driver.Status{Code: driver.OK, Via: "usb"}}
+	var want bytes.Buffer
+	if err := d.Encode(&want, job); err != nil {
+		t.Fatal(err)
+	}
+	tr := &pageTape{kind: "usb"}
+	res, err := d.Print(context.Background(), tr, job)
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if !bytes.Equal(tr.written.Bytes(), want.Bytes()) {
+		t.Error("sent bytes differ from Encode")
+	}
+	// one completion read per page, each before the next page was written
+	if len(tr.seen) != 3 || tr.seen[0] >= tr.seen[1] || tr.seen[1] >= tr.seen[2] || tr.seen[2] != want.Len() {
+		t.Errorf("completions read at %v of %d bytes", tr.seen, want.Len())
+	}
+	if first := bytes.IndexByte(want.Bytes()[200:], 0x0c) + 200 + 1; tr.seen[0] != first {
+		t.Errorf("first completion read after %d bytes, page 1 ends at %d", tr.seen[0], first)
 	}
 }
