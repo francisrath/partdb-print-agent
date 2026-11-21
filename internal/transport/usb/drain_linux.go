@@ -13,7 +13,10 @@ import (
 // (it supports poll), so Write returns with the last URB (up to 8 KB) still in flight, and close kills
 // it: the end of the job would be lost. usblp signals POLLOUT once that write completed (or on "no
 // paper", which it only sets for a writer that asked for LPABORT: never here). An error means the last
-// write may not have reached the printer.
+// write may not have reached the printer: a timeout, or POLLHUP/POLLERR (unplugged).
+// ponytail: POLLOUT also follows a failed URB; usblp keeps that status only for its own write call, so
+// with a non-blocking fd nothing can read it back. Opening blocking would surface it as EIO, at the cost
+// of reads that block inside usblp.
 func drain(f io.ReadWriteCloser, timeout time.Duration) error {
 	sc, ok := f.(syscall.Conn)
 	if !ok {
@@ -35,6 +38,8 @@ func drain(f io.ReadWriteCloser, timeout time.Duration) error {
 				perr = err
 			case n == 0:
 				perr = fmt.Errorf("the printer took no data for %v: the end of the job may be lost", timeout)
+			case fds[0].Revents&(unix.POLLHUP|unix.POLLERR|unix.POLLNVAL) != 0:
+				perr = fmt.Errorf("printer gone before the job was sent (poll events %#x)", fds[0].Revents)
 			}
 			return
 		}

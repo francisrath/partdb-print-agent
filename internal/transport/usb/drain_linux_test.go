@@ -30,4 +30,9 @@ func TestDrain(t *testing.T) {
 	if err := drain(w, 50*time.Millisecond); err == nil {
 		t.Fatal("full pipe: no error")
 	}
+	// the reader goes away, like an unplugged printer: POLLERR, even though nothing waits any more
+	_ = r.Close()
+	if err := drain(w, time.Second); err == nil {
+		t.Fatal("closed reader: no error")
+	}
 }
