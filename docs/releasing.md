@@ -52,7 +52,8 @@ certificate).
      -inkey devid.key -in devid.pem -certfile g2.pem -passout file:p12.pass -out devid.p12
    ```
 4. `base64 -i devid.p12 | tr -d '\n' | gh secret set MACOS_SIGN_P12` and `gh secret set MACOS_SIGN_PASSWORD <p12.pass`,
-   then delete the local files and revoke the old certificate once a release signed with the new one is out.
+   then delete the local files. Let the old certificate expire; revoke it only if its key leaks (revoking stops
+   every release signed with it from launching).
 
 The notary key doesn't expire; revoke it in App Store Connect if it leaks and create a new one
 (`gh secret set MACOS_NOTARY_KEY <AuthKey_ID.p8`, `MACOS_NOTARY_KEY_ID`).
