@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -583,14 +584,7 @@ func (a *app) printers(ctx context.Context, args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "list":
 		for _, p := range a.cfg.Printers {
-			where := fmt.Sprintf("%s:%d", p.Transport.Host, p.Transport.Port)
-			switch {
-			case p.Transport.Kind == "usb" && p.Transport.USBID != "":
-				where = "usb " + strings.TrimSpace(p.Transport.USBID+" "+p.Transport.Serial)
-			case p.Transport.Kind == "usb", p.Transport.Kind == "serial":
-				where = p.Transport.Device
-			}
-			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where, p.Media)
+			fmt.Printf("%-12s %-10s %s media=%s\n", p.ID, p.Model, where(p.Transport), p.Media)
 		}
 		return nil
 	case len(args) == 2 && args[0] == "status":
@@ -848,4 +842,17 @@ func (a *app) telemetry(w io.Writer, args []string) error {
 		fmt.Fprintf(w, "\nSent once a week to %s (agent_api is filled in by the running agent).\n", telemetry.Endpoint)
 	}
 	return nil
+}
+
+// where is how printers list shows a printer's connection.
+func where(t config.Transport) string {
+	switch {
+	case t.Kind == "usb" && t.USBID != "":
+		return "usb " + strings.TrimSpace(t.USBID+" "+t.Serial)
+	case t.Kind == "usb", t.Kind == "serial":
+		return t.Device
+	case config.Bluetooth(t.Kind):
+		return "Bluetooth " + cmp.Or(t.Address, t.Name)
+	}
+	return net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
 }

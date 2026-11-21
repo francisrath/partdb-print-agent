@@ -488,3 +488,21 @@ func TestPrintCandidates(t *testing.T) {
 		t.Errorf("long SNMP description not cut:\n%s", out)
 	}
 }
+
+func TestWhere(t *testing.T) {
+	for _, c := range []struct {
+		t    config.Transport
+		want string
+	}{
+		{config.Transport{Kind: "tcp", Host: "printer.lan", Port: 9100}, "printer.lan:9100"},
+		{config.Transport{Kind: "usb", USBID: "04f9:209c", Serial: "X1"}, "usb 04f9:209c X1"},
+		{config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}, "/dev/usb/lp0"},
+		{config.Transport{Kind: "serial", Device: "COM3"}, "COM3"},
+		{config.Transport{Kind: "ble", Name: "MX10"}, "Bluetooth MX10"},
+		{config.Transport{Kind: "bt", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF"}, "Bluetooth AA:BB:CC:DD:EE:FF"},
+	} {
+		if got := where(c.t); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.t, got, c.want)
+		}
+	}
+}
