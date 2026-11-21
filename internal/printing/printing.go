@@ -23,6 +23,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother" // registers the brother family
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"     // registers the cat family (BLE cat printers)
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/dymo"    // registers the dymo family (LabelWriter)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"  // registers the escpos family (SPP receipt printers)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/tspl"    // registers the tspl family (TSC and clones)
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"     // registers the zpl family (Zebra)
@@ -491,6 +492,12 @@ func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, s
 	job.PrevUnconfirmed = s.unconfirmed[p.ID]
 	s.mu.Unlock()
 	res, err := drv.Print(ctx, t, job)
+	if err == nil {
+		// closing can fail when the last data never left (USB: usblp still holds it)
+		if cerr := t.Close(); cerr != nil {
+			err = &driver.Error{Code: driver.CommsError, Detail: cerr.Error()}
+		}
+	}
 	s.noteBluetooth(p, err)
 	s.mu.Lock()
 	if s.unconfirmed == nil {

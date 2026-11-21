@@ -311,6 +311,28 @@ poppler-utils) are on `PATH`; `pdftoppm: off` in the config (or `PDB_PRINT_PDFTO
 off, `on` uses it on any system. Note that poppler parses PDFs natively, while the built-in renderer
 runs in a WebAssembly sandbox.
 
+### DYMO LabelWriter (USB, Linux)
+
+`model:` a DYMO LabelWriter 400, 400 Turbo, Twin Turbo, Duo, 450, 450 Turbo, 450 Twin Turbo, 450 Duo, 4XL,
+330 or 330 Turbo (`LabelWriter-450`, `LabelWriter-4XL` …). They are USB printer-class devices, so they print
+through Linux's `usblp` like the Brother printers (group `lp`). The driver speaks DYMO's published raster
+protocol (LabelWriter 400/450 Series Technical Reference): one raster line per dot row at 300 dpi, `ESC L`
+set to the label length so the printer finds the next label, a short feed between labels and a feed to the
+tear bar after the last. DYMOs don't report which labels are loaded, so set `media:` to the roll's DYMO
+number (`dymo-99012`, `dymo-11354`, `dymo-30252`, `dymo-30256`, `dymo-1744907` on the 4XL …;
+`pdb-print media` lists them). When the printer answers the status byte (`ESC A`), it is read before and
+after a job to catch an empty roll or a jam; a printer that gives no status is sent the job blind, with no
+fault reported. DYMOs never report a finished label, so jobs end as "sent (unconfirmed)" either way. `darkness:
+light | normal | dark` sets the print density (not on the 330). No cutter: `cut` must be empty or `none`.
+The LabelWriter Duo shows up as two USB printers (labels and tape) with one USB id: use
+`device: /dev/usb/lpN` for the label side instead of `usb_id`. The Twin Turbo prints on the roll the
+printer picks.
+
+**Untested:** no DYMO printer was on hand; everything is built from DYMO's documents and checked against
+fakes. Not supported: the LabelWriter 5xx series (550, 550 Turbo, 5XL: chip-locked labels and another
+protocol), the SE450 (203 dpi, its own command set), the Duo's D1 tape side, and the serial-only
+LabelWriter 300/310/320.
+
 ### Hot folder
 
 With `hot_folder` enabled in the config, `serve` prints every new `label_*.pdf` that lands in
