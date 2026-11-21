@@ -12,8 +12,53 @@ Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in two jobs.
    `checksums-darwin.txt` and the Linux, Windows and macOS archives; only then it publishes it. The step lists those
    files by name: renaming or adding an archive in a `.goreleaser*.yaml` means updating that list too.
 
+   Before the archive is made, `scripts/macos-sign.sh` (a GoReleaser hook on each universal binary) signs
+   both binaries with the Developer ID certificate and the hardened runtime and notarises them; the job then
+   checks the archive's binaries with `codesign --verify --strict` and `spctl --assess` before publishing.
+
 A failed macOS build therefore leaves a draft, never a release without macOS. Between the cask push and the
 publish step (seconds), the cask points at the still-draft release: `brew install` fails in that window.
+
+## macOS signing
+
+The `release-darwin` job needs these Actions secrets on `francisrath/partdb-print-agent` and fails without them
+(a release is never unsigned):
+
+| Secret | What |
+|---|---|
+| `MACOS_SIGN_P12` | base64 of a `.p12` with the "Developer ID Application: Francis Rath (D4X9292QC4)" certificate, its private key and the Developer ID G2 intermediate |
+| `MACOS_SIGN_PASSWORD` | the `.p12` password |
+| `MACOS_NOTARY_ISSUER_ID` | App Store Connect → Users and Access → Integrations → Team Keys: Issuer ID |
+| `MACOS_NOTARY_KEY_ID` | the key ID of the team key `pdb-print-notary` (role Developer) |
+| `MACOS_NOTARY_KEY` | that key's `.p8` file contents |
+
+No local copies are kept: if one is lost, make a new one and replace the secrets. Binaries signed before
+stay valid, and macOS keeps the Bluetooth permission (it is tied to the bundle id and Team ID, not to one
+certificate).
+
+**The certificate expires on 2027-12-21.** Renew it before then:
+
+1. `openssl genrsa -out devid.key 2048` and `openssl req -new -key devid.key -out devid.csr -subj "/CN=Francis Rath/C=NO"`.
+2. developer.apple.com → Certificates → **+** → Developer ID Application (G2 Sub-CA) → upload the CSR →
+   download `developerID_application.cer`.
+3. Build the `.p12` with algorithms macOS's `security import` reads (OpenSSL 3's defaults fail with "MAC
+   verification failed"):
+   ```bash
+   openssl x509 -inform der -in developerID_application.cer -out devid.pem
+   curl -fsSO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+   openssl x509 -inform der -in DeveloperIDG2CA.cer -out g2.pem
+   openssl rand -base64 24 | tr -d '\n' >p12.pass
+   openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+     -inkey devid.key -in devid.pem -certfile g2.pem -passout file:p12.pass -out devid.p12
+   ```
+4. `base64 -i devid.p12 | tr -d '\n' | gh secret set MACOS_SIGN_P12` and `gh secret set MACOS_SIGN_PASSWORD <p12.pass`,
+   then delete the local files and revoke the old certificate once a release signed with the new one is out.
+
+The notary key doesn't expire; revoke it in App Store Connect if it leaks and create a new one
+(`gh secret set MACOS_NOTARY_KEY <AuthKey_ID.p8`, `MACOS_NOTARY_KEY_ID`).
+
+Test a change to signing with a pre-release tag (e.g. `v0.2.1-rc.1`): it runs the whole release, but the tap
+isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets and signs ad hoc instead.
 
 ## Recovery
 

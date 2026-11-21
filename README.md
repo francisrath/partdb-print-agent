@@ -79,7 +79,7 @@ brew tap francisrath/tap
 brew trust francisrath/tap      # Homebrew 7 only loads casks from trusted taps
 brew install --cask pdb-print
 ```
-The macOS binary isn't signed yet; the cask clears the quarantine flag on install.
+The macOS binaries are signed with a Developer ID and notarised by Apple.
 
 **Docker** (Linux amd64/arm64):
 ```sh
@@ -392,7 +392,7 @@ Bluetooth LE, per OS:
   it (e.g. Terminal). An app that can't ask for Bluetooth (e.g. an editor or chat app running pdb-print for
   you) gets the helper stopped by macOS; the error says so: run it from a terminal app instead. Only commands
   that use Bluetooth start the helper: `discover`, `try`, the setup wizard and printing to a Bluetooth
-  printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
+  printer. Both binaries are Developer-ID signed and notarised.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
 
 ### Niimbot and Phomemo label makers (`kind: ble`, untested)

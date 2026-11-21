@@ -140,6 +140,12 @@ jobs:
             grep -q '__info_plist' <<<"$(otool -s __TEXT __info_plist "$RUNNER_TEMP/ble-$a")"
           done
           grep -q NSBluetoothAlwaysUsageDescription <<<"$(launchctl plist "$ble")"
+          # without the release secrets scripts/macos-sign.sh signs ad hoc, with the hardened runtime
+          for b in "$pp" "$ble"; do
+            codesign --verify --strict "$b"
+            grep -q 'flags=.*runtime' <<<"$(codesign -dv "$b" 2>&1)"
+          done
+          grep -q "Info.plist entries=" <<<"$(codesign -dvvv "$ble" 2>&1)" # the embedded Info.plist is sealed
           files=$(tar tzf dist/pdb-print_*_darwin_universal.tar.gz)
           grep -qx pdb-print <<<"$files"
           grep -qx pdb-print-ble <<<"$files"
