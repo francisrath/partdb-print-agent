@@ -94,17 +94,30 @@ func TestRunSkipsDevBuilds(t *testing.T) {
 	}
 }
 
-// Only a copy in Homebrew's Caskroom gets the brew command; others get archive instructions.
+func TestInstall(t *testing.T) {
+	for _, c := range []struct {
+		goos, exe string
+		docker    bool
+		want      string
+	}{
+		{"darwin", "/opt/homebrew/Caskroom/pdb-print/0.2.0/pdb-print", false, "brew"},
+		{"darwin", "/usr/local/Caskroom/pdb-print/0.2.0/pdb-print", false, "brew"}, // Intel Homebrew
+		{"darwin", "/Users/me/bin/pdb-print", false, "archive"},
+		{"windows", `C:\pdb\pdb-print.exe`, false, "zip"},
+		{"linux", "/usr/bin/pdb-print", true, "docker"},
+		{"linux", "/usr/bin/pdb-print", false, "deb"},
+		{"linux", "/usr/local/bin/pdb-print", false, "archive"},
+	} {
+		if got := install(c.goos, c.exe, c.docker); got != c.want {
+			t.Errorf("%s %s docker=%v: %s, want %s", c.goos, c.exe, c.docker, got, c.want)
+		}
+	}
+}
+
+// Only Homebrew copies get the brew command.
 func TestHintFollowsInstall(t *testing.T) {
 	h := hint("9.9.9")
-	switch Install() {
-	case "brew":
-		if h != "brew upgrade --cask pdb-print" {
-			t.Errorf("brew: %q", h)
-		}
-	case "archive":
-		if !strings.Contains(h, "replace") || strings.Contains(h, "brew") {
-			t.Errorf("archive: %q", h)
-		}
+	if (Install() == "brew") != strings.Contains(h, "brew upgrade") {
+		t.Errorf("install %s, hint %q", Install(), h)
 	}
 }
