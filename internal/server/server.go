@@ -4,6 +4,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -593,7 +594,7 @@ func (s *Server) printerStatus(w http.ResponseWriter, r *http.Request) {
 // refused or fail for the loaded roll.
 func statusText(svc *printing.Service, st *driver.Status, p *config.Printer) (string, bool) {
 	_, media, ok := svc.MediaStatus(p, st)
-	text := fmt.Sprintf("%s · %s · media: %s", st.Code, st.Model, media)
+	text := fmt.Sprintf("%s · %s · media: %s", st.Code, cmp.Or(st.Model, p.Model), media)
 	if st.Detail != "" {
 		text += " · " + st.Detail
 	}
