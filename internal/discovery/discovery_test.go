@@ -20,6 +20,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/devicedb"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/brother"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/cat"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/dymo"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/niimbot"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/phomemo"
