@@ -37,6 +37,7 @@ printers) is on `main` and comes with the next release; until then, [build from 
 | Brother P-touch | USB, Network, Bluetooth Classic | PT-9500PC, PT-E550W, PT-P750W, PT-P710BT, PT-P900 series … | ✅ PT-9500PC |
 | Zebra (ZPL) | Network, USB, Bluetooth Classic | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
 | TSC and TSPL clones | USB, Network, Bluetooth Classic | TSC, Xprinter, Munbyn, iDPRT, HPRT | 🟡 not yet |
+| DYMO LabelWriter | USB | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
 
@@ -274,6 +275,28 @@ or jam, ribbon out, paused); after a job pdb-print waits for the "printing" flag
 "printed". A short label can finish before pdb-print sees the flag: then it reports "sent, probably printed"
 (not confirmed). A printer that doesn't answer (many clones over Bluetooth) gives "sent (unconfirmed)". Black-mark
 media (`BLINE`) isn't supported yet.
+
+### DYMO LabelWriter (USB, Linux)
+
+`model:` a DYMO LabelWriter 330/400/450 series or 4XL (`LabelWriter-450`, `LabelWriter-4XL` …; every model in
+[docs/printers.md](docs/printers.md)). They are USB printer-class devices, so they print
+through Linux's `usblp` like the Brother printers (group `lp`). The driver speaks DYMO's published raster
+protocol (LabelWriter 400/450 Series Technical Reference): one raster line per dot row at 300 dpi, `ESC L`
+set to the label length so the printer finds the next label, a short feed between labels and a feed to the
+tear bar after the last. DYMOs don't report which labels are loaded, so set `media:` to the roll's DYMO
+number (`dymo-99012`, `dymo-11354`, `dymo-30252`, `dymo-30256`, `dymo-1744907` on the 4XL …;
+`pdb-print media` lists them). When the printer answers the status byte (`ESC A`), it is read before and
+after a job to catch an empty roll or a jam; a printer that gives no status is sent the job blind, with no
+fault reported. DYMOs never report a finished label, so jobs end as "sent (unconfirmed)" either way. `darkness:
+light | normal | dark` sets the print density (not on the 330). No cutter: `cut` must be empty or `none`.
+The LabelWriter Duo shows up as two USB printers (labels and tape) with one USB id: use
+`device: /dev/usb/lpN` for the label side instead of `usb_id`. The Twin Turbo prints on the roll the
+printer picks.
+
+**Untested:** no DYMO printer was on hand; everything is built from DYMO's documents and checked against
+fakes. Not supported: the LabelWriter 5xx series (550, 550 Turbo, 5XL: chip-locked labels and another
+protocol), the SE450 (203 dpi, its own command set), the Duo's D1 tape side, and the serial-only
+LabelWriter 300/310/320.
 
 ### Bluetooth LE "cat printers"
 

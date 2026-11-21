@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/francisrath/partdb-print-agent/internal/driver"
 )
 
 // fakeLP behaves like Linux usblp as measured on a Pi with a PT-9500PC: a read with
@@ -90,6 +92,13 @@ func TestReadPassesRealErrors(t *testing.T) {
 	tr := open(t, &fakeLP{readErr: syscall.ENODEV}, time.Second)
 	if _, err := tr.Read(make([]byte, 32)); !errors.Is(err, syscall.ENODEV) {
 		t.Fatalf("err = %v, want ENODEV", err)
+	}
+}
+
+func TestReadUnidirectionalIsNoReadback(t *testing.T) {
+	tr := open(t, &fakeLP{readErr: &os.PathError{Op: "read", Path: "/dev/usb/lp0", Err: syscall.EINVAL}}, time.Second)
+	if _, err := tr.Read(make([]byte, 32)); !errors.Is(err, driver.ErrNoReadback) {
+		t.Fatalf("err = %v, want ErrNoReadback", err)
 	}
 }
 

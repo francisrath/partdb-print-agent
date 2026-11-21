@@ -11,8 +11,7 @@ Which label printers pdb-print can drive, how well each one is tested, and how t
 
 The tables below are generated from the device database (`internal/devicedb/data/*.yaml`). Don't edit
 them by hand: change the data and run `go test ./internal/devicedb -run TestPrintersDoc -update`.
-Driver pull requests adding DYMO LabelWriter 300/400/450, Zebra EPL2 and Niimbot/Phomemo are
-in review; their models appear here once merged.
+Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their models appear here once merged.
 
 <!-- printers:begin -->
 
@@ -44,6 +43,22 @@ in review; their models appear here once merged.
 | 🟡 | QL-800 | USB | brother/ql |  |
 | ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10 |
 | 🟡 | QL-820NWB | Network, USB | brother/ql |  |
+
+### DYMO
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | LabelWriter-330 | USB | dymo/lw300 |  |
+| 🟡 | LabelWriter-330-Turbo | USB | dymo/lw300 |  |
+| 🟡 | LabelWriter-400 | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-400-Turbo | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-450 | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-450-Duo | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-450-Turbo | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-450-Twin-Turbo | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-4XL | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-Duo | USB | dymo/lw400 |  |
+| 🟡 | LabelWriter-Twin-Turbo | USB | dymo/lw400 |  |
 
 ### Generic
 
@@ -180,6 +195,9 @@ in review; their models appear here once merged.
 | ⏳ | Brother QL-600 | Needs `ESC i a FF` after every job. |
 | ⏳ | Brother PT-D600 | Brother publishes no raster command reference for it. |
 | ⏳ | Brother PT-H500 | Unclear how its cutter is driven. |
+| ⏳ | DYMO LabelWriter SE450 | 203 dpi with its own command set; needs a driver. |
+| ⏳ | DYMO LabelWriter 300, 310, 320 | Serial-only; pdb-print has no serial transport yet. |
+| ⏳ | DYMO LabelWriter Duo tape side (D1) | A different tape protocol; the label side works. |
 
 ## Can't be supported
 

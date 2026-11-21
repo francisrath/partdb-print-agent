@@ -10,6 +10,7 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/zalando/go-keyring v0.2.8
 	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/sys v0.48.0
 	tinygo.org/x/bluetooth v0.17.0
 )
 
@@ -26,7 +27,6 @@ require (
 	github.com/tinygo-org/cbgo v0.1.0 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	tinygo.org/x/espradio v0.5.0 // indirect
 )
