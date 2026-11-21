@@ -11,7 +11,7 @@ import (
 
 	"tinygo.org/x/bluetooth"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 // Scan runs blecore.Radio.Run on an enabled adapter; fatal is Radio.Fatal.

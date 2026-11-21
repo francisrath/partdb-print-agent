@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 )
 
 func TestDefaultLoads(t *testing.T) {

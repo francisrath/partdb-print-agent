@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 // scanError maps a scan that ended on its own to ErrNoBluetooth when the adapter is unusable. The library's

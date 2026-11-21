@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // parts splits a reply into its <STX>…<ETX> parts (no STX: the whole reply).

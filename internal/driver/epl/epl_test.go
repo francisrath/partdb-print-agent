@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/driver/epl"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/driver/epl"
 )
 
 // fake is an EPL printer behind a transport of the given kind: it records what it gets and answers

@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/transport/serial"
-	"github.com/francisrath/partdb-print-agent/internal/transport/usb"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/transport/serial"
+	"github.com/francisrath/pdb-print/internal/transport/usb"
 )
 
 // onlineFor is how long an online check counts: heartbeats can come every few seconds

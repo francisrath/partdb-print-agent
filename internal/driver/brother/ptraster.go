@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // pt-raster dialect: the raster mode of the newer P-touch printers, from Brother's "Raster Command

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // realReply is what a PT-9500PC with 36 mm laminated tape answered to ESC i S (2026-11-18).

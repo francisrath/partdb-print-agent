@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // fake answers every <ESC>!? with the next scripted byte (the last one repeats; none = silence). Reads time out

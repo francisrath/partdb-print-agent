@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/partdb"
 )
 
 // fakePartDB serves the agent API with the given jobs; job 9 is always claimed by someone else.

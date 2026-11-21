@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/update"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/update"
 )
 
 // Off says why no report is sent ("" = reports are on): an environment opt-out, a config that turned

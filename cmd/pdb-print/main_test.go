@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
-	"github.com/francisrath/partdb-print-agent/internal/server"
-	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/server"
+	"github.com/francisrath/pdb-print/internal/transport/bt"
 	"github.com/zalando/go-keyring"
 )
 

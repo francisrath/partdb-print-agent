@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 var (

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 )
 
 type fakeDriver struct {

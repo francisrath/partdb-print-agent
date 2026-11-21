@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 var osErrnos = winErrnos

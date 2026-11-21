@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
+	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
 	"net"
 	"os"
 	"strings"
@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/discovery"
 )
 
 func TestRedact(t *testing.T) {

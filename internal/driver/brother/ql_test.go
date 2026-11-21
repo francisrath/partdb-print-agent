@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/snmp"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/snmp"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 const (

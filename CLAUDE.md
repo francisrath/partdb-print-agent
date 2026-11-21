@@ -1,4 +1,4 @@
-# partdb-print-agent – context for Claude Code
+# pdb-print – context for Claude Code
 
 A cross-platform, MIT-licensed label print agent for [Part-DB](https://github.com/Part-DB/Part-DB-server).
 It fetches label PDFs that Part-DB already generates, rasterises them at the printer's native
@@ -11,7 +11,7 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
 ## Decisions
 - Language **Go**, single static binary, `CGO_ENABLED=0`. The only cgo is the macOS Bluetooth helper
   `cmd/pdb-print-ble` (CoreBluetooth/IOBluetooth), built on a macOS release runner. Module:
-  `github.com/francisrath/partdb-print-agent`.
+  `github.com/francisrath/pdb-print`.
 - Licence **MIT**. Never link or copy GPL/AGPL code (no brother_ql, no MuPDF, no Poppler library, no GPL cat-printer
   projects). Protocols are implemented clean-room from public references (Brother Raster Command Reference, Zebra
   ZPL II guide, Epson ESC/POS, public cat-printer write-ups).

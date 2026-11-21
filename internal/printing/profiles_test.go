@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/pdfgen"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/pdfgen"
 )
 
 // fakePartDB has profiles 1 (12×16 part lid), 2 (29×46 part bag), 3 (54×17 part, landscape)

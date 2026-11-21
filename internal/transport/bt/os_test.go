@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/transport"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/transport"
 )
 
 // TestOSErrnos runs the real errno table of this OS (osErrnos, osCases in bt_<os>_test.go).

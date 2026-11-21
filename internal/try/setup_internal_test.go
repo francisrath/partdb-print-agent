@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/report"
+	"github.com/francisrath/pdb-print/internal/report"
 )
 
 // The settings put back at the end come from the printer's real ^HZA and ^HH replies.

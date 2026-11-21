@@ -5,10 +5,10 @@ package bt
 import (
 	"context"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/transport"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/transport"
 )
 
 // dialFunc connects to the printer, resolving name to an address when address is empty.

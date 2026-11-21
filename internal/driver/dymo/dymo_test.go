@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

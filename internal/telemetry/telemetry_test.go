@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/pdb-print/internal/config"
 )
 
 var (

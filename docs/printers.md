@@ -1,7 +1,7 @@
 # Printers
 
 Which label printers pdb-print can drive, how well each one is tested, and how to help with the rest.
-Every printer listed as ✅ or 🟡 is supported by the [latest release](https://github.com/francisrath/partdb-print-agent/releases/latest).
+Every printer listed as ✅ or 🟡 is supported by the [latest release](https://github.com/francisrath/pdb-print/releases/latest).
 
 ## Support matrix
 
@@ -266,7 +266,7 @@ A 🟡 printer becomes ✅ when someone has printed with it. If you own one:
 3. `pdb-print report` writes `pdb-print-report-<time>.json` with what pdb-print found out about the printer.
    `--identify` adds the replies to each printer language's identify query, `--print` a test label (both ask
    first). Addresses and serial numbers are masked; check the file before you post it.
-4. [Open a GitHub issue](https://github.com/francisrath/partdb-print-agent/issues/new) with:
+4. [Open a GitHub issue](https://github.com/francisrath/pdb-print/issues/new) with:
    - the report file (and the `try` file, if you ran it);
    - a photo of the test card or label;
    - the printer model and firmware version (often on a status print or in its web page);
@@ -291,5 +291,5 @@ family needs a driver under `internal/driver/`; see "Adding a printer" in the [R
 
 ## Donate a printer
 
-Printer donations for testing are welcome, new or used. [Open a GitHub issue](https://github.com/francisrath/partdb-print-agent/issues/new)
+Printer donations for testing are welcome, new or used. [Open a GitHub issue](https://github.com/francisrath/pdb-print/issues/new)
 to get in touch about the address and details.

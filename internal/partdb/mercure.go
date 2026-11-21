@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/pdb-print/internal/config"
 )
 
 // sseIdleTimeout ends a subscription that received nothing for this long: Mercure sends a keep-alive

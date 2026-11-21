@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
-	"github.com/francisrath/partdb-print-agent/internal/render"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/render"
 )
 
 // profileSizeTTL bounds how long a measured profile size is trusted (profiles get edited).

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
+	"github.com/francisrath/pdb-print/internal/config"
 )
 
 const maxPDF = 10 << 20

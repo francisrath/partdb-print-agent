@@ -11,7 +11,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"golang.org/x/sys/unix"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 func init() { register(dial) }

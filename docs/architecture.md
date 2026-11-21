@@ -1,6 +1,6 @@
 # Part-DB Print Agent: end-to-end architecture proposal
 
-*Working title: **partdb-print-agent** (CLI/daemon name `pdb-print`)*
+*Name: **pdb-print** (repository, CLI and daemon; working title was partdb-print-agent)*
 *Status: draft for internal review, 2026-10-27. Target Part-DB: v2.20.x (verified against 2.20.4 source).*
 
 Legend used throughout: **[MVP]** = first release, no Part-DB changes needed · **[P2]** = phase 2 (first upstream PRs + broader hardware) · **[P3]** = phase 3 (push transport, polish) · **[Later]** = designed for, not scheduled.
@@ -71,7 +71,7 @@ flowchart LR
     BTN["'Send to printer' button<br/>+ settings [P2, PR1]"]
   end
 
-  subgraph Agent["partdb-print-agent (MIT, Go, single binary)"]
+  subgraph Agent["pdb-print (MIT, Go, single binary)"]
     direction TB
     SRC["Job sources<br/>local HTTP · hot folder · CLI ·<br/>PrintJob client"]
     Q["Durable job queue<br/>(bbolt) + retry/backoff"]
@@ -704,7 +704,7 @@ Caveats with Go: macOS BLE requires cgo, so the macOS build is done on a macOS r
 | Windows 10/11 x64/arm64 | **MSI** (WiX via GoReleaser) + **winget** manifest; zip for portable | Windows **service** (queue, printing) + per-user **tray** app (UI, notifications) | Authenticode signing: **SignPath Foundation** (free for OSS) or Azure Trusted Signing (~USD 10/month). Unsigned = SmartScreen pain | MVP: zip; P2: MSI/winget signed |
 | macOS 12+ universal | **.pkg** (notarised) or `.app` in DMG + **Homebrew cask** | **LaunchAgent** (user session, required for Bluetooth TCC prompts) inside an `.app` bundle with `NSBluetoothAlwaysUsageDescription`. Menu-bar item | Apple Developer ID (USD 99/yr) for signing + notarisation (rcodesign/quill can do it from Linux CI) | MVP: brew tap (unsigned binary); P2: notarised pkg |
 | Linux desktop | **deb/rpm** (nfpm) + APT/YUM repo (Cloudsmith OSS or GitHub Pages), **AppImage**; Flatpak [Later] (USB/BLE sandbox holes make it a poor fit) | **systemd** unit (system or `--user`). Tray via StatusNotifier | udev rule (`/etc/udev/rules.d/60-pdb-print.rules`) granting `lp`/`plugdev` access to known VIDs. `lp` group for `/dev/usb/lp*` | MVP: deb + tarball |
-| Headless Pi / NAS | **Docker** multi-arch (amd64, arm64, armv7) `ghcr.io/<org>/partdb-print-agent` | container, web UI on LAN (opt-in bind + password) | USB: `--device /dev/usb/lp0` or `/dev/bus/usb`. BLE: `--net=host -v /run/dbus:/run/dbus`. TrueNAS/Unraid templates [P3] | MVP |
+| Headless Pi / NAS | **Docker** multi-arch (amd64, arm64, armv7) `ghcr.io/<org>/pdb-print` | container, web UI on LAN (opt-in bind + password) | USB: `--device /dev/usb/lp0` or `/dev/bus/usb`. BLE: `--net=host -v /run/dbus:/run/dbus`. TrueNAS/Unraid templates [P3] | MVP |
 | All | `install.sh` / `install.ps1` one-liners | — | — | P2 |
 
 **First-run experience** (all platforms): the installer opens `http://127.0.0.1:8631`, where a wizard walks through (1) the Part-DB URL, (2) pairing (paste a token, with a link straight to Part-DB's token page and an explanation of "Read-Only"; or "Sign in with Part-DB" via OAuth if available), (3) printer discovery and pick, (4) media pick (auto-detected on Brother), (5) test print with a Part-DB profile, (6) installing the userscript/bookmarklet (one click, with the key embedded).
@@ -746,7 +746,7 @@ Caveats with Go: macOS BLE requires cgo, so the macOS build is done on a macOS r
 
 ## 18. Repository, governance, licence
 
-* **Repo**: `github.com/<org>/partdb-print-agent`, separate from Part-DB. Ideally under the **Part-DB GitHub org** with us as maintainers (more discoverable, signals trust), else under our own org and linked from Part-DB docs. *Ask the maintainer.*
+* **Repo**: `github.com/<org>/pdb-print`, separate from Part-DB. Ideally under the **Part-DB GitHub org** with us as maintainers (more discoverable, signals trust), else under our own org and linked from Part-DB docs. *Ask the maintainer.*
 * Layout:
 
 ```
@@ -891,7 +891,7 @@ Decided 2026-10-27:
 | # | Topic | Decision |
 |---|---|---|
 | 1 | Licence | **MIT** |
-| 2 | Repo home | **github.com/francisrath/partdb-print-agent**; offer hand-over to the Part-DB org later |
+| 2 | Repo home | **github.com/francisrath/pdb-print**; offer hand-over to the Part-DB org later |
 | 3 | PrintJob payload (rendered PDF vs profile + IDs) | **Open** – decide with the maintainer in the issue |
 | 4 | Agent token | **Read-only** (enough for label generation) |
 | 5 | Tag inbox | **Dropped** (2026-10-27): built and tried (closed PR #5), but tagging a part in Part-DB just to print it was too much hassle. Phone/remote printing waits for upstream PR1/PR2 |
@@ -900,7 +900,7 @@ Decided 2026-10-27:
 | 8 | 32-bit Pi | Not supported; 64-bit OS required |
 | 9 | Push on Part-DB | Recommend the **FrankenPHP image** (built-in Mercure); document an optional Mercure sidecar for the Apache image |
 | 10 | When to post the issue | **After the v0.1.0 release** |
-| 11 | Name | `partdb-print-agent`, CLI `pdb-print` |
+| 11 | Name | `pdb-print` (repository and CLI; renamed from partdb-print-agent in 2026-11) |
 
 ---
 

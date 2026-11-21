@@ -1,12 +1,12 @@
 #!/bin/sh
 # Installs pdb-print on Debian, Ubuntu or Raspberry Pi OS from its GitHub release.
 #
-#   curl -fsSL https://github.com/francisrath/partdb-print-agent/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/francisrath/pdb-print/releases/latest/download/install.sh | sh
 #
 # It downloads the .deb package for this computer and the release's checksums.txt, checks the
 # package against it, installs it with apt-get and shows the setup code. That's all.
 set -eu
-base=${PDB_PRINT_BASE_URL:-https://github.com/francisrath/partdb-print-agent/releases/latest/download}
+base=${PDB_PRINT_BASE_URL:-https://github.com/francisrath/pdb-print/releases/latest/download}
 
 # 1. Which package fits this system (dpkg knows; the kernel can be 64-bit on a 32-bit system)
 if ! command -v dpkg > /dev/null; then echo "This script needs a Debian-based system (Debian, Ubuntu, Raspberry Pi OS)." >&2; exit 1; fi

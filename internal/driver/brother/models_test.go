@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 )
 
 // Models added from Brother's references without hardware (2026-11-20): golden bytes pin the

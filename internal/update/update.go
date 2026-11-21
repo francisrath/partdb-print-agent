@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	latestURL = "https://api.github.com/repos/francisrath/partdb-print-agent/releases/latest"
+	latestURL = "https://api.github.com/repos/francisrath/pdb-print/releases/latest"
 	// Every is how often the agent asks.
 	Every = 24 * time.Hour
 )
@@ -168,7 +168,7 @@ func hint(v string) string {
 	case "zip":
 		return "download pdb-print_" + v + "_windows_amd64.zip from the release page and replace pdb-print.exe"
 	case "docker":
-		return "pull the new image (ghcr.io/francisrath/partdb-print-agent:" + v + ") and recreate the container"
+		return "pull the new image (ghcr.io/francisrath/pdb-print:" + v + ") and recreate the container"
 	case "deb":
 		return "download the .deb for this machine from the release page, then: sudo apt install ./pdb-print_" + v + "_<arch>.deb"
 	}

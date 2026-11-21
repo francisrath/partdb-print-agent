@@ -8,3 +8,9 @@ coverage.*
 /testdata/output/
 
 .env
+
+# binaries built at the repo root (go build ./cmd/...)
+/pdb-print
+/pdb-print.exe
+/pdb-print-ble
+/pdb-print-stats

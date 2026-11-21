@@ -12,12 +12,12 @@ import (
 
 	"tinygo.org/x/bluetooth"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
-	"github.com/francisrath/partdb-print-agent/internal/bleradio"
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/transport"
+	"github.com/francisrath/pdb-print/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/bleradio"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/transport"
 )
 
 const (

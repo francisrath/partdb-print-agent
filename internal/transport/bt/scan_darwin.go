@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/transport/ble"
+	"github.com/francisrath/pdb-print/internal/transport/ble"
 )
 
 // Scan lists the paired Bluetooth Classic devices and those an inquiry of timeout finds, through the

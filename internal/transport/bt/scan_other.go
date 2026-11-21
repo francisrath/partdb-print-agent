@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/blecore"
+	"github.com/francisrath/pdb-print/internal/blecore"
 )
 
 // Scan: Bluetooth Classic is supported on Linux, Windows and macOS only.

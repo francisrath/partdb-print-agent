@@ -15,7 +15,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/zalando/go-keyring"
 	"go.yaml.in/yaml/v3"
 )

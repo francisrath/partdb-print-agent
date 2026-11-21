@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/config"
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
-	"github.com/francisrath/partdb-print-agent/internal/driver"
-	"github.com/francisrath/partdb-print-agent/internal/partdb"
-	"github.com/francisrath/partdb-print-agent/internal/printing"
-	"github.com/francisrath/partdb-print-agent/internal/telemetry"
-	"github.com/francisrath/partdb-print-agent/internal/update"
+	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/partdb"
+	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/telemetry"
+	"github.com/francisrath/pdb-print/internal/update"
 	"github.com/zalando/go-keyring"
 )
 

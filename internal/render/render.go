@@ -15,7 +15,7 @@ import (
 	goruntime "runtime"
 	"time"
 
-	"github.com/francisrath/partdb-print-agent/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/enums"
 	"github.com/klippa-app/go-pdfium/references"
