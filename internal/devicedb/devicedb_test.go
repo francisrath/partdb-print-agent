@@ -363,4 +363,11 @@ func TestLintGeometry(t *testing.T) {
 			t.Errorf("%s: loaded", name)
 		}
 	}
+	// a geometry that trims the edges lets an mm label wider than the head through
+	ok := "media:\n  - {id: wide-mm, name: w, kind: die_cut, width_mm: 50, length_mm: 30}\n" +
+		"geometry:\n  - {media: wide-mm, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 240, edge_mm: 1}\n" +
+		"models:\n  - {id: N, driver: zpl, dialect: zpl, dpi: 203, head_pins: 384, media: [wide-mm]}\n"
+	if _, err := devicedb.Load(fstest.MapFS{"data/m.yaml": {Data: []byte(ok)}}); err != nil {
+		t.Errorf("trimmed geometry: %v", err)
+	}
 }

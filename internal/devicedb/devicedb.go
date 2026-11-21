@@ -295,7 +295,9 @@ func Load(fsys fs.FS) (*DB, error) {
 				errs = append(errs, fmt.Errorf("%s: model %s: unknown media %s", origin[m.ID], m.ID, mid))
 				continue
 			}
-			if raw := db.media[mid]; raw.DPI == 0 && m.DPI > 0 && m.HeadPins > 0 && dots(raw.WidthMM, m.DPI) > m.HeadPins {
+			// a geometry for this head says how the label lies on it (edges trimmed, not shrunk)
+			_, geo := db.geometry[geoKey{mid, m.HeadPins}]
+			if raw := db.media[mid]; !geo && raw.DPI == 0 && m.DPI > 0 && m.HeadPins > 0 && dots(raw.WidthMM, m.DPI) > m.HeadPins {
 				errs = append(errs, fmt.Errorf("%s: model %s: media %s is %d dots wide at %d dpi, head has %d: it would print narrower than its size",
 					origin[m.ID], m.ID, mid, dots(raw.WidthMM, m.DPI), m.DPI, m.HeadPins))
 			}
