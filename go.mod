@@ -4,13 +4,13 @@ go 1.27.4
 
 require (
 	github.com/boombuler/barcode v1.1.0
-	github.com/godbus/dbus/v5 v5.2.2
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/gosnmp/gosnmp v1.47.0
-	github.com/klippa-app/go-pdfium v1.21.4
+	github.com/klippa-app/go-pdfium v1.21.5
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/zalando/go-keyring v0.2.8
-	go.yaml.in/yaml/v3 v3.0.5
-	golang.org/x/sys v0.48.0
+	go.yaml.in/yaml/v3 v3.0.6
+	golang.org/x/sys v0.49.0
 	tinygo.org/x/bluetooth v0.17.0
 )
 
@@ -27,6 +27,6 @@ require (
 	github.com/tinygo-org/cbgo v0.1.0 // indirect
 	github.com/tinygo-org/pio v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	tinygo.org/x/espradio v0.5.0 // indirect
 )
