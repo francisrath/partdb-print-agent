@@ -32,7 +32,13 @@ type Config struct {
 	Pdftoppm string `yaml:"pdftoppm,omitempty"`
 	// AgentID identifies this agent to Part-DB's print job API (a random UUID, generated once).
 	AgentID string `yaml:"agent_id,omitempty"`
+	// UpdateCheck: false stops the daily look at GitHub for a newer release (default on; the web UI
+	// and the log say when one is out).
+	UpdateCheck *bool `yaml:"update_check,omitempty"`
 }
+
+// UpdateCheckOn: the daily release check is on (the default).
+func (c *Config) UpdateCheckOn() bool { return c.UpdateCheck == nil || *c.UpdateCheck }
 
 // HotFolder prints label PDFs that land in a folder (Part-DB downloads label_*.pdf).
 type HotFolder struct {

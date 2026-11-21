@@ -24,6 +24,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/update"
 	"github.com/zalando/go-keyring"
 )
 
@@ -590,5 +591,26 @@ func TestIndexAddressesAndRoutes(t *testing.T) {
 	}
 	if !strings.Contains(body, "<td>2</td>") {
 		t.Error("route without a profile name should show just its number")
+	}
+}
+
+func TestIndexShowsNewerRelease(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.0.0","html_url":"https://example.test/notes"}`))
+	}))
+	defer gh.Close()
+	h := newHarness(t)
+	if body := h.do("GET", "/", nil).Body.String(); strings.Contains(body, "is out") {
+		t.Fatal("banner without a check")
+	}
+	h.srv.Updates = &update.Checker{Current: "0.2.0", URL: gh.URL}
+	if _, err := h.srv.Updates.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body := h.do("GET", "/", nil).Body.String()
+	for _, want := range []string{"pdb-print 9.0.0 is out", `href="https://example.test/notes"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q missing", want)
+		}
 	}
 }

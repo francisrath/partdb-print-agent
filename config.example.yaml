@@ -2,6 +2,9 @@
 # Linux: ~/.config/pdb-print/config.yaml, Windows: %AppData%\pdb-print\config.yaml)
 # or pass --config FILE.
 log_level: info
+# Once a day the agent asks GitHub for the latest release (only that request; nothing about this agent
+# is sent) and the web UI and log say when a newer one is out. false turns it off.
+# update_check: false
 # Renderer: on 32-bit ARM (Pi 1/2/Zero) the built-in PDFium is slow, so `auto` uses poppler's
 # pdftoppm there when it is installed; elsewhere, or if pdftoppm fails, PDFium.
 # auto (default) | on (pdftoppm everywhere) | off | /path/to/pdftoppm

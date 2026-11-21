@@ -286,3 +286,15 @@ func TestBluetooth(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateCheck(t *testing.T) {
+	off := false
+	for _, c := range []struct {
+		cfg  Config
+		want bool
+	}{{Config{}, true}, {Config{UpdateCheck: &off}, false}} {
+		if got := c.cfg.UpdateCheckOn(); got != c.want {
+			t.Errorf("%+v: %v", c.cfg.UpdateCheck, got)
+		}
+	}
+}
