@@ -132,17 +132,50 @@ func TestSecondBrowserNeedsCode(t *testing.T) {
 	if w := serveLAN(lan, lanReq("GET", "/setup/", nil, a)); strings.Contains(w.Body.String(), "6-digit") {
 		t.Error("paired browser still sees the pairing page")
 	}
-	// browser B has no cookie: pairing page, and its wrong tries count towards the same 5
+	// browser B has no cookie: the pairing page; the code is used up, so neither it nor guesses pair,
+	// and B's tries don't close the window on A (nothing is left to guess once the code is used)
 	if w := serveLAN(lan, lanReq("GET", "/setup/", nil, nil)); !strings.Contains(w.Body.String(), "6-digit") {
 		t.Errorf("browser B without code: %d %s", w.Code, w.Body)
+	}
+	if pairLAN(lan, code) != nil {
+		t.Fatal("browser B paired with the code A already used")
+	}
+	w := serveLAN(lan, lanReq("POST", "/setup/pair", url.Values{"code": {code}}, nil))
+	if !strings.Contains(w.Body.String(), "already been used") || !strings.Contains(w.Body.String(), "pdb-print pair") {
+		t.Errorf("used code: %d %s", w.Code, w.Body)
 	}
 	for range 5 {
 		if pairLAN(lan, wrongCode(code)) != nil {
 			t.Fatal("wrong code paired")
 		}
 	}
-	if h.srv.Window.IsOpen(time.Now()) {
-		t.Error("window open after 5 wrong codes from browser B")
+	if !h.srv.Window.IsOpen(time.Now()) {
+		t.Error("browser B's tries closed the window on browser A")
+	}
+	if w := serveLAN(lan, lanReq("GET", "/setup/", nil, a)); strings.Contains(w.Body.String(), "6-digit") {
+		t.Error("browser A lost its session")
+	}
+}
+
+// The code pairs one browser; opening the window again makes a new one.
+func TestCodeIsSingleUse(t *testing.T) {
+	var w Window
+	code, _ := w.Open(t0)
+	if _, ok := w.Check(code, t0); !ok {
+		t.Fatal("first use refused")
+	}
+	if !w.CodeUsed() {
+		t.Error("CodeUsed false after pairing")
+	}
+	if _, ok := w.Check(code, t0); ok {
+		t.Error("code accepted twice")
+	}
+	code2, _ := w.Open(t0)
+	if w.CodeUsed() {
+		t.Error("new window starts with a used code")
+	}
+	if _, ok := w.Check(code2, t0); !ok {
+		t.Error("new code refused")
 	}
 }
 

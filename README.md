@@ -131,7 +131,8 @@ the setup wizard's last step or the web UI's "Usage statistics" section (the box
 the install script shows (`http://<pi-name>.local:8631/setup/`) and type the 6-digit code. A wizard
 connects Part-DB, finds your printer, prints a test label and names it. The setup page is reachable from
 the network only for 15 minutes after the code was shown (longer while you use it, up to 30); after that
-the agent answers only on the machine itself again. Run `pdb-print pair` on the print server to open it again.
+the agent answers only on the machine itself again. The code works once: it pairs one browser. Run
+`pdb-print pair` on the print server to open the setup page again with a new code (also for a second browser).
 
 <p align="center"><img src="docs/images/setup-wizard.png" width="700" alt="Step 1 of the setup wizard: Part-DB's address and a read-only API token"></p>
 
