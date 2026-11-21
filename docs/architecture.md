@@ -461,6 +461,11 @@ The sketch in 7.1 was the starting point; the code now works like this:
   `d30` 12 mm label makers), padded to the head (centred or right-aligned per model), and counts the
   `1A 0F 0C` it sends per printed page; `1A 06`/`1A 05` replies give paper and cover. Sources (MIT/Apache
   code, CC-BY-SA prose, GPL never read) are listed in the design note.
+* **`tspl` driver family** (`internal/driver/tspl`): TSC printers and TSPL clones (Xprinter, Munbyn, iDPRT,
+  HPRT), from TSC's public TSPL/TSPL2 Programming Manual. Every page is `SIZE`/`GAP` (`GAP 0,0` for continuous
+  media)/`DIRECTION 0,0`/`REFERENCE 0,0`/`CLS`/one `BITMAP` (width in bytes, 0 = black)/`PRINT 1,1`; `SET CUTTER`
+  only when the config asks (it persists in the printer). Status is the `<ESC>!?` byte; completion waits for its
+  "printing" bit to clear. No answer means print blind, unconfirmed. Models are data only (`tspl.yaml`), all untested.
 
 * **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,
   IEEE 1284 id) and network printers by a connect to port 9100 plus SNMP `sysDescr`, named from the

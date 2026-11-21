@@ -23,6 +23,7 @@ import (
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/escpos"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/niimbot"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/phomemo"
+	_ "github.com/francisrath/partdb-print-agent/internal/driver/tspl"
 	_ "github.com/francisrath/partdb-print-agent/internal/driver/zpl"
 	"github.com/francisrath/partdb-print-agent/internal/driver/zpl/zpltest"
 	"github.com/francisrath/partdb-print-agent/internal/transport/bt"
