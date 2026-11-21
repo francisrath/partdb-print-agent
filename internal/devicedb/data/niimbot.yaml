@@ -1,0 +1,100 @@
+# Niimbot label makers (driver niimbot) over Bluetooth LE. None of these has been tried on a printer yet:
+# every model is untested (2026-11-20). Source for heads, dpi, density ranges, cover polarity and which
+# print task (dialect) each model takes: niimbluelib's model table and print tasks (MIT,
+# github.com/MultiMote/niimbluelib) and the printers.niim.blue notes (CC-BY-SA-4.0, facts only).
+# All models use GATT service e7810a71-… with one characteristic for writes and notifications. Printers
+# advertise "<model>-<serial>" (e.g. D110-G326030306); the exact suffix is not documented.
+# Rows run across the head: wide models (B1, B21) take labels across, narrow ones (D11, D110) lengthwise,
+# so a 40×12 mm D11 label is media 12 mm wide and 40 mm long. density_max: 5 or 3 (the middle is the
+# default); lid_inverted: the heartbeat says 1 for a closed cover. ble_gap_ms only paces a packet split
+# into several writes; the driver waits 10 ms between packets itself.
+# B1 carries the fields every model shares (anchor); the others override what differs.
+models:
+  - &niimbot
+    id: B1
+    vendor: Niimbot
+    driver: niimbot
+    dialect: b1
+    dpi: 203
+    head_pins: 384
+    transports: [ble]
+    match: {ble_name: "^B1-"}
+    quirks: {ble_service: "e7810a71-73ae-499d-8c15-faa9aef0c3f2", ble_write: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+      ble_notify: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", ble_gap_ms: 10, density_max: 5, darkness: true, needs_status: true}
+    media: [niimbot-50x30, niimbot-50x20, niimbot-50x50, niimbot-50x70, niimbot-50x80, niimbot-40x30,
+      niimbot-40x20, niimbot-30x20, niimbot-30x15, niimbot-25x15]
+  - {<<: *niimbot, id: B21, dialect: b21, match: {ble_name: "^B21-"}}
+  - {<<: *niimbot, id: B21S, dialect: d110, match: {ble_name: "^B21S-"}}
+  # 300 dpi; niimbluelib's table says 591 (B21 Pro) and 567 (B1 Pro) dots, the wiki 576 read from the printers.
+  # The advertised name is a guess.
+  - {<<: *niimbot, id: B21-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B21[ _-]?PRO-"}}
+  - {<<: *niimbot, id: B1-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B1[ _-]?PRO-"}}
+  - &narrow
+    <<: *niimbot
+    id: D11
+    dialect: d11
+    head_pins: 96
+    match: {ble_name: "^D11-"}
+    quirks: {ble_service: "e7810a71-73ae-499d-8c15-faa9aef0c3f2", ble_write: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+      ble_notify: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", ble_gap_ms: 10, density_max: 3, lid_inverted: true,
+      darkness: true, needs_status: true}
+    media: [niimbot-12x40, niimbot-12x22, niimbot-12x30, niimbot-12x75, niimbot-12x109, niimbot-14x22,
+      niimbot-14x30, niimbot-14x60, niimbot-15x30, niimbot-15x50]
+  - {<<: *narrow, id: D11S, match: {ble_name: "^D11S-"}}
+  - {<<: *narrow, id: D110, dialect: d110, match: {ble_name: "^D110-"}}
+  # niimbluelib names no print task for the B18; d110 is the one the other 96-dot models of its age take.
+  - {<<: *narrow, id: B18, dialect: d110, match: {ble_name: "^B18-"}}
+  # 192 dots (24 mm); takes the narrow rolls until wider D101 sizes are sourced.
+  - {<<: *narrow, id: D101, dialect: b1, head_pins: 192, match: {ble_name: "^D101-"}}
+  # 300 dpi, 144 dots (the wiki, read from a printer; niimbluelib's table says 142), density 1–5.
+  - {<<: *narrow, id: D11-H, dialect: v4, dpi: 300, head_pins: 144, match: {ble_name: "(?i)^D11[ _-]?H-"},
+    quirks: {ble_service: "e7810a71-73ae-499d-8c15-faa9aef0c3f2", ble_write: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+      ble_notify: "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f", ble_gap_ms: 10, density_max: 5, darkness: true, needs_status: true}}
+
+# Niimbot die-cut rolls (width across the head × length, mm): common retail sizes and niimblue's presets
+# (MIT, github.com/MultiMote/niimblue). Dots come from the model's dpi; the width is limited to its head.
+media:
+  - {id: niimbot-50x30, name: Niimbot 50×30 mm, kind: die_cut, width_mm: 50, length_mm: 30}
+  - {id: niimbot-50x20, name: Niimbot 50×20 mm, kind: die_cut, width_mm: 50, length_mm: 20}
+  - {id: niimbot-50x50, name: Niimbot 50×50 mm, kind: die_cut, width_mm: 50, length_mm: 50}
+  - {id: niimbot-50x70, name: Niimbot 50×70 mm, kind: die_cut, width_mm: 50, length_mm: 70}
+  - {id: niimbot-50x80, name: Niimbot 50×80 mm, kind: die_cut, width_mm: 50, length_mm: 80}
+  - {id: niimbot-40x30, name: Niimbot 40×30 mm, kind: die_cut, width_mm: 40, length_mm: 30}
+  - {id: niimbot-40x20, name: Niimbot 40×20 mm, kind: die_cut, width_mm: 40, length_mm: 20}
+  - {id: niimbot-30x20, name: Niimbot 30×20 mm, kind: die_cut, width_mm: 30, length_mm: 20}
+  - {id: niimbot-30x15, name: Niimbot 30×15 mm, kind: die_cut, width_mm: 30, length_mm: 15}
+  - {id: niimbot-25x15, name: Niimbot 25×15 mm, kind: die_cut, width_mm: 25, length_mm: 15}
+  - {id: niimbot-12x40, name: Niimbot 12×40 mm, kind: die_cut, width_mm: 12, length_mm: 40}
+  - {id: niimbot-12x22, name: Niimbot 12×22 mm, kind: die_cut, width_mm: 12, length_mm: 22}
+  - {id: niimbot-12x30, name: Niimbot 12×30 mm, kind: die_cut, width_mm: 12, length_mm: 30}
+  - {id: niimbot-12x75, name: Niimbot 12×75 mm, kind: die_cut, width_mm: 12, length_mm: 75}
+  - {id: niimbot-12x109, name: Niimbot 12×109 mm (cable flag), kind: die_cut, width_mm: 12, length_mm: 109}
+  - {id: niimbot-14x22, name: Niimbot 14×22 mm, kind: die_cut, width_mm: 14, length_mm: 22}
+  - {id: niimbot-14x30, name: Niimbot 14×30 mm, kind: die_cut, width_mm: 14, length_mm: 30}
+  - {id: niimbot-14x60, name: Niimbot 14×60 mm, kind: die_cut, width_mm: 14, length_mm: 60}
+  - {id: niimbot-15x30, name: Niimbot 15×30 mm, kind: die_cut, width_mm: 15, length_mm: 30}
+  - {id: niimbot-15x50, name: Niimbot 15×50 mm, kind: die_cut, width_mm: 15, length_mm: 50}
+
+# Labels wider than the head: the head prints the middle, the edges stay blank (rendered at the
+# label's full width and trimmed, not shrunk).
+geometry:
+  - {media: niimbot-14x22, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 176, edge_mm: 1}
+  - {media: niimbot-14x30, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 240, edge_mm: 1}
+  - {media: niimbot-14x60, head_pins: 96, dpi: 203, width_dots: 112, printable_width_dots: 96, printable_length_dots: 480, edge_mm: 1}
+  - {media: niimbot-15x30, head_pins: 96, dpi: 203, width_dots: 120, printable_width_dots: 96, printable_length_dots: 240, edge_mm: 1.5}
+  - {media: niimbot-15x50, head_pins: 96, dpi: 203, width_dots: 120, printable_width_dots: 96, printable_length_dots: 400, edge_mm: 1.5}
+  - {media: niimbot-14x22, head_pins: 144, dpi: 300, width_dots: 168, printable_width_dots: 144, printable_length_dots: 264, edge_mm: 1}
+  - {media: niimbot-14x30, head_pins: 144, dpi: 300, width_dots: 168, printable_width_dots: 144, printable_length_dots: 360, edge_mm: 1}
+  - {media: niimbot-14x60, head_pins: 144, dpi: 300, width_dots: 168, printable_width_dots: 144, printable_length_dots: 720, edge_mm: 1}
+  - {media: niimbot-15x30, head_pins: 144, dpi: 300, width_dots: 180, printable_width_dots: 144, printable_length_dots: 360, edge_mm: 1.5}
+  - {media: niimbot-15x50, head_pins: 144, dpi: 300, width_dots: 180, printable_width_dots: 144, printable_length_dots: 600, edge_mm: 1.5}
+  - {media: niimbot-50x20, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 160, edge_mm: 1}
+  - {media: niimbot-50x30, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 240, edge_mm: 1}
+  - {media: niimbot-50x50, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 400, edge_mm: 1}
+  - {media: niimbot-50x70, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 560, edge_mm: 1}
+  - {media: niimbot-50x80, head_pins: 384, dpi: 203, width_dots: 400, printable_width_dots: 384, printable_length_dots: 640, edge_mm: 1}
+  - {media: niimbot-50x20, head_pins: 576, dpi: 300, width_dots: 600, printable_width_dots: 576, printable_length_dots: 240, edge_mm: 1}
+  - {media: niimbot-50x30, head_pins: 576, dpi: 300, width_dots: 600, printable_width_dots: 576, printable_length_dots: 360, edge_mm: 1}
+  - {media: niimbot-50x50, head_pins: 576, dpi: 300, width_dots: 600, printable_width_dots: 576, printable_length_dots: 600, edge_mm: 1}
+  - {media: niimbot-50x70, head_pins: 576, dpi: 300, width_dots: 600, printable_width_dots: 576, printable_length_dots: 840, edge_mm: 1}
+  - {media: niimbot-50x80, head_pins: 576, dpi: 300, width_dots: 600, printable_width_dots: 576, printable_length_dots: 960, edge_mm: 1}

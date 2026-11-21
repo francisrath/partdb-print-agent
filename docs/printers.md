@@ -11,7 +11,6 @@ Which label printers pdb-print can drive, how well each one is tested, and how t
 
 The tables below are generated from the device database (`internal/devicedb/data/*.yaml`). Don't edit
 them by hand: change the data and run `go test ./internal/devicedb -run TestPrintersDoc -update`.
-Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their models appear here once merged.
 
 <!-- printers:begin -->
 
@@ -83,11 +82,53 @@ Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their 
 | 🟡 | HT300 | USB, Network, Bluetooth Classic | tspl |  |
 | 🟡 | N41 | USB | tspl |  |
 
+### iDPRT
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | SP410 | USB | tspl |  |
+| 🟡 | SP420 | USB | tspl |  |
+| 🟡 | iD4S-203 | USB, Network | tspl |  |
+| 🟡 | iD4S-300 | USB, Network | tspl |  |
+
 ### Munbyn
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
 | 🟡 | ITPP941 | USB | tspl |  |
+
+### Niimbot
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | B1 | Bluetooth LE | niimbot/b1 |  |
+| 🟡 | D101 | Bluetooth LE | niimbot/b1 |  |
+| 🟡 | B21 | Bluetooth LE | niimbot/b21 |  |
+| 🟡 | D11 | Bluetooth LE | niimbot/d11 |  |
+| 🟡 | D11S | Bluetooth LE | niimbot/d11 |  |
+| 🟡 | B18 | Bluetooth LE | niimbot/d110 |  |
+| 🟡 | B21S | Bluetooth LE | niimbot/d110 |  |
+| 🟡 | D110 | Bluetooth LE | niimbot/d110 |  |
+| 🟡 | B1-PRO | Bluetooth LE | niimbot/v4 |  |
+| 🟡 | B21-PRO | Bluetooth LE | niimbot/v4 |  |
+| 🟡 | D11-H | Bluetooth LE | niimbot/v4 |  |
+
+### Phomemo
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | D30 | Bluetooth LE | phomemo/d30 |  |
+| 🟡 | D35 | Bluetooth LE | phomemo/d30 |  |
+| 🟡 | M02 | Bluetooth LE | phomemo/m02 |  |
+| 🟡 | M02-PRO | Bluetooth LE | phomemo/m02 |  |
+| 🟡 | M02S | Bluetooth LE | phomemo/m02 |  |
+| 🟡 | T02 | Bluetooth LE | phomemo/m02 |  |
+| 🟡 | M110 | Bluetooth LE | phomemo/m110 |  |
+| 🟡 | M120 | Bluetooth LE | phomemo/m110 |  |
+| 🟡 | M200 | Bluetooth LE | phomemo/m110 |  |
+| 🟡 | M220 | Bluetooth LE | phomemo/m110 |  |
+| 🟡 | M221 | Bluetooth LE | phomemo/m110 |  |
+| 🟡 | Q30 | Bluetooth LE | phomemo/m110 |  |
 
 ### REGO
 
@@ -126,6 +167,17 @@ Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their 
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
+| 🟡 | LP2722 | Network | epl/epl2 |  |
+| 🟡 | LP2742 | Network | epl/epl2 |  |
+| 🟡 | LP2824 | USB, Network | epl/epl2 |  |
+| 🟡 | LP2844 | USB, Network | epl/epl2 |  |
+| 🟡 | TLP2722 | Network | epl/epl2 |  |
+| 🟡 | TLP2742 | Network | epl/epl2 |  |
+| 🟡 | TLP2746e | USB, Network | epl/epl2 |  |
+| 🟡 | TLP2824 | USB, Network | epl/epl2 |  |
+| 🟡 | TLP2844 | USB, Network | epl/epl2 |  |
+| 🟡 | TLP3742 | Network | epl/epl2 |  |
+| 🟡 | TLP3842 | USB, Network | epl/epl2 |  |
 | 🟡 | GC420d | Network, USB | zpl |  |
 | 🟡 | GC420t | Network, USB | zpl |  |
 | ✅ community | GK420d | Network, USB | zpl | tested by a friend of the maintainer, 2026-11 (ZPL over TCP) |
@@ -175,15 +227,6 @@ Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their 
 | 🟡 | ZT620-203 | Network, USB | zpl |  |
 | 🟡 | ZT620-300 | Network, USB | zpl |  |
 
-### iDPRT
-
-| Status | Model | Connections | Driver | Notes |
-|---|---|---|---|---|
-| 🟡 | SP410 | USB | tspl |  |
-| 🟡 | SP420 | USB | tspl |  |
-| 🟡 | iD4S-203 | USB, Network | tspl |  |
-| 🟡 | iD4S-300 | USB, Network | tspl |  |
-
 <!-- printers:end -->
 
 ## Not supported yet
@@ -198,6 +241,10 @@ Driver pull requests adding Zebra EPL2 and Niimbot/Phomemo are in review; their 
 | ⏳ | DYMO LabelWriter SE450 | 203 dpi with its own command set; needs a driver. |
 | ⏳ | DYMO LabelWriter 300, 310, 320 | Serial-only; pdb-print has no serial transport yet. |
 | ⏳ | DYMO LabelWriter Duo tape side (D1) | A different tape protocol; the label side works. |
+| ⏳ | Zebra LP 2622, LP 2443, LP 2684 Strata (EPL) | Serial or parallel only; pdb-print has no serial transport yet. |
+| ⏳ | Zebra LP 2442, LP 2348 (EPL) | No programming reference found. |
+| ⏳ | Niimbot B3S, D110_M, B21_L2B, H1S, K3, B203 | Protocol variants not covered by public write-ups yet (B3S Bluetooth is reported broken). |
+| ⏳ | Phomemo M02X, D50, P12, M03, M04S | Different pacing, 180 dpi, no print-done reply, or no permissively licensed reference. |
 
 ## Can't be supported
 

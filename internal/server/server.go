@@ -461,7 +461,7 @@ func (s *Server) savePrinter(w http.ResponseWriter, r *http.Request) {
 				// keep settings the form doesn't show
 				old := c.Printers[i]
 				p.Threshold, p.SNMPCommunity, p.NoSNMP, p.AllowScaling = old.Threshold, old.SNMPCommunity, old.NoSNMP, old.AllowScaling
-				p.Mirror, p.UpsideDown, p.MediaAllowed = old.Mirror, old.UpsideDown, old.MediaAllowed
+				p.Mirror, p.UpsideDown, p.MediaAllowed, p.BlackMarkMM = old.Mirror, old.UpsideDown, old.MediaAllowed, old.BlackMarkMM
 				c.Printers[i] = p
 				return nil
 			}

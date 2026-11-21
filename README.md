@@ -36,9 +36,11 @@ printers) is on `main` and comes with the next release; until then, [build from 
 | Brother QL | Network, USB | QL-560 … QL-820NWB, wide QL-1050/1060N/1100/1110NWB/1115NWB | ✅ QL-810W |
 | Brother P-touch | USB, Network, Bluetooth Classic | PT-9500PC, PT-E550W, PT-P750W, PT-P710BT, PT-P900 series … | ✅ PT-9500PC |
 | Zebra (ZPL) | Network, USB, Bluetooth Classic | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
+| Zebra (EPL2) | USB, Network | LP/TLP 2824, 2844, 3842, 2722/2742 … | 🟡 not yet |
 | TSC and TSPL clones | USB, Network, Bluetooth Classic | TSC, Xprinter, Munbyn, iDPRT, HPRT | 🟡 not yet |
 | DYMO LabelWriter | USB | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
+| Niimbot, Phomemo | Bluetooth LE | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | 🟡 not yet |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
 
 ✅ tested on real hardware, 🟡 implemented from the documentation but not tested yet, ⏳ not supported
@@ -250,7 +252,26 @@ It never saves settings or calibrates the printer. Zebras that don't answer SNMP
 as "unknown" in `discover`; `pdb-print try` and the setup wizard can ask them what they are (a few bytes a
 non-Zebra might print).
 
-EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
+### Zebra EPL2 (LP/TLP 2824, 2844 …)
+
+Older Zebra/Eltron desktops that speak only EPL2: `model:` LP2824, TLP2824, LP2844, TLP2844, TLP3842 (300 dpi)
+and TLP2746e over USB (Linux) or their internal ZebraNet print server (TCP 9100); LP/TLP2722, LP/TLP2742 and
+TLP3742 only through an external ZebraNet PrintServer II (they have no USB). Models with "-Z" or "Plus" speak ZPL:
+use the Zebra (ZPL) section. **Untested**: written from Zebra's EPL Programming Guide, no EPL printer was at hand.
+
+```yaml
+- id: lp2844
+  model: LP2844
+  transport: {kind: usb, usb_id: "0a5f:0009"}
+  media: label-102x51         # set the loaded size: EPL printers don't report it
+  darkness: normal            # light | normal | dark (EPL density 7 / 10 / 13 on a 2844)
+  # black_mark_mm: 4          # media with black marks on the back instead of gaps
+```
+
+Each label is sent as one graphic. Over USB the agent asks the printer for errors (`^ee`: out of labels,
+head open, paused) and confirms a job once it saw the printer busy and done; if it finished too fast to see, or
+the printer stays silent, the job counts as sent but unconfirmed. Over the network EPL has no status, so jobs are sent unconfirmed.
+Serial (RS-232) and parallel connections aren't supported, so the LP/TLP 2622, LP 2443 and Strata aren't either.
 
 ### TSC and other TSPL printers
 
@@ -339,6 +360,32 @@ Bluetooth LE, per OS:
   that use Bluetooth start the helper: `discover`, `try`, the setup wizard and printing to a Bluetooth
   printer. The helper isn't Developer-ID signed yet, so macOS may ask again after an update.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
+
+### Niimbot and Phomemo label makers (`kind: ble`, untested)
+
+Same `ble` transport and discovery as the cat printers, recognised by the advertised name. No one has
+tried these on a printer yet: the protocols come from public write-ups and MIT/Apache projects, so treat
+them as experimental and report what happens (`pdb-print report`).
+
+- **Niimbot** (`driver: niimbot`): B1, B21, B21S, B21-PRO, B1-PRO (wide heads; labels across, e.g.
+  `niimbot-50x30`), D11, D11S, D110, D11-H, B18 and D101 (narrow heads; labels lengthwise, so a 40×12 mm
+  label is `niimbot-12x40`). They advertise `<model>-<serial>`. `darkness` sets the density. Some units
+  refuse rolls without Niimbot's RFID tag; the status shows how many labels the tag says are left.
+- **Phomemo** (`driver: phomemo`): M02, M02S, M02-PRO, T02 (pocket printers, continuous paper), M110,
+  M120, M200, M220, M221 (label printers; `darkness` sets the density), Q30 and D30, D35 (12 mm label
+  makers, labels lengthwise: `phomemo-12x40`). The M200 and M220 advertise names we don't know yet:
+  set `model:` yourself.
+
+```yaml
+- id: niimbot
+  name: Desk B21S
+  model: B21S
+  transport: {kind: ble, name: B21S-H123456789}
+  media: niimbot-50x30
+  darkness: normal            # light | normal | dark
+```
+
+`pdb-print media` lists each model's label sizes. `pdb-print try` doesn't cover these yet.
 
 ### Bluetooth Classic receipt printers (`kind: bt`)
 

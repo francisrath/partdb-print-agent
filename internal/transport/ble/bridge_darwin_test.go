@@ -223,7 +223,8 @@ func TestBridgeTransport(t *testing.T) {
 	if err := json.Unmarshal([]byte(readAll(t, tr)), &req); err != nil {
 		t.Fatal(err)
 	}
-	want := blebridge.OpenRequest{Name: "MX10", Service: 0xae30, Write: 0xae01, Notify: 0xae02, GapMS: 25}
+	want := blebridge.OpenRequest{Name: "MX10", Service: "0000ae30-0000-1000-8000-00805f9b34fb",
+		Write: "0000ae01-0000-1000-8000-00805f9b34fb", Notify: "0000ae02-0000-1000-8000-00805f9b34fb", GapMS: 25}
 	if req != want {
 		t.Errorf("open request %+v, want %+v", req, want)
 	}
