@@ -46,6 +46,11 @@ func (t *Transport) Write(p []byte) (int, error) {
 	return t.conn.Write(p)
 }
 
+// SetReadTimeout sets ReadTimeout (driver.ReadTimeoutSetter), e.g. to drop stale bytes quickly; 0 = 2 s again.
+func (t *Transport) SetReadTimeout(d time.Duration) { t.ReadTimeout = d }
+
+var _ driver.ReadTimeoutSetter = (*Transport)(nil)
+
 // Read returns os.ErrDeadlineExceeded when the printer says nothing within ReadTimeout.
 func (t *Transport) Read(p []byte) (int, error) {
 	to := t.ReadTimeout

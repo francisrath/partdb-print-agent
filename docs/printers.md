@@ -11,7 +11,7 @@ Which label printers pdb-print can drive, how well each one is tested, and how t
 
 The tables below are generated from the device database (`internal/devicedb/data/*.yaml`). Don't edit
 them by hand: change the data and run `go test ./internal/devicedb -run TestPrintersDoc -update`.
-Driver pull requests adding TSPL, DYMO LabelWriter 300/400/450, Zebra EPL2, Niimbot/Phomemo are
+Driver pull requests adding DYMO LabelWriter 300/400/450, Zebra EPL2 and Niimbot/Phomemo are
 in review; their models appear here once merged.
 
 <!-- printers:begin -->
@@ -61,11 +61,51 @@ in review; their models appear here once merged.
 | 🟡 | ESCPOS-58 | Bluetooth Classic | escpos/raster |  |
 | 🟡 | ESCPOS-80 | Bluetooth Classic | escpos/raster |  |
 
+### HPRT
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | HT300 | USB, Network, Bluetooth Classic | tspl |  |
+| 🟡 | N41 | USB | tspl |  |
+
+### Munbyn
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | ITPP941 | USB | tspl |  |
+
 ### REGO
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
 | 🟡 | RG-MLP80B | Bluetooth Classic | escpos/raster |  |
+
+### TSC
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | DA210 | USB, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | DA220 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TC200 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TDP-225 | USB, Network | tspl/tspl2 |  |
+| 🟡 | TDP-244 | USB | tspl/tspl2 |  |
+| 🟡 | TDP-247 | USB, Network | tspl/tspl2 |  |
+| 🟡 | TE200 | USB, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TE210 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TE300 | USB, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TE310 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TTP-244Pro | USB | tspl/tspl2 |  |
+| 🟡 | TX200 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+| 🟡 | TX300 | USB, Network, Bluetooth Classic | tspl/tspl2 |  |
+
+### Xprinter
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | XP-365B | USB, Network, Bluetooth Classic | tspl |  |
+| 🟡 | XP-420B | USB, Network, Bluetooth Classic | tspl |  |
+| 🟡 | XP-470B | USB, Bluetooth Classic | tspl |  |
+| 🟡 | XP-D463B | USB, Bluetooth Classic | tspl |  |
 
 ### Zebra
 
@@ -119,6 +159,15 @@ in review; their models appear here once merged.
 | 🟡 | ZT610-300 | Network, USB | zpl |  |
 | 🟡 | ZT620-203 | Network, USB | zpl |  |
 | 🟡 | ZT620-300 | Network, USB | zpl |  |
+
+### iDPRT
+
+| Status | Model | Connections | Driver | Notes |
+|---|---|---|---|---|
+| 🟡 | SP410 | USB | tspl |  |
+| 🟡 | SP420 | USB | tspl |  |
+| 🟡 | iD4S-203 | USB, Network | tspl |  |
+| 🟡 | iD4S-300 | USB, Network | tspl |  |
 
 <!-- printers:end -->
 

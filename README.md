@@ -36,6 +36,7 @@ printers) is on `main` and comes with the next release; until then, [build from 
 | Brother QL | Network, USB | QL-560 … QL-820NWB, wide QL-1050/1060N/1100/1110NWB/1115NWB | ✅ QL-810W |
 | Brother P-touch | USB, Network, Bluetooth Classic | PT-9500PC, PT-E550W, PT-P750W, PT-P710BT, PT-P900 series … | ✅ PT-9500PC |
 | Zebra (ZPL) | Network, USB, Bluetooth Classic | GK, GX, GC, ZD, ZP, ZT and ZQ series, LP2844-Z | ✅ GK420d (community) |
+| TSC and TSPL clones | USB, Network, Bluetooth Classic | TSC, Xprinter, Munbyn, iDPRT, HPRT | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
 
@@ -249,6 +250,30 @@ as "unknown" in `discover`; `pdb-print try` and the setup wizard can ask them wh
 non-Zebra might print).
 
 EPL-only printers (plain LP/TLP 2844 without "-Z") and serial (RS-232) connections aren't supported yet.
+
+### TSC and other TSPL printers
+
+TSC printers and TSPL clones (Xprinter, Munbyn, iDPRT, HPRT; every model in [docs/printers.md](docs/printers.md)). **None of them has
+been tested on a real printer yet.** Over USB (Linux), the network (port 9100) on models with Ethernet, or
+Bluetooth Classic (`kind: bt`) on models with a Bluetooth serial option. They aren't recognised automatically
+(no USB ids or Bluetooth names are published): pick the model by hand. TSPL printers don't report the loaded
+label, so set `media:` to it: a size `pdb-print media` lists for your model, die-cut (`label-102x152` for 4×6")
+or continuous (`continuous-102`/`-76`/`-57` on the 4" and 3" models; the 2" TDP-225 takes die-cut only). Die-cut labels are sent with a 3 mm gap; the printer finds the gap itself.
+
+```yaml
+- id: xprinter
+  name: Xprinter XP-420B
+  model: XP-420B
+  transport: {kind: tcp, host: 192.168.1.70}
+  media: label-102x152
+  # cut: per_label            # only with a cutter fitted: per_label | last | none (the printer keeps it)
+```
+
+Every label goes as one bitmap. Status is the printer's one-byte answer to `<ESC>!?` (head open, paper out
+or jam, ribbon out, paused); after a job pdb-print waits for the "printing" flag to clear and reports
+"printed". A short label can finish before pdb-print sees the flag: then it reports "sent, probably printed"
+(not confirmed). A printer that doesn't answer (many clones over Bluetooth) gives "sent (unconfirmed)". Black-mark
+media (`BLINE`) isn't supported yet.
 
 ### Bluetooth LE "cat printers"
 

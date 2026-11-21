@@ -59,6 +59,11 @@ func (t *Transport) Open(ctx context.Context) error {
 
 func (t *Transport) Write(p []byte) (int, error) { return t.f.Write(p) }
 
+// SetReadTimeout sets ReadTimeout (driver.ReadTimeoutSetter), e.g. to drop stale bytes quickly; 0 = 2 s again.
+func (t *Transport) SetReadTimeout(d time.Duration) { t.ReadTimeout = d }
+
+var _ driver.ReadTimeoutSetter = (*Transport)(nil)
+
 // Read returns os.ErrDeadlineExceeded when the printer says nothing within ReadTimeout.
 // usblp doesn't block: with nothing queued a read returns 0 bytes, which os.File reports
 // as io.EOF (measured on a Pi 2 with a PT-9500PC, 2026-11-18). So poll until data arrives.
