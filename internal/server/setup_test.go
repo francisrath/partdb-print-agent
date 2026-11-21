@@ -100,8 +100,20 @@ func TestWizardHappyPath(t *testing.T) {
 		t.Errorf("name page lacks suggestions: %s", w.Body)
 	}
 	wantRedirect(t, h.post("/setup/name", url.Values{"name": {"Receiving desk"}}), "/setup/done")
-	if w := h.do("GET", "/setup/done", nil); !strings.Contains(w.Body.String(), "Part-DB now shows") {
+	if w := h.do("GET", "/setup/done", nil); !strings.Contains(w.Body.String(), "Part-DB now shows") ||
+		!strings.Contains(w.Body.String(), `name="telemetry" value="1" checked`) {
 		t.Errorf("done page: %s", w.Body)
+	}
+	if h.srv.config().Telemetry != nil {
+		t.Fatal("usage report decided before the last step")
+	}
+	h.post("/setup/done", url.Values{"action": {"finish"}}) // box unticked: the browser sends no field
+	if on := h.srv.config().Telemetry; on == nil || *on {
+		t.Errorf("unticked box: telemetry %v, want false", on)
+	}
+	h.post("/setup/done", url.Values{"action": {"finish"}, "telemetry": {"1"}})
+	if on := h.srv.config().Telemetry; on == nil || !*on {
+		t.Errorf("ticked box: telemetry %v, want true", on)
 	}
 
 	cfg, err := config.Load(h.srv.CfgPath, true)

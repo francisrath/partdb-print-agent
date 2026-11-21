@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"github.com/francisrath/partdb-print-agent/internal/driver"
 	"github.com/francisrath/partdb-print-agent/internal/partdb"
 	"github.com/francisrath/partdb-print-agent/internal/printing"
+	"github.com/francisrath/partdb-print-agent/internal/telemetry"
 	"github.com/francisrath/partdb-print-agent/internal/update"
 	"github.com/zalando/go-keyring"
 )
@@ -612,5 +614,49 @@ func TestIndexShowsNewerRelease(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("%q missing", want)
 		}
+	}
+}
+
+func TestTelemetryChoice(t *testing.T) {
+	h := newHarness(t)
+	body := h.do("GET", "/", nil).Body.String()
+	if !strings.Contains(body, "Nothing is sent until you choose") || !strings.Contains(body, `name="on" value="1" checked`) {
+		t.Fatalf("undecided page: %s", body)
+	}
+	h.post("/telemetry", url.Values{}) // unticked
+	if on := h.srv.config().Telemetry; on == nil || *on {
+		t.Fatalf("telemetry %v, want false", on)
+	}
+	body = h.do("GET", "/", nil).Body.String()
+	if strings.Contains(body, "Nothing is sent until you choose") || strings.Contains(body, `name="on" value="1" checked`) {
+		t.Error("decided off: notice or ticked box still shown")
+	}
+	h.post("/telemetry", url.Values{"on": {"1"}})
+	if on := h.srv.config().Telemetry; on == nil || !*on {
+		t.Errorf("telemetry %v, want true", on)
+	}
+	t.Setenv("DO_NOT_TRACK", "1")
+	if body := h.do("GET", "/", nil).Body.String(); !strings.Contains(body, "Not sent: DO_NOT_TRACK is set") {
+		t.Error("environment opt-out not shown")
+	}
+}
+
+func TestJobsAreCounted(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("DO_NOT_TRACK", "")
+	t.Setenv("PDB_PRINT_TELEMETRY", "")
+	h.srv.Stats = telemetry.Open(filepath.Join(t.TempDir(), "telemetry.json"))
+	h.post("/printers/ql/test", nil) // undecided: not counted
+	if r := (&telemetry.Sender{Store: h.srv.Stats, Version: "0.3.0", Config: h.srv.Config}).Build(); len(r.Jobs) != 0 {
+		t.Fatalf("counted while undecided: %+v", r.Jobs)
+	}
+	h.post("/telemetry", url.Values{"on": {"1"}})
+	h.post("/printers/ql/test", nil)
+	h.srv.finish("hot folder", "x.pdf", "ql", nil, &driver.Error{Code: driver.NoMedia})
+	h.srv.finish("something new", "x.pdf", "nope", nil, errors.New("boom"))
+	r := (&telemetry.Sender{Store: h.srv.Stats, Version: "0.3.0", Config: h.srv.Config}).Build()
+	if r.Jobs["web-ui"] != 1 || r.Jobs["hot-folder"] != 1 || r.Jobs["other"] != 1 || r.Labels["QL-810W"] != 1 ||
+		r.Errors["NO_MEDIA"] != 1 || r.Errors["OTHER"] != 1 {
+		t.Errorf("%+v", r)
 	}
 }

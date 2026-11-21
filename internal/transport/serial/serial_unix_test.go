@@ -20,6 +20,7 @@ func fakePrinter(t *testing.T) (*os.File, string) {
 	if err != nil {
 		t.Skipf("no pty here: %v", err)
 	}
+
 	f := os.NewFile(uintptr(m), "ptmx")
 	t.Cleanup(func() { f.Close() })
 	return f, name
@@ -30,13 +31,21 @@ func readN(t *testing.T, f *os.File, n int) []byte {
 	t.Helper()
 	got := make([]byte, 0, n)
 	buf := make([]byte, 4096)
+	// Fd() puts the file in blocking mode; set it back. poll can report the master readable with
+	// nothing to read (seen on Linux CI while the slave holds output after XOFF), and a blocking read
+	// then hung past the deadline for the whole 10-minute test timeout.
+	fd := int(f.Fd())
+	if err := unix.SetNonblock(fd, true); err != nil {
+		t.Error(err)
+		return nil
+	}
 	deadline := time.Now().Add(time.Second)
 	for len(got) < n && time.Now().Before(deadline) {
-		fds := []unix.PollFd{{Fd: int32(f.Fd()), Events: unix.POLLIN}}
+		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 		if k, _ := unix.Poll(fds, 50); k == 0 {
 			continue
 		}
-		k, err := unix.Read(int(f.Fd()), buf)
+		k, err := unix.Read(fd, buf)
 		if err != nil && !errors.Is(err, unix.EAGAIN) {
 			t.Error(err) // may run in a goroutine: no Fatal
 			break
