@@ -161,7 +161,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	if *purge {
 		fmt.Fprintln(out, "pdb-print is uninstalled, its config deleted.")
 	} else {
-		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s (for a reinstall; pdb-print uninstall --purge also removes it).\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
+		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s for a reinstall; delete that folder if you don't need it.\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
 	}
 	return nil
 }
