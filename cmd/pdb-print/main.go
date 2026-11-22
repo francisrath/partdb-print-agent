@@ -34,6 +34,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/francisrath/pdb-print/internal/driver"
+	"github.com/francisrath/pdb-print/internal/logfile"
 	"github.com/francisrath/pdb-print/internal/partdb"
 	"github.com/francisrath/pdb-print/internal/printing"
 	"github.com/francisrath/pdb-print/internal/render"
@@ -81,14 +82,31 @@ commands:
                                    GitHub issue (asks before sending anything to a printer)
 `
 
+// gui is "1" in pdb-printw.exe (set by the release build), the windowless exe the login autostart runs.
+var gui string
+
+// logOut takes the log and the final error: stderr, or a file for pdb-printw.exe (see logWriter).
+var logOut io.Writer = os.Stderr
+
 func main() {
 	// SIGTERM too: docker stop, systemd and launchd use it; both trigger the graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	logOut = logWriter()
 	if err := run(ctx, os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(logOut, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// logWriter is stderr, except in pdb-printw.exe: it has no stderr, so a failing autostart would
+// leave no trace. That logs to %LOCALAPPDATA%\pdb-print\pdb-print.log, kept to 10 MB plus one old file.
+func logWriter() io.Writer {
+	dir := os.Getenv("LOCALAPPDATA")
+	if goos != "windows" || gui != "1" || dir == "" {
+		return os.Stderr
+	}
+	return &logfile.Writer{Path: filepath.Join(dir, "pdb-print", "pdb-print.log"), Max: 10 << 20}
 }
 
 type app struct {
@@ -188,7 +206,7 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	log := slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: level}))
 	a := &app{cfg: cfg, cfgPath: path, log: log, svc: &printing.Service{Log: log}}
 	pdftoppm := cfg.Pdftoppm
 	if v := os.Getenv("PDB_PRINT_PDFTOPPM"); v != "" {
@@ -357,7 +375,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	ctx, quit := context.WithCancel(ctx) // POST /v1/quit: the same graceful shutdown as SIGTERM
 	defer quit()
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
-	srv.Quit = quit
+	if goos == "windows" { // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
+		srv.Quit = quit
+	}
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	if a.cfg.UpdateCheckOn() {

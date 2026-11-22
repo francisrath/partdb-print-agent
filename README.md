@@ -86,9 +86,10 @@ The macOS binaries are signed with a Developer ID and notarised by Apple.
 `pdb-print.exe`, then answer the question with Enter. Or run `pdb-print install` in a terminal
 (`--quiet` skips opening the web UI). It installs for your user only (no admin needed) into
 `%LOCALAPPDATA%\Programs\pdb-print`, starts at login without a window and adds the web UI to the
-Start menu. To remove it: Settings → Apps → pdb-print, or `pdb-print uninstall` (`--purge` also
-deletes the config in `%AppData%\pdb-print`). Until releases are signed, SmartScreen warns about the
-download and the first start: "More info" → "Run anyway".
+Start menu. Its log is in `%LOCALAPPDATA%\pdb-print\pdb-print.log`. To remove it: Settings → Apps →
+pdb-print, or `pdb-print uninstall` (`--purge` also deletes the config in `%AppData%\pdb-print`).
+Until releases are signed, SmartScreen warns about the download and the first start: "More info" →
+"Run anyway".
 
 **Docker** (Linux amd64/arm64):
 ```sh
