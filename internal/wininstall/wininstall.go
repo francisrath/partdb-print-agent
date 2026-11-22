@@ -104,6 +104,8 @@ type System interface {
 	DeleteAfterExit(path string) error
 	// WaitExit waits until process pid has exited; one that doesn't exist has.
 	WaitExit(pid int, timeout time.Duration) error
+	// OwnedByAdmins reports whether path is owned by Administrators or SYSTEM.
+	OwnedByAdmins(path string) (bool, error)
 }
 
 // Options for Install. NoSelfUpdate writes self_update: false into the config; Quiet is for the caller.
@@ -120,8 +122,9 @@ type Options struct {
 // one): wait for its port to free instead.
 var ErrCantWatch = errors.New("can't watch the process")
 
-// serviceStopWait is how long a stopping service may take: a print in progress finishes first.
-const serviceStopWait = 2 * time.Minute
+// serviceStopWait is how long a stopping service may take: serve's own shutdown (a print in
+// progress finishes, up to 2 min) and a little more.
+const serviceStopWait = 2*time.Minute + 10*time.Second
 
 // Quote quotes one command-line argument (paths only: no embedded quotes).
 // Trailing backslashes are doubled so they do not escape the closing quote.
@@ -136,8 +139,8 @@ var ErrNotStarted = errors.New("installed, but could not start the agent")
 // Install copies the binaries into the mode's program dir, registers autostart
 // and the uninstall entry, writes the Start-menu link and starts the agent.
 // Running it again over an existing install updates it in place.
-func Install(sys System, o Options) (Layout, error) {
-	l := LayoutFor(o.Mode, o.Env)
+func Install(sys System, o Options) (l Layout, err error) {
+	l = LayoutFor(o.Mode, o.Env)
 	if err := o.Env.check(o.Mode); err != nil {
 		return l, err
 	}
@@ -146,20 +149,30 @@ func Install(sys System, o Options) (Layout, error) {
 		return l, fmt.Errorf("%s not found next to %s (extract the whole zip first, then run %s from the extracted folder): %w",
 			exeWName, o.Self, exeName, err)
 	}
-	hadService := false
 	if o.Mode == Service {
-		var err error
-		if hadService, err = sys.ServiceExists(); err != nil {
-			return l, fmt.Errorf("query service: %w", err)
+		hadService, qerr := sys.ServiceExists() // not err: the defer below must see the result
+		if qerr != nil {
+			return l, fmt.Errorf("query service: %w", qerr)
 		}
 		if hadService { // waits for a print in progress; its exes can then be swapped
 			if err := sys.StopService(serviceStopWait); err != nil {
 				return l, fmt.Errorf("stop service: %w", err)
 			}
+			defer func() {
+				if err != nil && !errors.Is(err, ErrNotStarted) {
+					err = fmt.Errorf("%w (the pdb-print service is stopped; run the install again)", err)
+				}
+			}()
 		}
 		// before any file goes in it: ProgramData lets every user create files (a planted session.key)
-		if err := MkdirAdminOnly(filepath.Dir(l.Config)); err != nil {
-			return l, fmt.Errorf("create %s: %w", filepath.Dir(l.Config), err)
+		dir := filepath.Dir(l.Config)
+		if err := MkdirAdminOnly(dir); err != nil {
+			return l, fmt.Errorf("create %s: %w", dir, err)
+		}
+		if !hadService {
+			if err := cleanConfigDir(sys, dir, o.Out); err != nil {
+				return l, err
+			}
 		}
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
@@ -173,7 +186,7 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := copyExe(selfW, l.ExeW); err != nil {
 		return l, fmt.Errorf("copy %s: %w", exeWName, err)
 	}
-	err := sys.WriteUninstall(o.Mode, Entry{
+	err = sys.WriteUninstall(o.Mode, Entry{
 		DisplayName:     name,
 		DisplayVersion:  o.Version,
 		Publisher:       name,
@@ -201,11 +214,9 @@ func Install(sys System, o Options) (Layout, error) {
 		}
 	}
 	if o.Mode == Service {
-		if !hadService {
-			// raw paths: the service manager quotes them
-			if err := sys.InstallService(l.Exe, []string{"service", "run", "--config", l.Config}); err != nil {
-				return l, fmt.Errorf("install service: %w", err)
-			}
+		// creates it, or refreshes an existing one's config; raw paths: the service manager quotes them
+		if err := sys.InstallService(l.Exe, []string{"service", "run", "--config", l.Config}); err != nil {
+			return l, fmt.Errorf("install service: %w", err)
 		}
 		if err := sys.StartService(); err != nil {
 			return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
@@ -219,6 +230,47 @@ func Install(sys System, o Options) (Layout, error) {
 		return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
 	}
 	return l, nil
+}
+
+// cleanConfigDir readies the service's config dir for a first install: an old session key and
+// pairing code go (someone may know them), and so does anything an ordinary user made or a link.
+func cleanConfigDir(sys System, dir string, out io.Writer) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, en := range entries {
+		p := filepath.Join(dir, en.Name())
+		drop := en.Name() == "session.key" || en.Name() == "pair-code.txt"
+		if !drop {
+			fi, err := os.Lstat(p)
+			if err != nil {
+				return err
+			}
+			owned, err := sys.OwnedByAdmins(p)
+			if err != nil {
+				return fmt.Errorf("owner of %s: %w", p, err)
+			}
+			drop = isReparse(fi) || !owned
+			if drop && out != nil {
+				fmt.Fprintf(out, "Removed %s: not made by an administrator.\n", p)
+			}
+		}
+		if drop {
+			if err := os.RemoveAll(p); err != nil {
+				return fmt.Errorf("remove %s: %w", p, err)
+			}
+		}
+	}
+	return nil
+}
+
+// notLink refuses a path that is a link (symlink, junction): the admin-only ACL would land elsewhere.
+func notLink(dir string) error {
+	if fi, err := os.Lstat(dir); err == nil && isReparse(fi) {
+		return fmt.Errorf("%s is a link (junction or symlink), not a folder: delete it and run the install again", dir)
+	}
+	return nil
 }
 
 // takeOver replaces this user's per-user install with the service: its config is copied to cfg

@@ -31,9 +31,15 @@ func (osSystem) PortInUse(addr string) bool              { return portInUse(addr
 func (osSystem) Listening(addr string) bool              { return listening(addr) }
 func (osSystem) DeleteAfterExit(string) error            { return ErrNotWindows }
 func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows }
+func (osSystem) OwnedByAdmins(string) (bool, error)      { return false, ErrNotWindows }
+
+func isReparse(fi os.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
 
 // MkdirAdminOnly creates dir (and its parents) for its owner only, or resets an existing one to that.
 func MkdirAdminOnly(dir string) error {
+	if err := notLink(dir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

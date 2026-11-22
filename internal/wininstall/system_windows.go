@@ -137,14 +137,30 @@ func (osSystem) ServiceExists() (bool, error) {
 	return true, nil
 }
 
+// InstallService creates the service, or brings an existing one's config to what a new one gets.
 func (osSystem) InstallService(exe string, args []string) error {
 	m, err := connect()
 	if err != nil {
 		return err
 	}
 	defer m.Disconnect()
-	s, err := m.CreateService(name, exe, mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic}, args...)
-	if err != nil {
+	c := mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic}
+	s, err := m.OpenService(name)
+	if err == nil {
+		cur, err := s.Config()
+		if err == nil {
+			cur.DisplayName, cur.Description, cur.StartType, cur.DelayedAutoStart = c.DisplayName, c.Description, c.StartType, false
+			cur.BinaryPathName = syscall.EscapeArg(exe) // as CreateService builds it
+			for _, a := range args {
+				cur.BinaryPathName += " " + syscall.EscapeArg(a)
+			}
+			err = s.UpdateConfig(cur)
+		}
+		if err != nil {
+			s.Close()
+			return err
+		}
+	} else if s, err = m.CreateService(name, exe, c, args...); err != nil {
 		return err
 	}
 	defer s.Close()
@@ -182,6 +198,9 @@ func (osSystem) StopService(timeout time.Duration) error {
 		st, err := s.Control(svc.Stop)
 		if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 			return nil // already stopped
+		}
+		if errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL) { // already stopping: wait for it
+			st, err = s.Query()
 		}
 		if err != nil {
 			return err
@@ -266,16 +285,37 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	return nil
 }
 
+func (osSystem) OwnedByAdmins(path string) (bool, error) {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	o, _, err := sd.Owner()
+	if err != nil {
+		return false, err
+	}
+	return o.IsWellKnown(windows.WinBuiltinAdministratorsSid) || o.IsWellKnown(windows.WinLocalSystemSid), nil
+}
+
+func isReparse(fi os.FileInfo) bool {
+	a, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	return fi.Mode()&os.ModeSymlink != 0 || ok && a.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
 }
 
-// adminOnlyDir: Administrators and SYSTEM, inherited by what is created inside; nothing from the parent.
-const adminOnlyDir = "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
+// adminOnlyDir: owned by Administrators; Administrators and SYSTEM, inherited by what is created
+// inside; nothing from the parent.
+const adminOnlyDir = "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
 
 // MkdirAdminOnly creates dir with an ACL of Administrators + SYSTEM only (set at creation, so no
-// other user can get a file into it first), or resets an existing dir's ACL to that.
+// other user can get a file into it first), or resets an existing dir's owner and ACL to that.
 func MkdirAdminOnly(dir string) error {
+	if err := notLink(dir); err != nil {
+		return err
+	}
 	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
 	if err != nil {
 		return err
@@ -291,12 +331,16 @@ func MkdirAdminOnly(dir string) error {
 	if err := windows.CreateDirectory(p, sa); !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		return err // nil: created with the ACL
 	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
 	dacl, _, err := sd.DACL()
 	if err != nil {
 		return err
 	}
 	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil)
 }
 
 // WriteAdminOnly writes data to path readable only by Administrators and SYSTEM. The file is
