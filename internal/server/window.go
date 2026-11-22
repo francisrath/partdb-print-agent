@@ -30,6 +30,7 @@ const (
 	windowIdle  = 5 * time.Minute  // left at least this long after each wizard request
 	windowMax   = 30 * time.Minute // never longer than this after opening
 	windowTries = 5                // wrong codes before it closes
+	windowEvery = time.Minute      // /v1/pair opens at most one new window this often
 	cookieName  = "pdb_setup"
 )
 
@@ -57,12 +58,35 @@ type Session struct {
 
 // Open starts a new window with a new code; earlier sessions end.
 func (w *Window) Open(now time.Time) (code string, expires time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.openLocked(now)
+}
+
+// errTooSoon: OpenOrCurrent was asked for a new window within windowEvery of the last one.
+var errTooSoon = errors.New("a setup window was opened less than a minute ago: wait a minute, then try again")
+
+// OpenOrCurrent returns the open window's code and expiry (tries not reset), or opens a new window,
+// at most one per windowEvery: that limits guessing to windowTries codes a minute.
+func (w *Window) OpenOrCurrent(now time.Time) (code string, expires time.Time, err error) {
+	open := w.IsOpen(now) // closes an expired window
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case open && w.open:
+		return w.code, w.expires, nil
+	case !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
+		return "", time.Time{}, errTooSoon
+	}
+	code, expires = w.openLocked(now)
+	return code, expires, nil
+}
+
+func (w *Window) openLocked(now time.Time) (code string, expires time.Time) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
 		panic(err)
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.open, w.code, w.used, w.tries, w.gen = true, fmt.Sprintf("%06d", n.Int64()), false, 0, w.gen+1
 	w.opened, w.expires = now, now.Add(windowOpen)
 	w.sessions = map[string]*Session{}
@@ -192,6 +216,11 @@ func (w *Window) notifyClose() {
 // OpenWindow opens the setup window and returns the code and the URLs to type it at.
 func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires time.Time) {
 	code, expires = s.Window.Open(now)
+	return code, s.windowURLs(), expires
+}
+
+// windowURLs waits for SetupLoop to listen and returns the URLs to type the code at.
+func (s *Server) windowURLs() (urls []string) {
 	select { // forget an older scan, then wait for SetupLoop to listen
 	case <-s.scanned:
 	default:
@@ -213,7 +242,7 @@ func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires 
 	for _, a := range addrs {
 		urls = append(urls, "http://"+net.JoinHostPort(a.String(), port)+"/setup/")
 	}
-	return code, urls, expires
+	return urls
 }
 
 // boundAddrs are the LAN addresses the setup server listens on right now.
@@ -506,34 +535,44 @@ func (s *Server) pairPage(w http.ResponseWriter, msg string, status int) {
 }
 
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.checkCode(w, r)
+	if !ok {
+		return
+	}
+	// Secure only over TLS: the setup window is plain HTTP on the LAN, where a Secure cookie would
+	// never come back and pairing would fail. SameSite=Strict and HttpOnly hold either way.
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
+	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+}
+
+// checkCode checks the posted pairing code; when it doesn't pair, it has answered with the pair page.
+func (s *Server) checkCode(w http.ResponseWriter, r *http.Request) (*Session, bool) {
 	sess, ok := s.Window.Check(r.FormValue("code"), time.Now())
 	if !ok && s.Window.CodeUsed() && s.Window.IsOpen(time.Now()) {
 		s.Log.Warn("setup window: pairing code already used", "from", r.RemoteAddr)
 		s.pairPage(w, "This code has already been used: it pairs one browser. For another browser, run "+
 			"\"pdb-print pair\" on the print server; it opens the window with a new code.", http.StatusForbidden)
-		return
+		return nil, false
 	}
 	if !ok {
 		s.Log.Warn("setup window: wrong pairing code", "from", r.RemoteAddr)
 		s.pairPage(w, "That code didn't match. Check the code and try again.", http.StatusForbidden)
-		return
+		return nil, false
 	}
 	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
-	// Secure only over TLS: the setup window is plain HTTP on the LAN, where a Secure cookie would
-	// never come back and pairing would fail. SameSite=Strict and HttpOnly hold either way.
-	// PairLoopback: the session also opens the settings page, so the cookie covers every path.
-	path := "/setup"
-	if s.PairLoopback {
-		path = "/"
-	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: path, HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
-	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+	return sess, true
 }
 
-// pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it.
+// pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it
+// (or gets the one that is open).
 func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
-	code, urls, expires := s.OpenWindow(time.Now())
+	code, expires, err := s.Window.OpenOrCurrent(time.Now())
+	if errors.Is(err, errTooSoon) {
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		return
+	}
+	urls := s.windowURLs()
 	if s.PairCodeFile != "" { // the service: only administrators may see the code
 		if err := wininstall.WriteAdminOnly(s.PairCodeFile, []byte(code)); err != nil {
 			s.Window.Close()

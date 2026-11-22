@@ -85,6 +85,10 @@ type Server struct {
 	// answering it. Both are set before Handler.
 	PairLoopback bool
 	PairCodeFile string
+	// SessionKeyFile holds the secret that signs PairLoopback's long-lived sessions (created on first
+	// pairing, admin-only); deleting it signs every browser out.
+	SessionKeyFile string
+	keyMu          sync.Mutex // creating the session key
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
@@ -168,7 +172,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	if s.PairLoopback { // as on the LAN: the pair page, then the wizard
 		mux.HandleFunc("GET /setup/{$}", s.setupStart)
-		mux.HandleFunc("POST /setup/pair", s.pair)
+		mux.HandleFunc("POST /setup/pair", s.pairLocal)
 	} else {
 		mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
 			d := s.local.Draft // a fresh start
@@ -204,15 +208,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			return
 		}
 		securityHeaders(w)
-		var sess *Session // PairLoopback: the paired browser's session
+		paired := false // PairLoopback: the browser has a long-lived session
 		if pairLoopback {
-			now := time.Now()
-			var ok bool
-			sess, ok = s.Window.Session(r, now)
 			switch {
-			case ok:
-				s.Window.Touch(now)
-				r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess))
+			case s.longSession(r, time.Now()):
+				paired = true
+				r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, s.local))
 			case pairFree(r):
 			case r.Method == http.MethodGet || r.Method == http.MethodHead:
 				http.Redirect(w, r, "/setup/", http.StatusSeeOther)
@@ -239,12 +240,8 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
-			want := s.csrf // the settings pages'; the wizard's pages carry their session's
-			if sess != nil && isSetupPath(r.URL.Path) {
-				want = sess.CSRF
-			}
-			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(want)) == 1 ||
-				pairLoopback && sess == nil && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
+			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) == 1 ||
+				pairLoopback && !paired && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
 			if !originOK || !tokenOK {
 				s.Log.Warn("rejected POST", "path", r.URL.Path, "origin", origin, "origin_ok", originOK, "csrf_ok", tokenOK)
 				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)

@@ -76,7 +76,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 }
 
 // withLocalSession gives loopback wizard requests the one local session (no code needed here);
-// not under PairLoopback, where guard puts the paired browser's session in.
+// not under PairLoopback, where guard gives it only to paired browsers.
 func (s *Server) withLocalSession(next http.Handler) http.Handler {
 	if s.PairLoopback {
 		return next

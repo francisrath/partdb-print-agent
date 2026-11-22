@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -563,6 +564,7 @@ func TestWizardScanLeavesBTOffline(t *testing.T) {
 func pairLoopbackHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	h.srv.PairLoopback = true
+	h.srv.SessionKeyFile = filepath.Join(t.TempDir(), "session.key")
 	h.h = h.srv.Handler()
 	return h
 }
@@ -612,6 +614,21 @@ func TestPairLoopbackIndexNeedsSession(t *testing.T) {
 	}
 }
 
+// pairLoopback pairs a loopback browser with the window's code and returns its session cookie.
+func pairLoopback(t *testing.T, h *harness) *http.Cookie {
+	t.Helper()
+	code, _ := h.srv.Window.Open(time.Now())
+	w := h.do("POST", "/setup/pair", url.Values{"code": {code}}, fromLoopback)
+	wantRedirect(t, w, "/setup/partdb")
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie {
+			return c
+		}
+	}
+	t.Fatalf("no session cookie: %v", w.Result().Cookies())
+	return nil
+}
+
 func TestPairLoopbackPairs(t *testing.T) {
 	h := pairLoopbackHarness(t)
 	code, _ := h.srv.Window.Open(time.Now())
@@ -625,33 +642,159 @@ func TestPairLoopbackPairs(t *testing.T) {
 	if w := h.do("POST", "/setup/pair", url.Values{"code": {wrong}}, fromLoopback); w.Code != http.StatusForbidden {
 		t.Fatalf("wrong code: %d", w.Code)
 	}
-	w := h.do("POST", "/setup/pair", url.Values{"code": {code}}, fromLoopback)
-	wantRedirect(t, w, "/setup/partdb")
-	var cookie *http.Cookie
-	for _, c := range w.Result().Cookies() {
-		if c.Name == cookieName {
-			cookie = c
-		}
-	}
-	if cookie == nil || cookie.Path != "/" || cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+	cookie := pairLoopback(t, h)
+	if cookie.Path != "/" || cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode ||
+		cookie.MaxAge != int(sessionLife/time.Second) {
 		t.Fatalf("session cookie %+v", cookie)
 	}
+	if fi, err := os.Stat(h.srv.SessionKeyFile); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("key file: %v %v", fi, err)
+	}
 	withCookie := func(r *http.Request) { r.AddCookie(cookie); fromLoopback(r) }
+	h.srv.Window.Close() // the session outlives the window
 	if w := h.do("GET", "/", nil, withCookie); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), h.srv.csrf) {
 		t.Fatalf("index after pairing: %d %s", w.Code, w.Body)
 	}
-	if w := h.do("GET", "/setup/partdb", nil, withCookie); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "Set up by hand") {
-		t.Fatalf("wizard after pairing (LAN-like, no local shortcut): %d %s", w.Code, w.Body)
+	if w := h.do("GET", "/setup/partdb", nil, withCookie); w.Code != http.StatusOK {
+		t.Fatalf("wizard after pairing: %d %s", w.Code, w.Body)
 	}
 	if w := h.do("POST", "/routes", url.Values{"csrf": {h.srv.csrf}, "profile": {"2"}, "printer": {"ql"}}, withCookie); w.Code != http.StatusSeeOther {
 		t.Fatalf("settings POST after pairing: %d %s", w.Code, w.Body)
 	}
-	if w := h.do("POST", "/setup/partdb", url.Values{"csrf": {h.srv.csrf}}, withCookie); w.Code != http.StatusForbidden {
-		t.Errorf("wizard POST with the main CSRF token instead of the session's: %d", w.Code)
+	if w := h.do("POST", "/routes", url.Values{"profile": {"2"}, "printer": {"ql"}}, withCookie); w.Code != http.StatusForbidden {
+		t.Errorf("settings POST with the cookie but no CSRF token: %d", w.Code)
 	}
-	h.srv.Window.Close()
-	if w := h.do("GET", "/", nil, withCookie); w.Code != http.StatusSeeOther {
-		t.Errorf("index after the window closed: %d", w.Code)
+}
+
+func TestSessionSurvivesRestart(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	cookie := pairLoopback(t, h)
+	h2 := newHarness(t) // a fresh Server: new secrets in memory, the same key file
+	h2.srv.PairLoopback, h2.srv.SessionKeyFile = true, h.srv.SessionKeyFile
+	h2.h = h2.srv.Handler()
+	if w := h2.do("GET", "/", nil, func(r *http.Request) { r.AddCookie(cookie) }); w.Code != http.StatusOK {
+		t.Errorf("after a restart: %d", w.Code)
+	}
+}
+
+func TestSessionCookieRejected(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	good := pairLoopback(t, h).Value
+	expired, err := h.srv.signSession(time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, sig, _ := strings.Cut(good, ".")
+	later, _ := strconv.ParseInt(exp, 10, 64)
+	flip := map[byte]byte{'0': '1'}[sig[len(sig)-1]]
+	if flip == 0 {
+		flip = '0'
+	}
+	for _, tc := range []struct{ name, value string }{
+		{"tampered signature", exp + "." + sig[:len(sig)-1] + string(flip)},
+		{"extended expiry", strconv.FormatInt(later+86400, 10) + "." + sig},
+		{"expired", expired},
+		{"no signature", exp},
+		{"garbage", "x.y"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := h.do("GET", "/", nil, func(r *http.Request) { r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tc.value}) })
+			if w.Code != http.StatusSeeOther {
+				t.Errorf("status %d", w.Code)
+			}
+		})
+	}
+	t.Run("key file deleted", func(t *testing.T) {
+		if err := os.Remove(h.srv.SessionKeyFile); err != nil {
+			t.Fatal(err)
+		}
+		w := h.do("GET", "/", nil, func(r *http.Request) { r.AddCookie(&http.Cookie{Name: sessionCookie, Value: good}) })
+		if w.Code != http.StatusSeeOther {
+			t.Errorf("status %d", w.Code)
+		}
+	})
+}
+
+func TestNoLongSessionByDefault(t *testing.T) {
+	h := newHarness(t)
+	h.srv.SessionKeyFile = filepath.Join(t.TempDir(), "session.key") // set, but PairLoopback is off
+	code, _, _ := h.srv.OpenWindow(time.Now())
+	w := serveLAN(h.srv.LANHandler(), lanReq("POST", "/setup/pair", url.Values{"code": {code}}, nil))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("LAN pairing: %d", w.Code)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookie {
+			t.Errorf("long session issued on the LAN: %+v", c)
+		}
+	}
+	if _, err := os.Stat(h.srv.SessionKeyFile); err == nil {
+		t.Error("key file created outside PairLoopback")
+	}
+}
+
+// pairCode posts /v1/pair and returns the code (from the reply or its code file) and the expiry.
+func pairCode(t *testing.T, h *harness) (string, time.Time) {
+	t.Helper()
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var res struct {
+		Code     string    `json:"code"`
+		CodeFile string    `json:"code_file"`
+		Expires  time.Time `json:"expires"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.CodeFile != "" {
+		b, err := os.ReadFile(res.CodeFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Code = string(b)
+	}
+	return res.Code, res.Expires
+}
+
+func TestPairAPIReusesOpenWindow(t *testing.T) {
+	for _, codeFile := range []bool{false, true} {
+		t.Run(fmt.Sprint("code file ", codeFile), func(t *testing.T) {
+			h := newHarness(t)
+			if codeFile {
+				h = pairLoopbackHarness(t)
+				h.srv.PairCodeFile = filepath.Join(t.TempDir(), "pair-code.txt")
+			}
+			code, expires := pairCode(t, h)
+			h.srv.Window.Check("wrong", time.Now())
+			again, expires2 := pairCode(t, h)
+			if again != code || !expires2.Equal(expires) {
+				t.Errorf("second /v1/pair: %q %v, want %q %v", again, expires2, code, expires)
+			}
+			h.srv.Window.mu.Lock()
+			tries := h.srv.Window.tries
+			h.srv.Window.mu.Unlock()
+			if tries != 1 {
+				t.Errorf("tries %d after a reuse, want 1", tries)
+			}
+		})
+	}
+}
+
+func TestPairAPIOncePerMinute(t *testing.T) {
+	h := newHarness(t)
+	pairCode(t, h)
+	h.srv.Window.Close() // e.g. 5 wrong codes
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "minute") {
+		t.Fatalf("new window within a minute: %d %s", w.Code, w.Body)
+	}
+	h.srv.Window.mu.Lock()
+	h.srv.Window.opened = h.srv.Window.opened.Add(-time.Minute)
+	h.srv.Window.mu.Unlock()
+	if again, _ := pairCode(t, h); again == "" { // a new window is allowed again
+		t.Errorf("a minute later: %q", again)
 	}
 }
 
