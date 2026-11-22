@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -44,6 +46,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/telemetry"
 	"github.com/francisrath/pdb-print/internal/transport/serial"
 	"github.com/francisrath/pdb-print/internal/update"
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -57,7 +60,7 @@ commands:
                                    Windows: install for this user and start it at login (no window);
                                    --service: as a Windows service for all users (as administrator);
                                    --quiet: don't open the web UI; --no-self-update: never update itself
-  uninstall [--purge]              Windows: remove the install; --purge also deletes the config
+  uninstall [--purge] [--service]  Windows: remove the install; --purge also deletes the config
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
@@ -465,6 +468,7 @@ func (a *app) newServer(addr string, quit func()) *server.Server {
 		srv.PairLoopback = true
 		srv.PairCodeFile = filepath.Join(dir, "pair-code.txt")
 		srv.SessionKeyFile = filepath.Join(dir, "session.key")
+		srv.PairRequestFile = filepath.Join(dir, "pair-request")
 	case goos == "windows": // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
 		srv.Quit = quit
 	}
@@ -486,6 +490,17 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+*addr+"/v1/pair", nil)
 	if err != nil {
 		return err
+	}
+	if goos == "windows" { // the service opens a window only for the nonce in its admin-only folder
+		if pd := envFromOS().ProgramData; pd != "" {
+			b := make([]byte, 32)
+			rand.Read(b)
+			nonce := hex.EncodeToString(b)
+			// fails without admin rights (or with no service): then the service says to run it as administrator
+			if wininstall.WriteAdminOnly(filepath.Join(pd, "pdb-print", "pair-request"), []byte(nonce)) == nil {
+				req.Header.Set(server.PairRequestHeader, nonce)
+			}
+		}
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {

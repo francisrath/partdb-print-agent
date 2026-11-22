@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 // runService runs serve as the Windows service pdb-print, logging to pdb-print.log next to the config
@@ -22,7 +25,12 @@ func runService(ctx context.Context, cfgPath string) error {
 	} else if !ok {
 		return errors.New("pdb-print service run is what the Windows service pdb-print starts, not a command to type: use pdb-print serve")
 	}
-	logOut = fileLog(filepath.Join(filepath.Dir(cfgPath), "pdb-print.log"))
+	// an admin may have deleted it: recreated with the inherited ACL, every user could write to it
+	dir := filepath.Dir(cfgPath)
+	if err := wininstall.MkdirAdminOnly(dir); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	logOut = fileLog(filepath.Join(dir, "pdb-print.log"))
 	serviceMode = true
 	h := &service{serve: func(ctx context.Context) error { return run(ctx, []string{"--config", cfgPath, "serve"}) }, ctx: ctx}
 	if err := svc.Run("pdb-print", h); err != nil {
@@ -43,7 +51,8 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- s.serve(ctx) }()
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	// preshutdown: at system shutdown, Windows waits for it as long as the service's preshutdown timeout
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPreShutdown}
 	stopping := false
 	for {
 		select {
@@ -57,7 +66,7 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 			switch c.Cmd {
 			case svc.Interrogate:
 				status <- c.CurrentStatus
-			case svc.Stop, svc.Shutdown:
+			case svc.Stop, svc.Shutdown, svc.PreShutdown:
 				// serve waits up to 2 min for a print in progress
 				status <- svc.Status{State: svc.StopPending, WaitHint: uint32(exitWait.Milliseconds())}
 				stopping = true
@@ -103,15 +112,17 @@ func runElevatedOS(args []string) (int, error) {
 		return 0, err
 	}
 	// ShellExecuteEx may use COM (per its docs): initialise it on this thread for the call
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil || err == syscall.Errno(1) { // S_FALSE: already initialised
-		defer windows.CoUninitialize()
-	}
 	const seeMaskNoCloseProcess = 0x40
 	info := shellExecuteInfo{mask: seeMaskNoCloseProcess, verb: verb, file: file, params: params, show: windows.SW_SHOWNORMAL}
 	info.size = uint32(unsafe.Sizeof(info))
-	if r, _, err := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
+	runtime.LockOSThread()
+	com := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE)
+	r, _, err := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info)))
+	if com == nil || com == syscall.Errno(1) { // S_FALSE: already initialised; either way paired
+		windows.CoUninitialize() // before the wait below, which may be long
+	}
+	runtime.UnlockOSThread()
+	if r == 0 {
 		if errors.Is(err, windows.ERROR_CANCELLED) {
 			return 0, errUACDeclined
 		}

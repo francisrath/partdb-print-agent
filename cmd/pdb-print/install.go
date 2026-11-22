@@ -182,6 +182,7 @@ func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
 func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	purge := fs.Bool("purge", false, "also delete the config")
+	service := fs.Bool("service", false, "uninstall the Windows service (default: the install this exe belongs to)")
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -189,7 +190,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print uninstall works only on Windows")
 	}
 	sys, env := newSystem(), envFromOS()
-	l, ok, err := wininstall.Installed(sys, env)
+	l, ok, err := installedFor(sys, env, *service)
 	if err != nil {
 		return err
 	}
@@ -200,7 +201,8 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	mode := l.Mode
 	if mode == wininstall.Service && !sys.IsAdmin() { // e.g. from Settings → Apps: ask for admin rights
 		wininstall.LeaveDir(l.ProgramDir) // Settings starts us in it, and the elevated uninstall removes it
-		code, err := runElevated(append([]string{"uninstall"}, args...))
+		// --service: the elevated exe is told which install, as it may belong to the other one
+		code, err := runElevated(append([]string{"uninstall", "--service"}, args...))
 		switch {
 		case errors.Is(err, errUACDeclined):
 			return errors.New("pdb-print is installed as a service: uninstalling it needs administrator rights, and the request was declined")
@@ -225,6 +227,22 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s (for a reinstall; pdb-print uninstall --purge also removes it).\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
 	}
 	return nil
+}
+
+// installedFor is the install uninstall removes: the service with --service, else the one this exe
+// belongs to (Settings → Apps runs the entry's own exe), else (a copy from a zip) whichever is installed.
+func installedFor(sys wininstall.System, env wininstall.Env, service bool) (wininstall.Layout, bool, error) {
+	if service {
+		return wininstall.InstalledAs(sys, wininstall.Service, env)
+	}
+	self, err := selfExe()
+	if err != nil {
+		return wininstall.Layout{}, false, err
+	}
+	if m, ok := wininstall.ModeOf(self, env); ok {
+		return wininstall.InstalledAs(sys, m, env)
+	}
+	return wininstall.Installed(sys, env)
 }
 
 // stopAgent asks the agent on agentAddr to quit and waits until its process has exited

@@ -453,6 +453,35 @@ func TestPairCmdReadsCodeFile(t *testing.T) {
 	}
 }
 
+// On Windows, pair proves admin rights to the service: a fresh nonce in %ProgramData%\pdb-print\pair-request,
+// sent along. Without the folder (no rights, no service) it asks without one.
+func TestPairCmdSendsRequestNonce(t *testing.T) {
+	pd := t.TempDir()
+	stub(t, &goos, "windows")
+	stub(t, &envFromOS, func() wininstall.Env { return wininstall.Env{ProgramData: pd} })
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get(server.PairRequestHeader))
+		fmt.Fprint(w, `{"code":"482913","urls":["http://192.168.1.23:8631/setup/"],"expires":"2026-11-19T12:15:00Z"}`)
+	}))
+	t.Cleanup(srv.Close)
+	addr := []string{"--addr", strings.TrimPrefix(srv.URL, "http://")}
+	var out bytes.Buffer
+	if err := pairCmd(context.Background(), addr, &out); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(pd, "pdb-print"), 0o700)
+	for range 2 {
+		if err := pairCmd(context.Background(), addr, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file, _ := os.ReadFile(filepath.Join(pd, "pdb-print", "pair-request"))
+	if len(got) != 3 || got[0] != "" || len(got[1]) != 64 || got[2] == got[1] || got[2] != string(file) {
+		t.Errorf("nonces sent %q, file %q", got, file)
+	}
+}
+
 func TestNeedsSetup(t *testing.T) {
 	t.Setenv("PDB_PRINT_URL", "")
 	if !needsSetup(&config.Config{}) {
@@ -710,7 +739,7 @@ func TestInstallService(t *testing.T) {
 		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
 			t.Errorf("code %d, %v: err %v", tt.code, tt.err, err)
 		}
-		if len(elevated) != 1 || !slices.Equal(elevated[0], []string{"uninstall", "--purge"}) {
+		if len(elevated) != 1 || !slices.Equal(elevated[0], []string{"uninstall", "--service", "--purge"}) {
 			t.Errorf("elevated %v", elevated)
 		}
 		if rel, _ := filepath.Rel(l.ProgramDir, cwd); !strings.HasPrefix(rel, "..") {
@@ -730,6 +759,47 @@ func TestInstallService(t *testing.T) {
 	}
 	if w.quits != 1 || w.sys.stops != 2 || w.sys.service || len(w.sys.unin) != 0 {
 		t.Errorf("uninstall: %d quits, %d stops, service %v, entries %v", w.quits, w.sys.stops, w.sys.service, w.sys.unin)
+	}
+}
+
+// With both installed, uninstall removes the install its exe belongs to (Settings → Apps runs that
+// entry's exe), not the per-user one first.
+func TestUninstallPicksOwnInstall(t *testing.T) {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	ls, lu := wininstall.LayoutFor(wininstall.Service, w.env), wininstall.LayoutFor(wininstall.PerUser, w.env)
+	w.sys.unin[wininstall.Service] = wininstall.Entry{InstallLocation: ls.ProgramDir}
+	w.sys.service = true
+	var elevated [][]string
+	stub(t, &runElevated, func(args []string) (int, error) { elevated = append(elevated, args); return 0, nil })
+	stub(t, &selfExe, func() (string, error) { return ls.Exe, nil }) // the service entry's uninstall
+	if _, err := runOut("uninstall"); err != nil {
+		t.Fatal(err)
+	}
+	if len(elevated) != 1 || !slices.Equal(elevated[0], []string{"uninstall", "--service"}) {
+		t.Errorf("elevated %v", elevated)
+	}
+	if _, ok := w.sys.unin[wininstall.PerUser]; !ok {
+		t.Error("the per-user install was removed")
+	}
+	// the elevated child: --service even when run from elsewhere
+	w.sys.admin = true
+	stub(t, &selfExe, func() (string, error) { return lu.Exe, nil })
+	if _, err := runOut("uninstall", "--service"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := w.sys.unin[wininstall.PerUser]; !ok || w.sys.service {
+		t.Errorf("--service: entries %v, service %v", w.sys.unin, w.sys.service)
+	}
+	// the per-user entry's exe removes the per-user install
+	w.sys.unin[wininstall.Service], w.sys.service = wininstall.Entry{InstallLocation: ls.ProgramDir}, true
+	if _, err := runOut("uninstall"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := w.sys.unin[wininstall.PerUser]; ok || !w.sys.service {
+		t.Errorf("per-user: entries %v, service %v", w.sys.unin, w.sys.service)
 	}
 }
 
@@ -756,7 +826,8 @@ func TestNewServerServiceMode(t *testing.T) {
 	}
 	stub(t, &serviceMode, true)
 	s := a.newServer("127.0.0.1:8631", quit)
-	if s.Quit != nil || !s.PairLoopback || s.PairCodeFile != filepath.Join(dir, "pair-code.txt") || s.SessionKeyFile != filepath.Join(dir, "session.key") {
+	if s.Quit != nil || !s.PairLoopback || s.PairCodeFile != filepath.Join(dir, "pair-code.txt") || s.SessionKeyFile != filepath.Join(dir, "session.key") ||
+		s.PairRequestFile != filepath.Join(dir, "pair-request") {
 		t.Errorf("service: quit %v, loopback %v, %q %q", s.Quit != nil, s.PairLoopback, s.PairCodeFile, s.SessionKeyFile)
 	}
 }

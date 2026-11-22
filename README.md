@@ -96,7 +96,12 @@ Until releases are signed, SmartScreen warns about the download and the first st
 `%ProgramFiles%\pdb-print` and runs as the Windows service `pdb-print`, started with Windows. Config
 and log are in `%ProgramData%\pdb-print` (`config.yaml`, `pdb-print.log`), readable by administrators
 only. It replaces your per-user install and copies its config; a Part-DB token kept in your keychain
-doesn't move, so enter it again in the web UI. The web UI asks every browser for a code: run
+doesn't move, so enter it again in the web UI. Only the per-user install of the account you run it as
+is replaced: other accounts remove theirs from their own Settings → Apps. A folder in
+`%ProgramData%\pdb-print` that an administrator didn't make is moved aside
+(`pdb-print.untrusted.<time>`) and a new one created. The service runs as SYSTEM: `~` in
+`hot_folder.dir` is the system profile, so give an absolute path, and use a folder other users can't
+write to (the service deletes and moves the files in it). The web UI asks every browser for a code: run
 `pdb-print pair` as administrator and type the code it shows. A paired browser stays signed in for
 30 days; to sign every browser out, delete `%ProgramData%\pdb-print\session.key`. Any local user can
 still print from Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
