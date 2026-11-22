@@ -713,6 +713,9 @@ func TestQuiesceBlocksNewJobs(t *testing.T) {
 		t.Fatal("Quiesce returned while a job was running")
 	case <-time.After(50 * time.Millisecond):
 	}
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err != ErrUpdating { // while Quiesce waits
+		t.Errorf("a job while Quiesce waits: %v, want ErrUpdating", err)
+	}
 	close(f.gate)
 	if err := <-printed; err != nil {
 		t.Fatal(err)
@@ -720,21 +723,13 @@ func TestQuiesceBlocksNewJobs(t *testing.T) {
 	rel := <-quiet
 	f.printing = nil // the fake closes it once per job
 
-	started := make(chan struct{})
-	second := make(chan error, 1)
-	go func() {
-		close(started)
-		_, err := s.Print(context.Background(), p, "", labels(1))
-		second <- err
-	}()
-	<-started
-	select {
-	case <-second:
-		t.Fatal("a job ran while quiesced")
-	case <-time.After(50 * time.Millisecond):
+	// a job during the update fails at once (reported, not lost), and runs again after release
+	var de *driver.Error
+	if _, err := s.Print(context.Background(), p, "", labels(1)); !errors.As(err, &de) || de.Code != driver.Busy || !strings.Contains(err.Error(), "updating") {
+		t.Fatalf("a job while quiesced: %v, want ErrUpdating", err)
 	}
 	rel()
-	if err := <-second; err != nil {
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
 		t.Fatal(err)
 	}
 }

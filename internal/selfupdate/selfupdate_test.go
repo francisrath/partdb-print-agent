@@ -38,6 +38,9 @@ func sum(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:
 // setup serves zip and checksums under /v1.2.3/ and returns an Updater over a dir holding old exes.
 func setup(t *testing.T) (*Updater, string, *int) {
 	t.Helper()
+	old := grace
+	grace = 0
+	t.Cleanup(func() { grace = old })
 	dir := t.TempDir()
 	for _, n := range []string{"pdb-print.exe", "pdb-printw.exe"} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("old"), 0o755); err != nil {
@@ -191,7 +194,12 @@ func TestApplyWaitsForPrint(t *testing.T) {
 	if got := read(t, filepath.Join(dir, "pdb-print.exe")); got != "old" {
 		t.Fatal("swapped while a print was running")
 	}
+	grace = 200 * time.Millisecond // a just-finished job's report still goes out
 	close(printDone)
+	time.Sleep(50 * time.Millisecond)
+	if got := read(t, filepath.Join(dir, "pdb-print.exe")); got != "old" {
+		t.Error("swapped before the grace was over")
+	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}

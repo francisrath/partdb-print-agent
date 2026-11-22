@@ -27,6 +27,9 @@ const (
 // runs the new version.
 var ErrInstalled = errors.New("the new version is installed")
 
+// grace is how long Apply waits after the last job ends, before the swap; tests shorten it.
+var grace = 2 * time.Second
+
 // exes are the only files taken from the zip.
 var exes = []string{"pdb-print.exe", "pdb-printw.exe"}
 
@@ -94,6 +97,9 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 	if err != nil {
 		return fmt.Errorf("waiting for running jobs: %w", err)
 	}
+	// ponytail: a fixed grace for a just-finished Part-DB job to report its result before we exit; a
+	// real handoff with agentjobs (wait for its report) if reports ever get cut off.
+	time.Sleep(grace)
 	if err = u.swap(tmp); err == nil {
 		if err = u.Restart(); err != nil {
 			err = fmt.Errorf("%w, but not restarted: %w", ErrInstalled, err)

@@ -401,8 +401,11 @@ func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.S
 	}
 }
 
-// Quiesce waits for running jobs and holds back new ones until release is called (a self-update swaps
-// the program files meanwhile). ctx bounds the wait; on error nothing stays held.
+// ErrUpdating is Print's error while a self-update holds jobs back.
+var ErrUpdating = &driver.Error{Code: driver.Busy, Detail: "pdb-print is updating; print again in a moment"}
+
+// Quiesce waits for running jobs and makes new ones fail with ErrUpdating until release is called
+// (a self-update swaps the program files meanwhile). ctx bounds the wait; on error nothing stays held.
 func (s *Service) Quiesce(ctx context.Context) (release func(), err error) {
 	got := make(chan struct{})
 	go func() { s.gate.Lock(); close(got) }()
@@ -419,7 +422,11 @@ func (s *Service) Quiesce(ctx context.Context) (release func(), err error) {
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
 func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (_ *Result, err error) {
-	s.gate.RLock()
+	// fails only while Quiesce holds or waits for the gate: a job that waited until the update's
+	// restart would be lost (Part-DB doesn't re-queue a claimed job), a failed one is reported
+	if !s.gate.TryRLock() {
+		return nil, ErrUpdating
+	}
 	defer s.gate.RUnlock()
 	lock := s.printerLock(p.ID)
 	lock.Lock()
