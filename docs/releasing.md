@@ -7,10 +7,11 @@ Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in three jobs
 2. **`release-windows`** (ubuntu, `.goreleaser-windows.yaml`, needs `release`): builds `pdb-print.exe` and
    `pdb-printw.exe` and the zip and uploads them with `checksums-windows.txt` to that draft. Then
    `scripts/windows-setup.sh` builds `pdb-print_X.Y.Z_windows_amd64_setup.exe` from the same exes with Inno
-   Setup under Wine (`packaging/windows/inno/Dockerfile`, the installer pinned by version and SHA-256;
+   Setup under Wine on the runner (the Inno installer pinned by version and SHA-256 in the script;
    `packaging/windows/pdb-print.iss`), adds it to `checksums-windows.txt`, and uploads both (`--clobber`).
-   Wine doesn't run under Rosetta, so the setup.exe part needs an x86-64 machine; PR CI
-   (`packaging-windows`) runs it on every PR.
+   Inno's setup needs Wine's 32-bit side, which doesn't run inside `docker build`, and Wine doesn't run
+   under Rosetta: the setup.exe part needs x86-64 Linux with Wine (the script's header lists the
+   packages). PR CI (`packaging-windows`) runs it on every PR.
 3. **`release-darwin`** (macos-latest, `.goreleaser-darwin.yaml`, needs both): builds the universal
    `pdb-print` (no cgo) and the Bluetooth helper `pdb-print-ble` (cgo, embedded Info.plist), uploads the
    macOS archive and `checksums-darwin.txt` to that draft (GoReleaser leaves it a draft: `draft: true`) and
@@ -93,7 +94,7 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
 
 Local macOS dry run: `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew`
 
-Local Windows dry run (setup.exe only on x86-64): `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-windows.yaml`, then `scripts/windows-setup.sh`
+Local Windows dry run (setup.exe only on x86-64 Linux with Wine): `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-windows.yaml`, then `scripts/windows-setup.sh`
 
 ## Don't move a release tag
 

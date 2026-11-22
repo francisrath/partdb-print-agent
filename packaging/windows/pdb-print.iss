@@ -1,4 +1,4 @@
-; setup.exe for pdb-print (built by scripts/windows-setup.sh with Inno Setup under Wine).
+; setup.exe for pdb-print (built by scripts/windows-setup.sh with Inno Setup 7 under Wine).
 ; It installs nothing itself: it runs `pdb-print.exe install`, which does the per-user install, or with
 ; "for all users" (/ALLUSERS) the Windows service. Uninstall is pdb-print's own (Settings > Apps).
 ;   setup.exe                                   asks: for me or for all users
