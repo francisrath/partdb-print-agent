@@ -4,7 +4,7 @@
 # nothing of it ends up in pdb-print. Needs Wine with its 32-bit side (Inno's setup refuses to run
 # without it) and xvfb-run, on x86-64 Linux (Wine doesn't run under Rosetta); on Ubuntu:
 #   sudo dpkg --add-architecture i386 && sudo apt-get update
-#   sudo apt-get install -y --no-install-recommends wine64 wine32:i386 xvfb
+#   sudo apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb
 set -euo pipefail
 
 # The official installer, pinned by version and SHA-256 (the GitHub release's asset digest)
