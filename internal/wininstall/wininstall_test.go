@@ -283,3 +283,17 @@ func TestPortInUse(t *testing.T) {
 		t.Error("malformed address reported in use")
 	}
 }
+
+func TestUninstallEmptyEnvRemovesNothing(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := os.MkdirAll("pdb-print", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Uninstall(newFake(), PerUser, true, Env{}); err == nil {
+		t.Error("want error")
+	}
+	if !exists("pdb-print") {
+		t.Error("relative dir was removed")
+	}
+}

@@ -134,6 +134,7 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := copyExe(o.Self, l.Exe); err != nil {
 		return l, fmt.Errorf("copy %s: %w", exeName, err)
 	}
+	// A failure here leaves a partial update (no rollback of the first copy); the next install redoes both.
 	if err := copyExe(selfW, l.ExeW); err != nil {
 		return l, fmt.Errorf("copy %s: %w", exeWName, err)
 	}
@@ -164,13 +165,14 @@ func Install(sys System, o Options) (Layout, error) {
 
 // check rejects an Env that lacks the folders mode m needs.
 func (e Env) check(m Mode) error {
-	need := map[string]string{"LOCALAPPDATA": e.LocalAppData, "APPDATA": e.AppData, "Start menu": e.StartMenuUser}
+	type kv struct{ k, v string }
+	need := []kv{{"LOCALAPPDATA", e.LocalAppData}, {"APPDATA", e.AppData}, {"Start menu", e.StartMenuUser}}
 	if m == Service {
-		need = map[string]string{"ProgramFiles": e.ProgramFiles, "ProgramData": e.ProgramData, "Start menu": e.StartMenuAll}
+		need = []kv{{"ProgramFiles", e.ProgramFiles}, {"ProgramData", e.ProgramData}, {"Start menu", e.StartMenuAll}}
 	}
-	for k, v := range need {
-		if v == "" {
-			return fmt.Errorf("cannot locate %s folder (empty)", k)
+	for _, n := range need {
+		if n.v == "" {
+			return fmt.Errorf("cannot locate %s folder (empty)", n.k)
 		}
 	}
 	return nil
@@ -222,7 +224,7 @@ func writeFile(src, dst string) error {
 
 // cleanupOld removes leftovers of earlier updates and uninstalls (best effort).
 func cleanupOld(dir string) {
-	for _, pat := range []string{filepath.Join(dir, "*.old"), filepath.Join(filepath.Dir(dir), "*."+name+".old.*")} {
+	for _, pat := range []string{filepath.Join(dir, "*.old"), filepath.Join(dir, "*.new"), filepath.Join(filepath.Dir(dir), "*."+name+".old.*")} {
 		old, _ := filepath.Glob(pat)
 		for _, p := range old {
 			os.Remove(p)
@@ -233,6 +235,9 @@ func cleanupOld(dir string) {
 // Uninstall removes what Install created. The config directory is kept unless purge.
 // The uninstall entry goes last so a failed uninstall can be retried.
 func Uninstall(sys System, m Mode, purge bool, e Env) error {
+	if err := e.check(m); err != nil {
+		return err
+	}
 	l := LayoutFor(m, e)
 	if m == Service {
 		ok, err := sys.ServiceExists()
