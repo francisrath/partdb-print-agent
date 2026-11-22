@@ -148,6 +148,9 @@ func start(dir string) (r *Renderer, err error) {
 		MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
 		FSConfig:      wazero.NewFSConfig(), // nothing mounted: PDFs only ever arrive as bytes
 		RuntimeConfig: rc,
+		// not os.Stdout/os.Stderr: a Windows service and pdb-printw.exe have none, and PDFium has
+		// nothing to say there
+		Stdout: io.Discard, Stderr: io.Discard,
 	})
 	if err != nil {
 		closeCache()

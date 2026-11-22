@@ -65,7 +65,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <strong>{{if eq .Name "?"}}Unknown printer{{else}}{{.Name}}{{end}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>
-  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}">Ask this printer what it is</button>
+  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}" data-busy="Asking…">Ask this printer what it is</button>
   <span class="muted">(a printer that isn't a Zebra may print a page with a few strange characters)</span> · {{end}}<a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
   {{end}}
 </form>
@@ -99,11 +99,11 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <label>Which tape is in the printer?
       <select name="media" required>{{range .Media}}<option value="{{.ID}}" {{if eq .ID $p.Media}}selected{{end}}>{{.Name}} ({{.ID}})</option>{{end}}</select>
     </label>
-    <button>Print the test label</button>
+    <button data-busy="Printing…">Print the test label</button>
   </form>
 {{else if not .D.Printed}}
   <p>Print a test label to check that everything comes out right.</p>
-  <form method="post" action="/setup/test">{{template "csrf" .}}<button name="action" value="print">Print test label</button></form>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button name="action" value="print" data-busy="Printing…">Print test label</button></form>
 {{else}}
   <p>A test label is printing. Which one looks like yours?</p>
   <form method="post" action="/setup/test" class="pictures">
@@ -116,7 +116,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <button name="action" value="nothing"><span class="card nothing">nothing<br>came out</span>Nothing printed</button>
   </form>
   <p class="muted">Picking a problem changes a setting and prints the label again.</p>
-  <form method="post" action="/setup/test">{{template "csrf" .}}<button class="secondary" name="action" value="print">Print again</button></form>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button class="secondary" name="action" value="print" data-busy="Printing…">Print again</button></form>
 {{end}}
 {{if .D.ShowReport}}<form method="get" action="/setup/report"><p>Still not right? <button class="link">Send us a report</button> and we'll look into it.</p></form>{{end}}
 <div class="nav"><a class="button secondary" href="/setup/printer">Back</a><span></span></div>
