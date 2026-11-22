@@ -99,6 +99,10 @@ func main() {
 	logOut = logWriter()
 	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(logOut, "error:", err)
+		var ec exitCode
+		if errors.As(err, &ec) {
+			os.Exit(int(ec))
+		}
 		os.Exit(1)
 	}
 }

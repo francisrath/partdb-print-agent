@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 )
 
@@ -39,13 +42,15 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	done := make(chan error, 1)
 	go func() { done <- s.serve(ctx) }()
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	stopping := false
 	for {
 		select {
-		case s.err = <-done:
-			if s.err != nil {
-				return true, 1 // a failure: the recovery actions restart it
+		case err := <-done:
+			ssec, code := serviceExit(err, stopping, logOut)
+			if ssec {
+				s.err = err // main logs it
 			}
-			return false, 0
+			return ssec, code
 		case c := <-req:
 			switch c.Cmd {
 			case svc.Interrogate:
@@ -53,8 +58,67 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 			case svc.Stop, svc.Shutdown:
 				// serve waits up to 2 min for a print in progress
 				status <- svc.Status{State: svc.StopPending, WaitHint: uint32(exitWait.Milliseconds())}
+				stopping = true
 				cancel()
 			}
 		}
 	}
+}
+
+var procShellExecuteExW = windows.NewLazySystemDLL("shell32.dll").NewProc("ShellExecuteExW")
+
+// shellExecuteInfo is SHELLEXECUTEINFOW.
+type shellExecuteInfo struct {
+	size                    uint32
+	mask                    uint32
+	hwnd                    windows.Handle
+	verb, file, params, dir *uint16
+	show                    int32
+	instApp                 windows.Handle
+	idList                  uintptr
+	class                   *uint16
+	keyClass                windows.Handle
+	hotKey                  uint32
+	iconOrMonitor, process  windows.Handle
+}
+
+// runElevatedOS runs this exe with args through the UAC prompt ("runas"), waits, and returns its exit code.
+func runElevatedOS(args []string) (int, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, err
+	}
+	verb, err := windows.UTF16PtrFromString("runas")
+	if err != nil {
+		return 0, err
+	}
+	file, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return 0, err
+	}
+	params, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(args))
+	if err != nil {
+		return 0, err
+	}
+	const seeMaskNoCloseProcess = 0x40
+	info := shellExecuteInfo{mask: seeMaskNoCloseProcess, verb: verb, file: file, params: params, show: windows.SW_SHOWNORMAL}
+	info.size = uint32(unsafe.Sizeof(info))
+	if r, _, err := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
+		if errors.Is(err, windows.ERROR_CANCELLED) {
+			return 0, errUACDeclined
+		}
+		return 0, err
+	}
+	if info.process == 0 {
+		return 0, errors.New("the elevated pdb-print didn't start")
+	}
+	defer windows.CloseHandle(info.process)
+	if _, err := windows.WaitForSingleObject(info.process, windows.INFINITE); err != nil {
+		return 0, err
+	}
+	var code uint32
+	if err := windows.GetExitCodeProcess(info.process, &code); err != nil {
+		return 0, err
+	}
+	return int(code), nil
 }

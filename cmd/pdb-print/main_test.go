@@ -562,13 +562,14 @@ func (f *fakeSys) InstallService(string, []string) error {
 	f.service = true
 	return nil
 }
-func (f *fakeSys) RemoveService() error            { f.service = false; return nil }
-func (f *fakeSys) StartService() error             { f.portBusy = true; return nil }
-func (f *fakeSys) StopService(time.Duration) error { f.stops++; f.portBusy = false; return nil }
-func (f *fakeSys) PortInUse(string) bool           { return f.portBusy }
-func (f *fakeSys) Listening(string) bool           { return f.portBusy }
-func (f *fakeSys) DeleteAfterExit(string) error    { return nil }
-func (f *fakeSys) Spawn(string, ...string) error   { f.spawns++; f.portBusy = true; return nil }
+func (f *fakeSys) RemoveService() error               { f.service = false; return nil }
+func (f *fakeSys) StartService() error                { f.portBusy = true; return nil }
+func (f *fakeSys) StopService(time.Duration) error    { f.stops++; f.portBusy = false; return nil }
+func (f *fakeSys) PortInUse(string) bool              { return f.portBusy }
+func (f *fakeSys) Listening(string) bool              { return f.portBusy }
+func (f *fakeSys) DeleteAfterExit(string) error       { return nil }
+func (f *fakeSys) OwnedByAdmins(string) (bool, error) { return true, nil }
+func (f *fakeSys) Spawn(string, ...string) error      { f.spawns++; f.portBusy = true; return nil }
 func (f *fakeSys) WaitExit(pid int, timeout time.Duration) error {
 	f.waited, f.waitTimeout = append(f.waited, pid), timeout
 	if f.waitErr == nil {
@@ -684,10 +685,29 @@ func TestInstallService(t *testing.T) {
 	if w.quits != 1 || w.sys.stops != 1 || !w.sys.service {
 		t.Errorf("reinstall: %d quits, %d stops", w.quits, w.sys.stops)
 	}
-	// uninstall: no /v1/quit either
+	// uninstall without admin (Settings → Apps): it runs itself again elevated, with the same args
 	w.sys.admin = false
-	if _, err := runOut("uninstall"); err == nil || !strings.Contains(err.Error(), "as administrator") {
-		t.Errorf("uninstall not admin: %v", err)
+	for _, tt := range []struct {
+		code int
+		err  error
+		want string // in the error; "" = none
+	}{{0, nil, ""}, {3, nil, "exit status 3"}, {0, errUACDeclined, "declined"}} {
+		var elevated [][]string
+		stub(t, &runElevated, func(args []string) (int, error) { elevated = append(elevated, args); return tt.code, tt.err })
+		_, err := runOut("uninstall", "--purge")
+		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+			t.Errorf("code %d, %v: err %v", tt.code, tt.err, err)
+		}
+		if len(elevated) != 1 || !slices.Equal(elevated[0], []string{"uninstall", "--purge"}) {
+			t.Errorf("elevated %v", elevated)
+		}
+		var ec exitCode
+		if tt.code != 0 && (!errors.As(err, &ec) || ec != 3) {
+			t.Errorf("exit code not passed: %v", err)
+		}
+	}
+	if !w.sys.service {
+		t.Fatal("the unelevated uninstall removed the service itself")
 	}
 	w.sys.admin = true
 	if _, err := runOut("uninstall"); err != nil {
@@ -723,6 +743,24 @@ func TestNewServerServiceMode(t *testing.T) {
 	s := a.newServer("127.0.0.1:8631", quit)
 	if s.Quit != nil || !s.PairLoopback || s.PairCodeFile != filepath.Join(dir, "pair-code.txt") || s.SessionKeyFile != filepath.Join(dir, "session.key") {
 		t.Errorf("service: quit %v, loopback %v, %q %q", s.Quit != nil, s.PairLoopback, s.PairCodeFile, s.SessionKeyFile)
+	}
+}
+
+// The service's exit: a failure restarts it (service-specific code), but not after the admin stopped it.
+func TestServiceExit(t *testing.T) {
+	boom := errors.New("boom")
+	for _, tt := range []struct {
+		err      error
+		stopping bool
+		ssec     bool
+		code     uint32
+		logged   bool
+	}{{nil, false, false, 0, false}, {nil, true, false, 0, false}, {boom, false, true, 1, false}, {boom, true, false, 0, true}} {
+		var log bytes.Buffer
+		ssec, code := serviceExit(tt.err, tt.stopping, &log)
+		if ssec != tt.ssec || code != tt.code || (log.Len() > 0) != tt.logged {
+			t.Errorf("%v stopping=%v: %v %d log %q", tt.err, tt.stopping, ssec, code, log.String())
+		}
 	}
 }
 

@@ -100,8 +100,8 @@ doesn't move, so enter it again in the web UI. The web UI asks every browser for
 `pdb-print pair` as administrator and type the code it shows. A paired browser stays signed in for
 30 days; to sign every browser out, delete `%ProgramData%\pdb-print\session.key`. Any local user can
 still print from Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
-work from a service: use the per-user install for them. To remove it: `pdb-print uninstall` as
-administrator.
+work from a service: use the per-user install for them. To remove it: Settings → Apps → pdb-print
+(it asks for administrator rights), or `pdb-print uninstall` as administrator.
 
 **Docker** (Linux amd64/arm64):
 ```sh

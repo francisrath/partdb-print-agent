@@ -30,6 +30,7 @@ var (
 	quitAgent                   = postQuit
 	openBrowser                 = func(url string) error { return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start() }
 	startedByExplorer           = startedByExplorerOS
+	runElevated                 = runElevatedOS // runs pdb-print with args as administrator (UAC) and waits
 	stdin             io.Reader = os.Stdin
 	stdout            io.Writer = os.Stdout
 	// a quitting agent finishes in-flight prints (up to 2 min) before it exits
@@ -119,6 +120,29 @@ func install(sys wininstall.System, env wininstall.Env, mode wininstall.Mode, qu
 		Self: self, Version: appVersion(), Env: env, Out: out})
 }
 
+// errUACDeclined: the user said no to the administrator prompt.
+var errUACDeclined = errors.New("administrator rights declined")
+
+// exitCode is a failure whose exit status main passes on.
+type exitCode int
+
+func (e exitCode) Error() string {
+	return fmt.Sprintf("the uninstall as administrator failed (exit status %d)", int(e))
+}
+
+// serviceExit is the service's exit for serve's result err. A failure exits with a service-specific
+// code, so the recovery actions restart it; after a stop request it is only logged: the admin stopped it.
+func serviceExit(err error, stopping bool, log io.Writer) (svcSpecific bool, code uint32) {
+	switch {
+	case err == nil:
+		return false, 0
+	case stopping:
+		fmt.Fprintln(log, "error while stopping:", err)
+		return false, 0
+	}
+	return true, 1
+}
+
 // serviceCmd is `pdb-print service run --config FILE`, what the Windows service starts.
 func serviceCmd(ctx context.Context, args []string) error {
 	const use = "usage: pdb-print service run --config FILE (started by the Windows service pdb-print)"
@@ -174,8 +198,17 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 		return nil
 	}
 	mode := l.Mode
-	if mode == wininstall.Service && !sys.IsAdmin() {
-		return errors.New("pdb-print is installed as a service: run it as administrator")
+	if mode == wininstall.Service && !sys.IsAdmin() { // e.g. from Settings → Apps: ask for admin rights
+		code, err := runElevated(append([]string{"uninstall"}, args...))
+		switch {
+		case errors.Is(err, errUACDeclined):
+			return errors.New("pdb-print is installed as a service: uninstalling it needs administrator rights, and the request was declined")
+		case err != nil:
+			return fmt.Errorf("pdb-print is installed as a service: run the uninstall as administrator (%w)", err)
+		case code != 0:
+			return exitCode(code) // the elevated uninstall said why in its own window
+		}
+		return nil
 	}
 	if mode == wininstall.PerUser && sys.Listening(agentAddr) { // a service is stopped by Uninstall
 		if err := stopAgent(ctx, sys); err != nil {
