@@ -107,6 +107,7 @@ type Service struct {
 	newDriver       func(*devicedb.Model, driver.Options) (driver.Driver, error) // tests: a fake driver; nil = driver.New
 	r               *render.Renderer
 	printers        map[string]*sync.Mutex
+	gate            sync.RWMutex // Print holds it for reading; Quiesce for writing
 }
 
 func (s *Service) Close() {
@@ -400,10 +401,26 @@ func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.S
 	}
 }
 
+// Quiesce waits for running jobs and holds back new ones until release is called (a self-update swaps
+// the program files meanwhile). ctx bounds the wait; on error nothing stays held.
+func (s *Service) Quiesce(ctx context.Context) (release func(), err error) {
+	got := make(chan struct{})
+	go func() { s.gate.Lock(); close(got) }()
+	select {
+	case <-got:
+		return s.gate.Unlock, nil
+	case <-ctx.Done():
+		go func() { <-got; s.gate.Unlock() }()
+		return nil, ctx.Err()
+	}
+}
+
 // Print checks the printer, settles the media (what the printer reports, else the config's), gets the
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
 func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (_ *Result, err error) {
+	s.gate.RLock()
+	defer s.gate.RUnlock()
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()

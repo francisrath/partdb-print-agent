@@ -680,3 +680,61 @@ func TestLazyTransportSetReadTimeout(t *testing.T) {
 	}
 	(&lazyTransport{t: &fakePT{}}).SetReadTimeout(time.Millisecond)
 }
+
+// Quiesce waits for a running job, then holds back new ones until released; a caller that gives up
+// leaves the gate open.
+func TestQuiesceBlocksNewJobs(t *testing.T) {
+	f := &fakeCat{gate: make(chan struct{}), printing: make(chan struct{})}
+	s, p := catService(t, f)
+	printed := make(chan error, 1)
+	go func() {
+		_, err := s.Print(context.Background(), p, "", labels(1))
+		printed <- err
+	}()
+	<-f.printing
+
+	// gives up while the job runs: no lock left behind
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := s.Quiesce(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Quiesce with a job running: %v, want deadline exceeded", err)
+	}
+
+	quiet := make(chan func(), 1)
+	go func() {
+		rel, err := s.Quiesce(context.Background())
+		if err != nil {
+			t.Error(err)
+		}
+		quiet <- rel
+	}()
+	select {
+	case <-quiet:
+		t.Fatal("Quiesce returned while a job was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(f.gate)
+	if err := <-printed; err != nil {
+		t.Fatal(err)
+	}
+	rel := <-quiet
+	f.printing = nil // the fake closes it once per job
+
+	started := make(chan struct{})
+	second := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := s.Print(context.Background(), p, "", labels(1))
+		second <- err
+	}()
+	<-started
+	select {
+	case <-second:
+		t.Fatal("a job ran while quiesced")
+	case <-time.After(50 * time.Millisecond):
+	}
+	rel()
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+}
