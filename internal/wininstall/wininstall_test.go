@@ -351,6 +351,10 @@ func TestInstallServiceReinstall(t *testing.T) {
 	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); !errors.Is(err, ErrNotStarted) || strings.Contains(err.Error(), stopped) {
 		t.Errorf("start failure: %v", err)
 	}
+	sys.startErr = errors.New("access denied")
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "or Event Viewer → Windows Logs → System") {
+		t.Errorf("start error without the hint: %v", err)
+	}
 	sys.startErr, sys.writeOK = nil, 0
 	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), stopped) {
 		t.Errorf("failure after the stop: %v", err)
@@ -528,6 +532,7 @@ func TestInstallServicePortAndStart(t *testing.T) {
 		{"serving", false, false, ""},
 		{"never listens", true, false, "didn't start (not listening on 127.0.0.1:8631 after 30ms); see " + log + ", or Event Viewer"},
 		{"stops", true, true, "didn't start (it stopped); see " + log},
+		{"impostor on the port", false, true, "something else listens on 127.0.0.1:8631"},
 	} {
 		sys.dead, sys.stopped = tt.dead, tt.stopped
 		start := time.Now()
@@ -537,7 +542,7 @@ func TestInstallServicePortAndStart(t *testing.T) {
 			t.Errorf("%s: %v", tt.name, err)
 		case tt.want != "" && (!errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), tt.want)):
 			t.Errorf("%s: %v", tt.name, err)
-		case tt.stopped && time.Since(start) >= 30*time.Millisecond:
+		case tt.dead && tt.stopped && time.Since(start) >= 30*time.Millisecond:
 			t.Errorf("%s: waited the whole time", tt.name)
 		}
 	}
@@ -560,6 +565,7 @@ func TestReadyServiceDir(t *testing.T) {
 	}{
 		{"missing", func(*testing.T, string) {}, "", ""},
 		{"trusted, no config", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o700) }, "", ""},
+		{"trusted, recreated wide open", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o777); os.Chmod(dir, 0o777) }, "", ""},
 		{"trusted", func(t *testing.T, dir string) {
 			os.MkdirAll(dir, 0o700)
 			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o600)
@@ -593,7 +599,7 @@ func TestReadyServiceDir(t *testing.T) {
 				t.Fatal(err)
 			}
 			fi, err := os.Stat(filepath.Dir(cfg))
-			if err != nil || runtime.GOOS != "windows" && tt.name == "missing" && fi.Mode().Perm() != 0o700 {
+			if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 { // MkdirAdminOnly's ACL, also on an existing dir
 				t.Errorf("dir %v %v", fi, err)
 			}
 			if b, err := os.ReadFile(cfg); err != nil || string(b) != string(before) {

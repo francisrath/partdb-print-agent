@@ -223,11 +223,12 @@ func Install(sys System, o Options) (l Layout, err error) {
 		if err := sys.InstallService(l.Exe, []string{"service", "run", "--config", l.Config}); err != nil {
 			return l, fmt.Errorf("install service: %w", err)
 		}
-		if err := sys.StartService(); err != nil {
-			return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
-		}
 		// Running only means the handler is up: serve may still fail on its config or the port
-		if err := waitServing(sys); err != nil {
+		err := sys.StartService()
+		if err == nil {
+			err = waitServing(sys)
+		}
+		if err != nil {
 			return l, fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s, or Event Viewer → Windows Logs → System if there is none",
 				ErrNotStarted, err, filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
 		}
@@ -259,6 +260,12 @@ func waitServing(sys System) error {
 		if time.Now().After(end) {
 			return fmt.Errorf("not listening on %s after %s", agentAddr, serveWait)
 		}
+	}
+	// something listens: it isn't ours if the service has died meanwhile
+	if stopped, err := sys.ServiceStopped(); err != nil {
+		return err
+	} else if stopped {
+		return fmt.Errorf("it stopped, and something else listens on %s", agentAddr)
 	}
 	return nil
 }
@@ -345,7 +352,8 @@ func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) erro
 
 // ReadyServiceDir is what the service does before it opens its log: the config dir must be trusted
 // (see untrusted), else it doesn't start; a missing one (deleted by an admin) is created admin-only.
-// A missing config.yaml is written empty. It never re-ACLs an existing dir.
+// A missing config.yaml is written empty. A trusted dir gets the admin-only ACL again (an admin may
+// have recreated it with ProgramData's, readable by every user); an untrusted one is never re-ACL'd.
 func ReadyServiceDir(sys System, cfgPath string) error {
 	dir := filepath.Dir(cfgPath)
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
@@ -356,6 +364,8 @@ func ReadyServiceDir(sys System, cfgPath string) error {
 		return err
 	} else if why != "" {
 		return fmt.Errorf("not starting: %s (%s); delete it and run pdb-print install --service again", dir, why)
+	} else if err := MkdirAdminOnly(dir); err != nil { // the whole tree is admins': safe in place
+		return fmt.Errorf("reset %s: %w", dir, err) // e.g. an admin recreated it with the inherited ACL
 	}
 	if _, err := os.Lstat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		return WriteAdminOnly(cfgPath, nil)

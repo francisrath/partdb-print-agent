@@ -926,6 +926,12 @@ func TestPairLoopbackNeedsRequest(t *testing.T) {
 	h.srv.Window.opened = h.srv.Window.opened.Add(-windowEvery) // not the once-a-minute limit
 	h.srv.Window.mu.Unlock()
 	refused("nonce used twice", ok)
+	// a request file an administrator didn't write (planted) opens nothing
+	oldCheck := keyOwnerOK
+	keyOwnerOK = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() { keyOwnerOK = oldCheck })
+	pairRequest(t, h, "c0ffee")
+	refused("planted request file", ok)
 }
 
 func TestPairLoopbackNeedsCodeFile(t *testing.T) {

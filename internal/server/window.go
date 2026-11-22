@@ -611,6 +611,12 @@ func (s *Server) pairRequested(r *http.Request) bool {
 	if err != nil || len(want) == 0 {
 		return false
 	}
+	if keyOwnerOK != nil { // Windows: only a file an administrator wrote (not one planted)
+		if ok, _ := keyOwnerOK(s.PairRequestFile); !ok {
+			s.Log.Warn("pairing request not owned by Administrators or SYSTEM: ignored", "file", s.PairRequestFile)
+			return false
+		}
+	}
 	got := r.Header.Get(PairRequestHeader)
 	// whoever removes the file wins: a nonce can't be used twice, even by requests at the same time
 	return subtle.ConstantTimeCompare([]byte(got), want) == 1 && os.Remove(s.PairRequestFile) == nil

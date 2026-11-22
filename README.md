@@ -101,7 +101,10 @@ is replaced: other accounts remove theirs from their own Settings → Apps. A fo
 `%ProgramData%\pdb-print` that an administrator didn't make is moved aside
 (`pdb-print.untrusted.<time>`) and a new one created. The service runs as SYSTEM: `~` in
 `hot_folder.dir` is the system profile, so give an absolute path, and use a folder other users can't
-write to (the service deletes and moves the files in it). The web UI asks every browser for a code: run
+write to (the service deletes and moves the files in it). This relies on Windows' default owner for
+objects administrators create ("Administrators group"); with the policy "System objects: Default owner
+for objects created by members of the Administrators group" set to "Object creator", the service
+refuses its folder. The web UI asks every browser for a code: run
 `pdb-print pair` as administrator and type the code it shows. A paired browser stays signed in for
 30 days; to sign every browser out, delete `%ProgramData%\pdb-print\session.key`. Any local user can
 still print from Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
