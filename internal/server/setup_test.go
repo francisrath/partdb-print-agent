@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/francisrath/pdb-print/internal/driver/zpl/zpltest"
@@ -10,9 +11,12 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/devicedb"
@@ -552,5 +556,143 @@ func TestWizardScanLeavesBTOffline(t *testing.T) {
 	h.do("GET", "/setup/printer", nil)
 	if h.srv.Svc.Online(p) {
 		t.Error("online after a scan listed it")
+	}
+}
+
+// pairLoopbackHarness is a harness in service mode: loopback needs a paired session too.
+func pairLoopbackHarness(t *testing.T) *harness {
+	h := newHarness(t)
+	h.srv.PairLoopback = true
+	h.h = h.srv.Handler()
+	return h
+}
+
+func fromLoopback(r *http.Request) { r.RemoteAddr = "127.0.0.1:50000" }
+
+func TestPairLoopbackIndexNeedsSession(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	for _, tc := range []struct {
+		method, path string
+		want         int // a redirect goes to the pair page
+	}{
+		{"GET", "/", http.StatusSeeOther},
+		{"GET", "/?manual", http.StatusSeeOther},
+		{"GET", "/setup/partdb", http.StatusSeeOther},
+		{"GET", "/setup/done", http.StatusSeeOther},
+		{"GET", "/printers/ql/status", http.StatusSeeOther},
+		{"POST", "/routes", http.StatusForbidden},
+		{"POST", "/instance", http.StatusForbidden},
+		{"POST", "/telemetry", http.StatusForbidden},
+		{"POST", "/printers/ql/test", http.StatusForbidden},
+		{"POST", "/setup/partdb", http.StatusForbidden},
+		{"POST", "/v1/quit", http.StatusForbidden},
+		// open without pairing
+		{"GET", "/setup/", http.StatusOK}, // the pair page
+		{"GET", "/v1/info", http.StatusOK},
+		{"GET", "/v1/handoff", http.StatusOK}, // its own auth: the Part-DB pairing key
+		{"GET", "/static/style.css", http.StatusOK},
+		{"GET", "/favicon.svg", http.StatusOK},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			var form url.Values
+			if tc.method == "POST" {
+				form = url.Values{"csrf": {h.srv.csrf}}
+			}
+			w := h.do(tc.method, tc.path, form, fromLoopback, func(r *http.Request) { r.Header.Set("X-PDB-Print", "1") })
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body)
+			}
+			if tc.want == http.StatusSeeOther && w.Header().Get("Location") != "/setup/" {
+				t.Errorf("redirect to %q, want the pair page", w.Header().Get("Location"))
+			}
+			if tc.path == "/setup/" && !strings.Contains(w.Body.String(), "Setup is closed") {
+				t.Errorf("not the pair page: %s", w.Body)
+			}
+		})
+	}
+}
+
+func TestPairLoopbackPairs(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	code, _ := h.srv.Window.Open(time.Now())
+	if w := h.do("GET", "/setup/", nil, fromLoopback); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "6-digit code") {
+		t.Fatalf("pair page: %d %s", w.Code, w.Body)
+	}
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	if w := h.do("POST", "/setup/pair", url.Values{"code": {wrong}}, fromLoopback); w.Code != http.StatusForbidden {
+		t.Fatalf("wrong code: %d", w.Code)
+	}
+	w := h.do("POST", "/setup/pair", url.Values{"code": {code}}, fromLoopback)
+	wantRedirect(t, w, "/setup/partdb")
+	var cookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == cookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Path != "/" || cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie %+v", cookie)
+	}
+	withCookie := func(r *http.Request) { r.AddCookie(cookie); fromLoopback(r) }
+	if w := h.do("GET", "/", nil, withCookie); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), h.srv.csrf) {
+		t.Fatalf("index after pairing: %d %s", w.Code, w.Body)
+	}
+	if w := h.do("GET", "/setup/partdb", nil, withCookie); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "Set up by hand") {
+		t.Fatalf("wizard after pairing (LAN-like, no local shortcut): %d %s", w.Code, w.Body)
+	}
+	if w := h.do("POST", "/routes", url.Values{"csrf": {h.srv.csrf}, "profile": {"2"}, "printer": {"ql"}}, withCookie); w.Code != http.StatusSeeOther {
+		t.Fatalf("settings POST after pairing: %d %s", w.Code, w.Body)
+	}
+	if w := h.do("POST", "/setup/partdb", url.Values{"csrf": {h.srv.csrf}}, withCookie); w.Code != http.StatusForbidden {
+		t.Errorf("wizard POST with the main CSRF token instead of the session's: %d", w.Code)
+	}
+	h.srv.Window.Close()
+	if w := h.do("GET", "/", nil, withCookie); w.Code != http.StatusSeeOther {
+		t.Errorf("index after the window closed: %d", w.Code)
+	}
+}
+
+func TestPairCodeFile(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	h.srv.PairCodeFile = filepath.Join(t.TempDir(), "pair-code.txt")
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var res map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res["code"]; ok || res["code_file"] != h.srv.PairCodeFile {
+		t.Fatalf("reply %s", w.Body)
+	}
+	b, err := os.ReadFile(h.srv.PairCodeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.srv.Window.Check(strings.TrimSpace(string(b)), time.Now()); !ok {
+		t.Errorf("file holds %q, not the window's code", b)
+	}
+}
+
+func TestDefaultLoopbackUnchanged(t *testing.T) {
+	h := newHarness(t)
+	if w := h.do("GET", "/", nil); w.Code != http.StatusOK {
+		t.Errorf("index: %d", w.Code)
+	}
+	wantRedirect(t, h.do("GET", "/setup/", nil), "/setup/partdb")
+	if w := h.do("GET", "/setup/partdb", nil); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Set up by hand") {
+		t.Errorf("wizard: %d", w.Code)
+	}
+	if w := h.do("POST", "/setup/pair", url.Values{"csrf": {h.srv.csrf}, "code": {"123456"}}); w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
+		t.Errorf("POST /setup/pair on loopback: %d", w.Code)
+	}
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	var res map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res["code"] == nil || res["code_file"] != nil {
+		t.Errorf("pair reply %s: %v", w.Body, err)
 	}
 }

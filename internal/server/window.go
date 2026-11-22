@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/francisrath/pdb-print/assets"
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 // The setup window: for a while after install (or `pdb-print pair`) the wizard is reachable from
@@ -520,7 +521,12 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
 	// Secure only over TLS: the setup window is plain HTTP on the LAN, where a Secure cookie would
 	// never come back and pairing would fail. SameSite=Strict and HttpOnly hold either way.
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true,
+	// PairLoopback: the session also opens the settings page, so the cookie covers every path.
+	path := "/setup"
+	if s.PairLoopback {
+		path = "/"
+	}
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: path, HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
 	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 }
@@ -528,6 +534,17 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 // pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it.
 func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
 	code, urls, expires := s.OpenWindow(time.Now())
+	if s.PairCodeFile != "" { // the service: only administrators may see the code
+		if err := wininstall.WriteAdminOnly(s.PairCodeFile, []byte(code)); err != nil {
+			s.Window.Close()
+			s.Log.Error("setup window: can't write the pairing code", "file", s.PairCodeFile, "err", err)
+			http.Error(w, "can't write the pairing code: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.Log.Info("setup window opened", "code_file", s.PairCodeFile, "urls", urls, "until", expires.Format("15:04"))
+		writeJSON(w, map[string]any{"code_file": s.PairCodeFile, "urls": urls, "expires": expires})
+		return
+	}
 	s.Log.Info("setup window opened", "code", code, "urls", urls, "until", expires.Format("15:04"))
 	writeJSON(w, map[string]any{"code": code, "urls": urls, "expires": expires})
 }

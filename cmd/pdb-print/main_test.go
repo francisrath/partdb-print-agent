@@ -422,6 +422,36 @@ func TestPairCmd(t *testing.T) {
 	}
 }
 
+func TestPairCmdReadsCodeFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "pair-code.txt")
+	if err := os.WriteFile(file, []byte("482913"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"code_file":%q,"urls":[],"expires":"2026-11-19T12:15:00Z"}`, file)
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	var out bytes.Buffer
+	if err := pairCmd(context.Background(), []string{"--addr", addr}, &out); err != nil {
+		t.Fatal(err) // no LAN address is fine: this PC's browser can pair
+	}
+	for _, want := range []string{"482913", "http://" + addr + "/setup/"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if err := os.Chmod(file, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(file); err == nil {
+		t.Skip("running as root/administrator: can't test an unreadable file")
+	}
+	if err := pairCmd(context.Background(), []string{"--addr", addr}, &out); err == nil || !strings.Contains(err.Error(), "as administrator") {
+		t.Errorf("unreadable code file: %v", err)
+	}
+}
+
 func TestNeedsSetup(t *testing.T) {
 	t.Setenv("PDB_PRINT_URL", "")
 	if !needsSetup(&config.Config{}) {

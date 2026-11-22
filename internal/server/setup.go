@@ -75,8 +75,12 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /setup/report", s.setupReportPost)
 }
 
-// withLocalSession gives loopback wizard requests the one local session (no code needed here).
+// withLocalSession gives loopback wizard requests the one local session (no code needed here);
+// not under PairLoopback, where guard puts the paired browser's session in.
 func (s *Server) withLocalSession(next http.Handler) http.Handler {
+	if s.PairLoopback {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isSetupPath(r.URL.Path) {
 			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, s.local))

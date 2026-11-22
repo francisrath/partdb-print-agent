@@ -80,6 +80,11 @@ type Server struct {
 	OnInstance func(in config.Instance)
 	// Quit stops serve like SIGTERM (POST /v1/quit from `pdb-print install`/`uninstall`); nil = not offered.
 	Quit func()
+	// PairLoopback (the Windows service on a shared PC): loopback browsers pair with a code like the
+	// LAN; no local session. PairCodeFile: /v1/pair writes the code there (admin-only) instead of
+	// answering it. Both are set before Handler.
+	PairLoopback bool
+	PairCodeFile string
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
@@ -161,14 +166,19 @@ func (s *Server) Handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]int{"pid": os.Getpid()})
 		s.Quit() // the graceful shutdown waits for this response and in-flight prints
 	})
-	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
-		d := s.local.Draft // a fresh start
-		d.mu.Lock()
-		d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
-		d.resetPrinter(config.Printer{})
-		d.mu.Unlock()
-		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
-	})
+	if s.PairLoopback { // as on the LAN: the pair page, then the wizard
+		mux.HandleFunc("GET /setup/{$}", s.setupStart)
+		mux.HandleFunc("POST /setup/pair", s.pair)
+	} else {
+		mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
+			d := s.local.Draft // a fresh start
+			d.mu.Lock()
+			d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
+			d.resetPrinter(config.Printer{})
+			d.mu.Unlock()
+			http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+		})
+	}
 	s.setupRoutes(mux)
 	mux.HandleFunc("GET /v1/handoff", s.handoff)
 	mux.HandleFunc("POST /v1/handoff", s.handoff)
@@ -187,12 +197,31 @@ func (s *Server) guard(next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(s.Addr)
 	allowed := map[string]bool{"127.0.0.1:" + port: true, "localhost:" + port: true, "[::1]:" + port: true,
 		s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
+	pairLoopback := s.PairLoopback
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.Host] {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
 		securityHeaders(w)
+		var sess *Session // PairLoopback: the paired browser's session
+		if pairLoopback {
+			now := time.Now()
+			var ok bool
+			sess, ok = s.Window.Session(r, now)
+			switch {
+			case ok:
+				s.Window.Touch(now)
+				r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess))
+			case pairFree(r):
+			case r.Method == http.MethodGet || r.Method == http.MethodHead:
+				http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+				return
+			default:
+				http.Error(w, "this browser isn't paired: run \"pdb-print pair\" as administrator for a code, then reload the page", http.StatusForbidden)
+				return
+			}
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
 			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
 			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
@@ -210,7 +239,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
-			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) == 1
+			want := s.csrf // the settings pages'; the wizard's pages carry their session's
+			if sess != nil && isSetupPath(r.URL.Path) {
+				want = sess.CSRF
+			}
+			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(want)) == 1 ||
+				pairLoopback && sess == nil && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
 			if !originOK || !tokenOK {
 				s.Log.Warn("rejected POST", "path", r.URL.Path, "origin", origin, "origin_ok", originOK, "csrf_ok", tokenOK)
 				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)
@@ -219,6 +253,24 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// pairFree reports whether a loopback request is served without a paired session under
+// PairLoopback: what pairing needs, the read-only info, and the handoff (it has its own auth,
+// the Part-DB pairing key).
+func pairFree(r *http.Request) bool {
+	p := r.URL.Path
+	if r.Method == http.MethodPost {
+		return p == "/v1/pair" || p == "/setup/pair" || p == "/v1/handoff"
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	switch p {
+	case "/setup/", "/v1/info", "/v1/handoff", "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png":
+		return true
+	}
+	return strings.HasPrefix(p, "/static/")
 }
 
 func securityHeaders(w http.ResponseWriter) {

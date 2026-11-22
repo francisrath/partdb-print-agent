@@ -4,6 +4,7 @@ package wininstall
 
 import (
 	"errors"
+	"os"
 	"syscall"
 	"time"
 )
@@ -31,3 +32,11 @@ func (osSystem) DeleteAfterExit(string) error            { return ErrNotWindows 
 func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows }
 
 func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
+
+// WriteAdminOnly writes data to path readable only by its owner (here: mode 0600).
+func WriteAdminOnly(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600) // an existing file keeps its mode in WriteFile
+}

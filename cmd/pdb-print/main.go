@@ -469,12 +469,28 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))
 	}
 	var res struct {
-		Code    string    `json:"code"`
-		URLs    []string  `json:"urls"`
-		Expires time.Time `json:"expires"`
+		Code     string    `json:"code"`
+		CodeFile string    `json:"code_file"` // the service: the code is only in this admin-only file
+		URLs     []string  `json:"urls"`
+		Expires  time.Time `json:"expires"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return err
+	}
+	if res.CodeFile != "" {
+		b, err := os.ReadFile(res.CodeFile)
+		if errors.Is(err, os.ErrPermission) {
+			return errors.New("run pdb-print pair as administrator to see the code")
+		} else if err != nil {
+			return err
+		}
+		res.Code = strings.TrimSpace(string(b))
+		fmt.Fprintf(out, "Setup is open until %s. On this computer or another one, open one of:\n\n", res.Expires.Local().Format("15:04"))
+		for _, u := range append([]string{"http://" + *addr + "/setup/"}, res.URLs...) {
+			fmt.Fprintf(out, "    %s\n", u)
+		}
+		fmt.Fprintf(out, "\nand type the code:  %s\n", res.Code)
+		return nil
 	}
 	if len(res.URLs) == 0 {
 		return errors.New("setup couldn't listen on the local network (no network address yet, or port 8631 in use): see the service log")

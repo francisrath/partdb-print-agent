@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -262,4 +263,36 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
+}
+
+// WriteAdminOnly writes data to path readable only by Administrators and SYSTEM. The file is
+// created under a temporary name with that ACL already set (and no sharing), so no other user can
+// open it at any point, then renamed over path (a rename keeps the ACL).
+func WriteAdminOnly(path string, data []byte) error {
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;BA)(A;;FA;;;SY)")
+	if err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	p, err := windows.UTF16PtrFromString(tmp)
+	if err != nil {
+		return err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return &os.PathError{Op: "create", Path: tmp, Err: err}
+	}
+	f := os.NewFile(uintptr(h), tmp)
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
