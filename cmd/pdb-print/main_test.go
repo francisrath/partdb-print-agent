@@ -1202,3 +1202,14 @@ func TestSelfUpdateRestart(t *testing.T) {
 		}
 	}
 }
+
+// A test build's updateBase serves both the release check and the downloads; releases use GitHub.
+func TestUpdateBase(t *testing.T) {
+	if latestURL() != "" {
+		t.Errorf("release build: %q", latestURL())
+	}
+	stub(t, &updateBase, "http://127.0.0.1:9999")
+	if got := latestURL(); got != "http://127.0.0.1:9999/latest" {
+		t.Errorf("latestURL %q", got)
+	}
+}

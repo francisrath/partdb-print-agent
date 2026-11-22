@@ -408,7 +408,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	a.setupSelfUpdate(srv)
 	if a.cfg.UpdateCheckOn() {
-		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log, SelfUpdate: srv.Updater != nil}
+		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log, URL: latestURL(), SelfUpdate: srv.Updater != nil}
 		go srv.Updates.Run(ctx)
 	}
 	var folderDone chan struct{} // closed when the hot folder has stopped
@@ -510,11 +510,18 @@ func (a *app) setupSelfUpdate(srv *server.Server) {
 	if !a.cfg.SelfUpdateOn() {
 		return
 	}
-	u := &selfupdate.Updater{Dir: dir, Quiesce: a.svc.Quiesce, Restart: restartInto(sys, dir, a.cfgPath, serviceMode)}
-	if b := os.Getenv("PDB_PRINT_UPDATE_BASE"); b != "" && !update.Released(appVersion()) { // tests with a fake release
-		u.Base = b
+	srv.Updater = &selfupdate.Updater{Base: updateBase, Dir: dir, Quiesce: a.svc.Quiesce, Restart: restartInto(sys, dir, a.cfgPath, serviceMode)}
+}
+
+// updateBase is for testing the updater against a fake release server (-ldflags "-X main.updateBase=http://host:port"); releases leave it empty.
+var updateBase string
+
+// latestURL is the release check's URL: "" (GitHub) unless updateBase is set.
+func latestURL() string {
+	if updateBase == "" {
+		return ""
 	}
-	srv.Updater = u
+	return updateBase + "/latest"
 }
 
 // exit is os.Exit; tests swap it.
