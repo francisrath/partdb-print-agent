@@ -23,6 +23,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/discovery"
 	"github.com/francisrath/pdb-print/internal/logfile"
+	"github.com/francisrath/pdb-print/internal/printing"
 	"github.com/francisrath/pdb-print/internal/server"
 	"github.com/francisrath/pdb-print/internal/transport/bt"
 	"github.com/francisrath/pdb-print/internal/wininstall"
@@ -550,6 +551,7 @@ type fakeSys struct {
 	waited                   []int // WaitExit's pids
 	waitTimeout              time.Duration
 	readErr                  error // ReadUninstall's error
+	stops                    int   // StopService calls
 }
 
 func (f *fakeSys) IsAdmin() bool                { return f.admin }
@@ -557,11 +559,12 @@ func (f *fakeSys) SetRun(string, string) error  { return nil }
 func (f *fakeSys) DeleteRun(string) error       { return nil }
 func (f *fakeSys) ServiceExists() (bool, error) { return f.service, nil }
 func (f *fakeSys) InstallService(string, []string) error {
+	f.service = true
 	return nil
 }
-func (f *fakeSys) RemoveService() error            { return nil }
-func (f *fakeSys) StartService() error             { return nil }
-func (f *fakeSys) StopService(time.Duration) error { return nil }
+func (f *fakeSys) RemoveService() error            { f.service = false; return nil }
+func (f *fakeSys) StartService() error             { f.portBusy = true; return nil }
+func (f *fakeSys) StopService(time.Duration) error { f.stops++; f.portBusy = false; return nil }
 func (f *fakeSys) PortInUse(string) bool           { return f.portBusy }
 func (f *fakeSys) Listening(string) bool           { return f.portBusy }
 func (f *fakeSys) DeleteAfterExit(string) error    { return nil }
@@ -653,13 +656,84 @@ func TestInstallService(t *testing.T) {
 	if err := run(context.Background(), []string{"install", "--service"}); err == nil || !strings.Contains(err.Error(), "run it as administrator") {
 		t.Errorf("not admin: %v", err)
 	}
-	// not available yet: a running per-user agent is left alone
-	w.sys.admin, w.sys.portBusy, w.sys.unin[wininstall.PerUser] = true, true, wininstall.Entry{InstallLocation: `C:\x`}
-	if err := run(context.Background(), []string{"install", "--service"}); err == nil || !strings.Contains(err.Error(), "not available yet") {
-		t.Errorf("admin: %v", err)
+	if _, err := runOut("install", "--quiet"); err != nil { // a per-user install, running
+		t.Fatal(err)
 	}
-	if w.quits != 0 {
-		t.Error("stopped the per-user agent")
+	// it is stopped (and waited for) and replaced by the service
+	w.sys.admin = true
+	out, err := runOut("install", "--service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := wininstall.LayoutFor(wininstall.Service, w.env)
+	if _, ok := w.sys.unin[wininstall.PerUser]; ok || !w.sys.service || w.quits != 1 || len(w.sys.waited) != 1 || w.sys.stops != 0 {
+		t.Errorf("takeover: entries %v, service %v, %d quits, waited %v, %d stops", w.sys.unin, w.sys.service, w.quits, w.sys.waited, w.sys.stops)
+	}
+	for _, want := range []string{"runs as the Windows service pdb-print", l.ProgramDir, "pdb-print pair", "Replaced the per-user install"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if len(w.browsed) != 1 {
+		t.Errorf("browsed %v", w.browsed)
+	}
+	// again: the running service is stopped by the service manager, not /v1/quit (it has none)
+	if _, err := runOut("install", "--service", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	if w.quits != 1 || w.sys.stops != 1 || !w.sys.service {
+		t.Errorf("reinstall: %d quits, %d stops", w.quits, w.sys.stops)
+	}
+	// uninstall: no /v1/quit either
+	w.sys.admin = false
+	if _, err := runOut("uninstall"); err == nil || !strings.Contains(err.Error(), "as administrator") {
+		t.Errorf("uninstall not admin: %v", err)
+	}
+	w.sys.admin = true
+	if _, err := runOut("uninstall"); err != nil {
+		t.Fatal(err)
+	}
+	if w.quits != 1 || w.sys.stops != 2 || w.sys.service || len(w.sys.unin) != 0 {
+		t.Errorf("uninstall: %d quits, %d stops, service %v, entries %v", w.quits, w.sys.stops, w.sys.service, w.sys.unin)
+	}
+}
+
+func TestServiceCmd(t *testing.T) {
+	for _, args := range [][]string{{"service"}, {"service", "start"}, {"service", "run"}} {
+		if err := run(context.Background(), args); err == nil || !strings.Contains(err.Error(), "usage: pdb-print service run --config FILE") {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	// not started by the service manager (here: not Windows)
+	if err := run(context.Background(), []string{"service", "run", "--config", "x.yaml"}); err == nil || !strings.Contains(err.Error(), "Windows service") {
+		t.Errorf("by hand: %v", err)
+	}
+}
+
+// As the service: pairing on loopback, its files next to the config, no /v1/quit (the service manager stops it).
+func TestNewServerServiceMode(t *testing.T) {
+	dir := t.TempDir()
+	a := &app{cfg: &config.Config{}, cfgPath: filepath.Join(dir, "config.yaml"), log: slog.New(slog.DiscardHandler), svc: &printing.Service{}}
+	stub(t, &goos, "windows")
+	quit := func() {}
+	if s := a.newServer("127.0.0.1:8631", quit); s.Quit == nil || s.PairLoopback || s.PairCodeFile != "" || s.SessionKeyFile != "" {
+		t.Errorf("per-user: %+v", s)
+	}
+	stub(t, &serviceMode, true)
+	s := a.newServer("127.0.0.1:8631", quit)
+	if s.Quit != nil || !s.PairLoopback || s.PairCodeFile != filepath.Join(dir, "pair-code.txt") || s.SessionKeyFile != filepath.Join(dir, "session.key") {
+		t.Errorf("service: quit %v, loopback %v, %q %q", s.Quit != nil, s.PairLoopback, s.PairCodeFile, s.SessionKeyFile)
+	}
+}
+
+// A process WaitExit may not open (another user's, an elevated one): wait for the port instead.
+func TestStopAgentCantWatch(t *testing.T) {
+	w := fakeWindows(t)
+	stub(t, &startWait, 0) // the fallback must use the long limit
+	n := 50
+	w.sys.portBusy, w.sys.waitErr = true, wininstall.ErrCantWatch
+	if err := stopAgent(context.Background(), freesAfter{w.sys, &n}); err != nil || n > 0 {
+		t.Errorf("err %v, polls left %d", err, n)
 	}
 }
 

@@ -41,7 +41,7 @@ var (
 
 func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	service := fs.Bool("service", false, "install as a Windows service for all users (needs admin; not available yet)")
+	service := fs.Bool("service", false, "install as a Windows service for all users (needs admin)")
 	quiet := fs.Bool("quiet", false, "don't open the web UI afterwards")
 	noSelfUpdate := fs.Bool("no-self-update", false, "never update itself to a new release")
 	if _, err := parse(fs, args); err != nil {
@@ -51,35 +51,41 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print install works only on Windows (elsewhere: see the README)")
 	}
 	sys, env := newSystem(), envFromOS()
-	if *service {
-		if !sys.IsAdmin() {
-			return errors.New("installing the service needs admin rights: run it as administrator")
-		}
-		// ponytail: until service mode lands; checked before a running agent is stopped
-		return errors.New("installing as a service is not available yet")
-	} else if ok, err := sys.ServiceExists(); err != nil {
+	if *service && !sys.IsAdmin() {
+		return errors.New("installing the service needs admin rights: run it as administrator")
+	}
+	hasService, err := sys.ServiceExists()
+	if err != nil {
 		return fmt.Errorf("query service: %w", err)
-	} else if ok {
+	} else if hasService && !*service {
 		return errors.New("pdb-print is installed as a service: uninstall that first (pdb-print uninstall, as administrator)")
 	}
-	if sys.IsAdmin() {
+	if sys.IsAdmin() && !*service {
 		fmt.Fprintf(out, "Installing for %s (this window runs as administrator; the agent it starts runs as administrator until you log in again).\n", os.Getenv("USERNAME"))
 	}
 	stopped := false
 	if sys.Listening(agentAddr) {
-		_, ok, err := wininstall.Installed(sys, env)
-		if err != nil {
+		l, ok, err := wininstall.Installed(sys, env)
+		switch {
+		case err != nil:
 			return err
-		}
-		if !ok {
+		case ok && l.Mode == wininstall.PerUser: // also when the service takes it over
+			if err := stopAgent(ctx, sys); err != nil {
+				return err
+			}
+			stopped = true
+		case !hasService: // a running service is stopped by Install
 			return errors.New("port 8631 is in use: another pdb-print (or another program) is running; stop it and run install again")
 		}
-		if err := stopAgent(ctx, sys); err != nil {
-			return err
-		}
-		stopped = true
 	}
-	l, err := install(sys, env, *quiet, *noSelfUpdate)
+	mode := wininstall.PerUser
+	if *service {
+		mode = wininstall.Service
+	}
+	l, err := install(sys, env, mode, *quiet, *noSelfUpdate, out)
+	if err != nil && stopped && *service { // the per-user install may be gone already
+		return fmt.Errorf("%w (the per-user pdb-print was stopped; run the install again)", err)
+	}
 	if err != nil && stopped {
 		w := wininstall.LayoutFor(wininstall.PerUser, env).ExeW
 		return fmt.Errorf("%w (the running pdb-print was stopped; start it again with %s serve, or log off and on)", err, wininstall.Quote(w))
@@ -87,7 +93,11 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "pdb-print %s is installed in %s and starts when you log in.\nWeb UI: http://%s (also in the Start menu)\n", appVersion(), l.ProgramDir, agentAddr)
+	if *service {
+		fmt.Fprintf(out, "pdb-print %s is installed in %s and runs as the Windows service pdb-print.\nWeb UI: http://%s (also in the Start menu); to use it in a browser, run pdb-print pair as administrator and type the code it shows.\n", appVersion(), l.ProgramDir, agentAddr)
+	} else {
+		fmt.Fprintf(out, "pdb-print %s is installed in %s and starts when you log in.\nWeb UI: http://%s (also in the Start menu)\n", appVersion(), l.ProgramDir, agentAddr)
+	}
 	switch {
 	case *quiet:
 	case !waitPort(sys, true, startWait):
@@ -100,13 +110,30 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
-func install(sys wininstall.System, env wininstall.Env, quiet, noSelfUpdate bool) (wininstall.Layout, error) {
+func install(sys wininstall.System, env wininstall.Env, mode wininstall.Mode, quiet, noSelfUpdate bool, out io.Writer) (wininstall.Layout, error) {
 	self, err := selfExe()
 	if err != nil {
 		return wininstall.Layout{}, err
 	}
-	return wininstall.Install(sys, wininstall.Options{Mode: wininstall.PerUser, Quiet: quiet, NoSelfUpdate: noSelfUpdate,
-		Self: self, Version: appVersion(), Env: env})
+	return wininstall.Install(sys, wininstall.Options{Mode: mode, Quiet: quiet, NoSelfUpdate: noSelfUpdate,
+		Self: self, Version: appVersion(), Env: env, Out: out})
+}
+
+// serviceCmd is `pdb-print service run --config FILE`, what the Windows service starts.
+func serviceCmd(ctx context.Context, args []string) error {
+	const use = "usage: pdb-print service run --config FILE (started by the Windows service pdb-print)"
+	if len(args) == 0 || args[0] != "run" {
+		return errors.New(use)
+	}
+	fs := flag.NewFlagSet("service run", flag.ContinueOnError)
+	cfg := fs.String("config", "", "config file")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if *cfg == "" {
+		return errors.New(use)
+	}
+	return runService(ctx, *cfg)
 }
 
 // closeDelay is how long a successful uninstall started from Settings → Apps stays on screen.
@@ -150,7 +177,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	if mode == wininstall.Service && !sys.IsAdmin() {
 		return errors.New("pdb-print is installed as a service: run it as administrator")
 	}
-	if sys.Listening(agentAddr) {
+	if mode == wininstall.PerUser && sys.Listening(agentAddr) { // a service is stopped by Uninstall
 		if err := stopAgent(ctx, sys); err != nil {
 			return err
 		}
@@ -177,7 +204,9 @@ func stopAgent(ctx context.Context, sys wininstall.System) error {
 	portLimit := startWait
 	if pid == 0 { // no pid in the reply: the port going free is all we can wait for
 		portLimit = exitWait
-	} else if err := sys.WaitExit(pid, exitWait); err != nil {
+	} else if err := sys.WaitExit(pid, exitWait); errors.Is(err, wininstall.ErrCantWatch) {
+		portLimit = exitWait // the same: we may not open it (another user's, or elevated)
+	} else if err != nil {
 		return fmt.Errorf("%s (%w)", still, err)
 	}
 	if !waitPort(sys, false, portLimit) {

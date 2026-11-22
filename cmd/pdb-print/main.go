@@ -53,8 +53,9 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
-  install [--quiet] [--no-self-update]
+  install [--service] [--quiet] [--no-self-update]
                                    Windows: install for this user and start it at login (no window);
+                                   --service: as a Windows service for all users (as administrator);
                                    --quiet: don't open the web UI; --no-self-update: never update itself
   uninstall [--purge]              Windows: remove the install; --purge also deletes the config
   serve [--addr 127.0.0.1:8631] [--setup-window]
@@ -85,6 +86,9 @@ commands:
 // gui is "1" in pdb-printw.exe (set by the release build), the windowless exe the login autostart runs.
 var gui string
 
+// serviceMode: serve runs as the Windows service (pdb-print service run).
+var serviceMode bool
+
 // logOut takes the log and the final error: stderr, or a file for pdb-printw.exe (see logWriter).
 var logOut io.Writer = os.Stderr
 
@@ -107,7 +111,12 @@ func logWriter() io.Writer {
 	if goos != "windows" || gui != "1" || dir == "" {
 		return os.Stderr
 	}
-	w := &logfile.Writer{Path: filepath.Join(dir, "pdb-print", "pdb-print.log"), Max: 10 << 20}
+	return fileLog(filepath.Join(dir, "pdb-print", "pdb-print.log"))
+}
+
+// fileLog is the log file at path, kept to 10 MB plus one old file, panics included.
+func fileLog(path string) *logfile.Writer {
+	w := &logfile.Writer{Path: path, Max: 10 << 20}
 	_ = w.KeepCrashes() // panics too; a log that can't be opened fails the first log write instead
 	return w
 }
@@ -153,6 +162,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "uninstall" {
 		return uninstallCmd(ctx, rest, stdout)
+	}
+	if cmd == "service" { // started by the Windows service manager; runs serve
+		return serviceCmd(ctx, rest)
 	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)
@@ -377,10 +389,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	ctx, quit := context.WithCancel(ctx) // POST /v1/quit: the same graceful shutdown as SIGTERM
 	defer quit()
-	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
-	if goos == "windows" { // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
-		srv.Quit = quit
-	}
+	srv := a.newServer(ln.Addr().String(), quit)
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	if a.cfg.UpdateCheckOn() {
@@ -441,6 +450,21 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	<-setupDone
 	srv.WaitSetupPrints() // a test label being printed from the wizard finishes too
 	return nil
+}
+
+// newServer is serve's server on addr; quit stops serve.
+func (a *app) newServer(addr string, quit func()) *server.Server {
+	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, addr, appVersion())
+	switch {
+	case serviceMode: // a shared PC: loopback browsers pair too; the service manager stops us
+		dir := filepath.Dir(a.cfgPath) // %ProgramData%\pdb-print, admin-only
+		srv.PairLoopback = true
+		srv.PairCodeFile = filepath.Join(dir, "pair-code.txt")
+		srv.SessionKeyFile = filepath.Join(dir, "session.key")
+	case goos == "windows": // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
+		srv.Quit = quit
+	}
+	return srv
 }
 
 // needsSetup: no Part-DB configured yet (in the config or the environment).
