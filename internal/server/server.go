@@ -253,6 +253,11 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			if r.URL.Path == "/v1/handoff" {
 				want = s.handoffCSRF // its page is shown without pairing: never the settings token
 			}
+			if pairLoopback && paired && originOK && r.URL.Path == "/setup/pair" {
+				// the code sent again (a double click, an old tab): already paired, nothing to change
+				http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+				return
+			}
 			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(want)) == 1 ||
 				pairLoopback && !paired && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
 			if !originOK || !tokenOK {
