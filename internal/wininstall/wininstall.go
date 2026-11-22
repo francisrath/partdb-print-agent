@@ -287,24 +287,26 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if err := os.Remove(l.StartMenuLink); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Start menu link: %w", err)
 	}
+	if purge {
+		if err := os.RemoveAll(filepath.Dir(l.Config)); err != nil {
+			return fmt.Errorf("remove config: %w", err)
+		}
+	}
+	// The uninstall entry runs the exe in the program dir, so it goes before the files do: an entry
+	// must never point at a removed exe. If removing the files fails after that, say where they are.
+	if err := sys.DeleteUninstall(m); err != nil {
+		return fmt.Errorf("delete uninstall entry: %w", err)
+	}
 	// a process can't remove its own working dir on Windows (Settings may start us in it)
 	if wd, err := os.Getwd(); err == nil && within(wd, l.ProgramDir) {
 		_ = os.Chdir(filepath.Dir(l.ProgramDir))
 	}
 	aside, err := removeDir(l.ProgramDir)
 	if err != nil {
-		return fmt.Errorf("remove program dir: %w", err)
+		return fmt.Errorf("remove program dir (delete %s by hand): %w", l.ProgramDir, err)
 	}
 	for _, p := range aside {
 		_ = sys.DeleteAfterExit(p) // best effort: cleanupOld on a later install is the fallback
-	}
-	if purge {
-		if err := os.RemoveAll(filepath.Dir(l.Config)); err != nil {
-			return fmt.Errorf("remove config: %w", err)
-		}
-	}
-	if err := sys.DeleteUninstall(m); err != nil {
-		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
 	return nil
 }

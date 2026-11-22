@@ -77,7 +77,8 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	}
 	l, err := install(sys, env, *quiet, *noSelfUpdate)
 	if err != nil && stopped {
-		return fmt.Errorf("%w (the running pdb-print was stopped; start it again from the Start menu or log off and on)", err)
+		w := wininstall.LayoutFor(wininstall.PerUser, env).ExeW
+		return fmt.Errorf("%w (the running pdb-print was stopped; start it again with %s serve, or log off and on)", err, wininstall.Quote(w))
 	}
 	if err != nil {
 		return err

@@ -242,7 +242,7 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, text string, e
 		s.flash = &flash{Text: text}
 	}
 	s.mu.Unlock()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?manual", http.StatusSeeOther) // a fresh install would bounce "/" to the wizard and lose the flash
 }
 
 // update applies fn to a copy of the config, validates and saves it, then swaps it in.

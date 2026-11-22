@@ -678,3 +678,19 @@ func TestIndexFreshInstallOpensWizard(t *testing.T) {
 		t.Error("the wizard's first step has no way to the settings page")
 	}
 }
+
+// On a fresh install "/" bounces to the wizard, so a settings form posted from "/?manual" must
+// come back to "/?manual" with its message, not to the wizard.
+func TestFreshInstallFormKeepsSettingsPage(t *testing.T) {
+	h := newHarness(t)
+	h.srv.mu.Lock()
+	h.srv.cfg.Printers = nil
+	h.srv.mu.Unlock()
+	rec := h.post("/telemetry", url.Values{})
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?manual" {
+		t.Fatalf("POST /telemetry: %d %q, want 303 to /?manual", rec.Code, rec.Header().Get("Location"))
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "flash") {
+		t.Error("the form's message is not on the settings page")
+	}
+}

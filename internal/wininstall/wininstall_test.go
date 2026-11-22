@@ -17,6 +17,7 @@ type fakeSystem struct {
 	unin    map[Mode]Entry
 	service bool
 	spawns  [][]string
+	uninErr error // DeleteUninstall fails with it
 }
 
 func newFake() *fakeSystem {
@@ -27,7 +28,13 @@ func (f *fakeSystem) IsAdmin() bool                         { return true }
 func (f *fakeSystem) SetRun(n, c string) error              { f.run[n] = c; return nil }
 func (f *fakeSystem) DeleteRun(n string) error              { delete(f.run, n); return nil }
 func (f *fakeSystem) WriteUninstall(m Mode, e Entry) error  { f.unin[m] = e; return nil }
-func (f *fakeSystem) DeleteUninstall(m Mode) error          { delete(f.unin, m); return nil }
+func (f *fakeSystem) DeleteUninstall(m Mode) error {
+	if f.uninErr != nil {
+		return f.uninErr
+	}
+	delete(f.unin, m)
+	return nil
+}
 func (f *fakeSystem) ServiceExists() (bool, error)          { return f.service, nil }
 func (f *fakeSystem) InstallService(string, []string) error { f.service = true; return nil }
 func (f *fakeSystem) RemoveService() error                  { f.service = false; return nil }
@@ -246,6 +253,23 @@ func TestUninstall(t *testing.T) {
 		if got := exists(l.Config); got == purge {
 			t.Errorf("purge=%v: config exists=%v", purge, got)
 		}
+	}
+}
+
+// The uninstall entry runs the installed exe, so a failure before the entry is gone must leave
+// the exe in place: Settings → Apps can then run the uninstall again.
+func TestUninstallEntryNeverPointsAtRemovedExe(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.uninErr = errors.New("registry says no")
+	if err := Uninstall(sys, PerUser, true, e); err == nil {
+		t.Fatal("no error")
+	}
+	if _, ok := sys.unin[PerUser]; !ok || !exists(l.Exe) {
+		t.Errorf("entry kept=%v, exe kept=%v; want both", ok, exists(l.Exe))
 	}
 }
 
