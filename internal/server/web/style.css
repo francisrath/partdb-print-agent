@@ -62,3 +62,5 @@ label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--f
 .busy::before { content: ""; display: inline-block; width: .8em; height: .8em; margin-right: 8px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .busy::before { animation-duration: 3s; } }
+.cmd { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
