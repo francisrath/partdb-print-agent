@@ -26,12 +26,15 @@ func (osSystem) InstallService(string, []string) error   { return ErrNotWindows 
 func (osSystem) RemoveService() error                    { return ErrNotWindows }
 func (osSystem) StartService() error                     { return ErrNotWindows }
 func (osSystem) StopService(time.Duration) error         { return ErrNotWindows }
+func (osSystem) ServiceStopped() (bool, error)           { return false, ErrNotWindows }
 func (osSystem) Spawn(string, ...string) error           { return ErrNotWindows }
 func (osSystem) PortInUse(addr string) bool              { return portInUse(addr) }
 func (osSystem) Listening(addr string) bool              { return listening(addr) }
 func (osSystem) DeleteAfterExit(string) error            { return ErrNotWindows }
 func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows }
 func (osSystem) OwnedByAdmins(string) (bool, error)      { return false, ErrNotWindows }
+
+func longPath(p string) string { return p }
 
 func isReparse(fi os.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
 

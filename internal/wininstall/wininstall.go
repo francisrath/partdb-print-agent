@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -94,6 +95,7 @@ type System interface {
 	InstallService(exe string, args []string) error
 	RemoveService() error
 	StartService() error
+	ServiceStopped() (bool, error) // the service's state is Stopped
 	StopService(timeout time.Duration) error
 	Spawn(exe string, args ...string) error // detached, no window, cwd = exe's dir
 	// PortInUse reports whether addr can't be bound: use it to see that a port is free.
@@ -222,8 +224,12 @@ func Install(sys System, o Options) (l Layout, err error) {
 			return l, fmt.Errorf("install service: %w", err)
 		}
 		if err := sys.StartService(); err != nil {
-			return l, fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s", ErrNotStarted, err,
-				filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
+			return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
+		}
+		// Running only means the handler is up: serve may still fail on its config or the port
+		if err := waitServing(sys); err != nil {
+			return l, fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s, or Event Viewer → Windows Logs → System if there is none",
+				ErrNotStarted, err, filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
 		}
 		return l, nil
 	}
@@ -236,69 +242,92 @@ func Install(sys System, o Options) (l Layout, err error) {
 	return l, nil
 }
 
-// cleanConfigDir readies the service's config dir for a first install: an old session key and
-// pairing code go (someone may know them), and so does anything an ordinary user made or a link.
-func cleanConfigDir(sys System, dir string, out io.Writer) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, en := range entries {
-		p := filepath.Join(dir, en.Name())
-		drop, why := en.Name() == "session.key" || en.Name() == "pair-code.txt", ""
-		if !drop {
-			fi, err := os.Lstat(p)
-			if err != nil {
-				return err
-			}
-			if isReparse(fi) { // before the owner: that check follows links (a dangling one fails)
-				drop, why = true, "a link"
-			} else if owned, err := sys.OwnedByAdmins(p); err != nil {
-				return fmt.Errorf("owner of %s: %w", p, err)
-			} else if !owned {
-				drop, why = true, "not made by an administrator"
-			}
+// Swapped by tests.
+var (
+	serveWait = 15 * time.Second
+	servePoll = 250 * time.Millisecond
+)
+
+// waitServing waits until the started service listens on agentAddr; a service that stops fails at once.
+func waitServing(sys System) error {
+	for end := time.Now().Add(serveWait); !sys.Listening(agentAddr); time.Sleep(servePoll) {
+		if stopped, err := sys.ServiceStopped(); err != nil {
+			return err
+		} else if stopped {
+			return errors.New("it stopped")
 		}
-		if why != "" && out != nil {
-			fmt.Fprintf(out, "Removed %s: %s.\n", p, why)
-		}
-		if drop {
-			if err := os.RemoveAll(p); err != nil {
-				return fmt.Errorf("remove %s: %w", p, err)
-			}
+		if time.Now().After(end) {
+			return fmt.Errorf("not listening on %s after %s", agentAddr, serveWait)
 		}
 	}
 	return nil
 }
 
-// readyConfigDir makes dir the service's admin-only config dir. One an ordinary user made, or a link,
-// is moved aside rather than re-ACL'd in place (its maker may hold a handle to it and swap it later),
-// and a new one is created with the ACL. A first install also cleans an admin-owned one (cleanConfigDir).
-func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) error {
-	fi, err := os.Lstat(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return createConfigDir(dir)
-	} else if err != nil {
-		return err
-	}
-	why := ""
-	switch {
-	case isReparse(fi): // before the owner: that check follows links
-		why = "it is a link"
-	case !fi.IsDir():
-		why = "it is not a folder"
-	default:
-		owned, err := sys.OwnedByAdmins(dir)
-		if err != nil {
-			return fmt.Errorf("owner of %s: %w", dir, err)
-		} else if !owned {
-			why = "it was not made by an administrator"
+// cleanConfigDir readies a trusted config dir for a first install: an old session key and pairing
+// code go (someone may know them).
+func cleanConfigDir(dir string) error {
+	for _, n := range []string{"session.key", "pair-code.txt"} {
+		if err := os.Remove(filepath.Join(dir, n)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
+	return nil
+}
+
+// untrusted says why dir can't be trusted as the service's config dir ("" = it can): it, or anything
+// in it, is a link, or is not owned by Administrators or SYSTEM. Everything is checked, so an
+// ordinary user's file or folder can't be swapped in between a check and its removal.
+func untrusted(sys System, dir string) (string, error) {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() && !isReparse(fi) {
+		return "it is not a folder", nil
+	}
+	why := ""
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if isReparse(fi) { // before the owner: that check follows links
+			why = p + " is a link"
+			return filepath.SkipAll
+		}
+		owned, err := sys.OwnedByAdmins(p)
+		if err != nil {
+			return fmt.Errorf("owner of %s: %w", p, err)
+		} else if !owned {
+			why = p + " was not made by an administrator"
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return why, err
+}
+
+// readyConfigDir makes dir the service's admin-only config dir. One that isn't trusted (untrusted) is
+// moved aside rather than re-ACL'd in place (its maker may hold a handle to it and swap it later),
+// and a new one is created with the ACL. A first install also cleans a trusted one (cleanConfigDir).
+func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) error {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return createConfigDir(dir)
+	}
+	why, err := untrusted(sys, dir)
+	if err != nil {
+		return err
+	}
 	if why != "" {
-		aside := fmt.Sprintf("%s.untrusted.%d", dir, time.Now().Unix())
+		aside := fmt.Sprintf("%s.untrusted.%d", dir, time.Now().UnixNano())
+		if _, err := os.Lstat(aside); err == nil {
+			return fmt.Errorf("can't move %s aside: %s exists already; run the install again", dir, aside)
+		}
 		if err := os.Rename(dir, aside); err != nil {
-			return fmt.Errorf("%s can't be used (%s) or moved aside: %w (another user may have it open: sign them out or restart Windows, then run the install again)", dir, why, err)
+			return fmt.Errorf("can't move %s aside to %s (%s): %w; if another user has it open, sign them out or restart Windows, then run the install again", dir, aside, why, err)
 		}
 		if out != nil {
 			fmt.Fprintf(out, "Moved %s aside to %s: %s.\n", dir, aside, why)
@@ -309,7 +338,27 @@ func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) erro
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	if !hadService {
-		return cleanConfigDir(sys, dir, out)
+		return cleanConfigDir(dir)
+	}
+	return nil
+}
+
+// ReadyServiceDir is what the service does before it opens its log: the config dir must be trusted
+// (see untrusted), else it doesn't start; a missing one (deleted by an admin) is created admin-only.
+// A missing config.yaml is written empty. It never re-ACLs an existing dir.
+func ReadyServiceDir(sys System, cfgPath string) error {
+	dir := filepath.Dir(cfgPath)
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		if err := createConfigDir(dir); err != nil {
+			return err
+		}
+	} else if why, err := untrusted(sys, dir); err != nil {
+		return err
+	} else if why != "" {
+		return fmt.Errorf("not starting: %s (%s); delete it and run pdb-print install --service again", dir, why)
+	}
+	if _, err := os.Lstat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		return WriteAdminOnly(cfgPath, nil)
 	}
 	return nil
 }
@@ -612,9 +661,11 @@ func InstalledAs(sys System, m Mode, e Env) (Layout, bool, error) {
 }
 
 // ModeOf reports which mode's program dir exe is in (false: neither, e.g. a copy run from a zip).
+// Short (8.3) names are expanded first.
 func ModeOf(exe string, e Env) (Mode, bool) {
+	exe = longPath(exe)
 	for _, m := range []Mode{Service, PerUser} {
-		if d := LayoutFor(m, e).ProgramDir; filepath.IsAbs(d) && within(exe, d) {
+		if d := LayoutFor(m, e).ProgramDir; filepath.IsAbs(d) && within(exe, longPath(d)) {
 			return m, true
 		}
 	}

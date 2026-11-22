@@ -26,6 +26,9 @@ type fakeSystem struct {
 	startErr error           // StartService fails with it
 	notOwned map[string]bool // base names OwnedByAdmins says an ordinary user owns
 	busy     bool            // PortInUse says yes
+	up       bool            // Listening says yes (a started service serves unless dead)
+	dead     bool            // a started service never listens
+	stopped  bool            // ServiceStopped says yes
 }
 
 func newFake() *fakeSystem {
@@ -61,13 +64,18 @@ func (f *fakeSystem) RemoveService() error {
 	f.service = false
 	return nil
 }
-func (f *fakeSystem) StartService() error { f.calls = append(f.calls, "start"); return f.startErr }
+func (f *fakeSystem) StartService() error {
+	f.calls = append(f.calls, "start")
+	f.up = f.startErr == nil && !f.dead
+	return f.startErr
+}
+func (f *fakeSystem) ServiceStopped() (bool, error) { return f.stopped, nil }
 func (f *fakeSystem) StopService(d time.Duration) error {
 	f.calls = append(f.calls, "stop "+d.String())
 	return nil
 }
 func (f *fakeSystem) PortInUse(string) bool             { return f.busy }
-func (f *fakeSystem) Listening(string) bool             { return false }
+func (f *fakeSystem) Listening(string) bool             { return f.up }
 func (f *fakeSystem) DeleteAfterExit(string) error      { return f.delErr }
 func (f *fakeSystem) WaitExit(int, time.Duration) error { return nil }
 func (f *fakeSystem) OwnedByAdmins(p string) (bool, error) {
@@ -358,9 +366,13 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 		hadService bool
 		kept, gone []string
 	}{
-		{"fresh", []string{"planted.txt", "sub"}, false, []string{"config.yaml", "pdb-print.log"}, []string{"session.key", "pair-code.txt", "planted.txt", "sub"}},
-		{"planted config", []string{"config.yaml"}, false, []string{"pdb-print.log"}, []string{"session.key"}}, // config: an empty one
-		{"reinstall", []string{"planted.txt"}, true, []string{"config.yaml", "session.key", "pair-code.txt", "planted.txt"}, nil},
+		{"fresh", nil, false, []string{"config.yaml", "pdb-print.log", "planted.txt", "sub"}, []string{"session.key", "pair-code.txt"}},
+		// anything an ordinary user made: the whole dir is moved aside, a new empty one made
+		{"planted file", []string{"planted.txt"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "session.key", "planted.txt", "sub"}},
+		{"planted subdir", []string{"sub"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "planted.txt", "sub"}},
+		{"planted config", []string{"config.yaml"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "session.key"}},
+		{"reinstall", nil, true, []string{"config.yaml", "session.key", "pair-code.txt", "planted.txt"}, nil},
+		{"reinstall, planted", []string{"planted.txt"}, true, []string{"config.yaml"}, []string{"session.key", "planted.txt"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sys, e := newFake(), testEnv(t)
@@ -387,17 +399,18 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 					t.Errorf("%s kept", n)
 				}
 			}
-			if b, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); tt.name == "planted config" && len(b) != 0 {
-				t.Errorf("planted config kept: %q", b)
+			planted := len(tt.notOwned) > 0
+			if b, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); planted && len(b) != 0 {
+				t.Errorf("config kept: %q", b)
 			}
-			if !tt.hadService && !strings.Contains(out.String(), "not made by an administrator") {
-				t.Errorf("no notice:\n%s", out.String())
+			if aside, _ := filepath.Glob(dir + ".untrusted.*"); planted != (len(aside) == 1) || planted && !strings.Contains(out.String(), "was not made by an administrator") {
+				t.Errorf("aside %v:\n%s", aside, out.String())
 			}
 		})
 	}
 }
 
-// A link in the config dir (a dangling one too) is removed without asking for its owner.
+// A link in the config dir (a dangling one too) makes it untrusted without asking for its owner.
 func TestInstallServiceRemovesLinks(t *testing.T) {
 	sys, e := newFake(), testEnv(t)
 	dir := filepath.Dir(LayoutFor(Service, e).Config)
@@ -409,7 +422,7 @@ func TestInstallServiceRemovesLinks(t *testing.T) {
 	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "session.lnk")); err == nil || !strings.Contains(out.String(), "session.lnk: a link") {
+	if _, err := os.Lstat(filepath.Join(dir, "session.lnk")); err == nil || !strings.Contains(out.String(), "session.lnk is a link") {
 		t.Errorf("link kept (%v):\n%s", err, out.String())
 	}
 }
@@ -436,7 +449,7 @@ func TestInstallServiceMovesUntrustedDirAside(t *testing.T) {
 		name, why string
 		make      func(t *testing.T, dir string)
 	}{
-		{"not owned", "not made by an administrator", func(t *testing.T, dir string) {
+		{"not owned", "was not made by an administrator", func(t *testing.T, dir string) {
 			os.MkdirAll(dir, 0o777)
 			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o666)
 		}},
@@ -503,10 +516,90 @@ func TestInstallServicePortAndStart(t *testing.T) {
 	if exists(l.ProgramDir) || exists(filepath.Dir(l.Config)) || len(sys.calls) != 0 {
 		t.Errorf("changed things: %v", sys.calls)
 	}
-	sys.busy, sys.startErr = false, errors.New("it stopped")
-	_, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
-	if !errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "didn't start (it stopped); see "+filepath.Join(filepath.Dir(l.Config), "pdb-print.log")) {
-		t.Errorf("start failure: %v", err)
+	sys.busy = false
+	setVar(t, &serveWait, 30*time.Millisecond)
+	setVar(t, &servePoll, time.Millisecond)
+	log := filepath.Join(filepath.Dir(l.Config), "pdb-print.log")
+	for _, tt := range []struct {
+		name          string
+		dead, stopped bool
+		want          string // "" = no error
+	}{
+		{"serving", false, false, ""},
+		{"never listens", true, false, "didn't start (not listening on 127.0.0.1:8631 after 30ms); see " + log + ", or Event Viewer"},
+		{"stops", true, true, "didn't start (it stopped); see " + log},
+	} {
+		sys.dead, sys.stopped = tt.dead, tt.stopped
+		start := time.Now()
+		_, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%s: %v", tt.name, err)
+		case tt.want != "" && (!errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), tt.want)):
+			t.Errorf("%s: %v", tt.name, err)
+		case tt.stopped && time.Since(start) >= 30*time.Millisecond:
+			t.Errorf("%s: waited the whole time", tt.name)
+		}
+	}
+}
+
+func setVar[T any](t *testing.T, p *T, v T) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}
+
+// At start the service never re-ACLs its dir: an untrusted one stops it; a missing one is made
+// admin-only with an empty config.
+func TestReadyServiceDir(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		make     func(t *testing.T, dir string)
+		notOwned string
+		want     string // in the error; "" = starts
+	}{
+		{"missing", func(*testing.T, string) {}, "", ""},
+		{"trusted, no config", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o700) }, "", ""},
+		{"trusted", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o700)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o600)
+		}, "", ""},
+		{"dir not owned", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o777) }, "pdb-print", "was not made by an administrator"},
+		{"planted config", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o700)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("x"), 0o666)
+		}, "config.yaml", "config.yaml was not made by an administrator"},
+		{"link", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Skip("no symlinks here:", err)
+			}
+		}, "", "is a link"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys := newFake()
+			sys.notOwned = map[string]bool{tt.notOwned: true}
+			cfg := filepath.Join(t.TempDir(), "pdb-print", "config.yaml")
+			tt.make(t, filepath.Dir(cfg))
+			before, _ := os.ReadFile(cfg)
+			err := ReadyServiceDir(sys, cfg)
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "not starting") {
+					t.Errorf("err = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Stat(filepath.Dir(cfg))
+			if err != nil || runtime.GOOS != "windows" && tt.name == "missing" && fi.Mode().Perm() != 0o700 {
+				t.Errorf("dir %v %v", fi, err)
+			}
+			if b, err := os.ReadFile(cfg); err != nil || string(b) != string(before) {
+				t.Errorf("config %q %v, want %q", b, err, before)
+			}
+		})
 	}
 }
 

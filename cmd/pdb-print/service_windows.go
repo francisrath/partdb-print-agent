@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,12 +24,12 @@ func runService(ctx context.Context, cfgPath string) error {
 	} else if !ok {
 		return errors.New("pdb-print service run is what the Windows service pdb-print starts, not a command to type: use pdb-print serve")
 	}
-	// an admin may have deleted it: recreated with the inherited ACL, every user could write to it
-	dir := filepath.Dir(cfgPath)
-	if err := wininstall.MkdirAdminOnly(dir); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+	// before the log: an admin may have deleted the dir, and the log would recreate it with the
+	// inherited ACL (every user could write to it); one an ordinary user made isn't used at all
+	if err := wininstall.ReadyServiceDir(wininstall.NewSystem(), cfgPath); err != nil {
+		return err // main logs it; no log file: Event Viewer → System shows the service failing
 	}
-	logOut = fileLog(filepath.Join(dir, "pdb-print.log"))
+	logOut = fileLog(filepath.Join(filepath.Dir(cfgPath), "pdb-print.log"))
 	serviceMode = true
 	h := &service{serve: func(ctx context.Context) error { return run(ctx, []string{"--config", cfgPath, "serve"}) }, ctx: ctx}
 	if err := svc.Run("pdb-print", h); err != nil {

@@ -219,27 +219,18 @@ func (osSystem) RemoveService() error {
 	return withService(func(s *mgr.Service) error { return s.Delete() })
 }
 
-// StartService starts the service and waits (up to 15 s) until it reports Running.
 func (osSystem) StartService() error {
-	return withService(func(s *mgr.Service) error {
-		if err := s.Start(); err != nil {
-			return err
-		}
-		for end := time.Now().Add(15 * time.Second); ; {
-			st, err := s.Query()
-			switch {
-			case err != nil:
-				return err
-			case st.State == svc.Running:
-				return nil
-			case st.State == svc.Stopped:
-				return errors.New("it stopped")
-			case time.Now().After(end):
-				return errors.New("not running after 15 s")
-			}
-			time.Sleep(300 * time.Millisecond)
-		}
+	return withService(func(s *mgr.Service) error { return s.Start() })
+}
+
+func (osSystem) ServiceStopped() (bool, error) {
+	var stopped bool
+	err := withService(func(s *mgr.Service) error {
+		st, err := s.Query()
+		stopped = st.State == svc.Stopped
+		return err
 	})
+	return stopped, err
 }
 
 func (osSystem) StopService(timeout time.Duration) error {
@@ -344,6 +335,24 @@ func OwnedByAdmins(path string) (bool, error) {
 		return false, err
 	}
 	return o.IsWellKnown(windows.WinBuiltinAdministratorsSid) || o.IsWellKnown(windows.WinLocalSystemSid), nil
+}
+
+// longPath expands 8.3 short names (C:\PROGRA~1); p itself when that fails (e.g. it doesn't exist).
+func longPath(p string) string {
+	in, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, windows.MAX_PATH)
+	for {
+		n, err := windows.GetLongPathName(in, &buf[0], uint32(len(buf)))
+		if err != nil || n == 0 {
+			return p
+		} else if n < uint32(len(buf)) { // else n is the size it needs
+			return windows.UTF16ToString(buf[:n])
+		}
+		buf = make([]uint16, n)
+	}
 }
 
 func isReparse(fi os.FileInfo) bool {
