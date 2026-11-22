@@ -92,7 +92,7 @@ type Server struct {
 	// pairing, admin-only); deleting it signs every browser out.
 	SessionKeyFile string
 	keyMu          sync.Mutex // creating the session key
-	badKeyOnce     sync.Once  // logs an untrusted key file once
+	badKey         string     // the untrusted key file last logged (mtime, size); under keyMu
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr

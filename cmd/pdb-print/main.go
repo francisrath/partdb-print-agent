@@ -491,13 +491,16 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var nonceErr error     // why no nonce was sent (Windows); a per-user agent needs none
 	if goos == "windows" { // the service opens a window only for the nonce in its admin-only folder
-		if pd := envFromOS().ProgramData; pd != "" {
+		if pd := envFromOS().ProgramData; pd == "" {
+			nonceErr = errors.New("ProgramData is not set")
+		} else {
 			b := make([]byte, 32)
 			rand.Read(b)
 			nonce := hex.EncodeToString(b)
-			// fails without admin rights (or with no service): then the service says to run it as administrator
-			if wininstall.WriteAdminOnly(filepath.Join(pd, "pdb-print", "pair-request"), []byte(nonce)) == nil {
+			// fails without admin rights (or with no service)
+			if nonceErr = wininstall.WriteAdminOnly(filepath.Join(pd, "pdb-print", "pair-request"), []byte(nonce)); nonceErr == nil {
 				req.Header.Set(server.PairRequestHeader, nonce)
 			}
 		}
@@ -507,6 +510,12 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("is pdb-print serve running on %s? %w", *addr, err)
 	}
 	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusForbidden && goos == "windows" && nonceErr != nil:
+		return fmt.Errorf("run pdb-print pair as administrator (can't write the pairing request: %w)", nonceErr)
+	case resp.StatusCode == http.StatusForbidden && goos == "windows":
+		return errors.New("the service refused the pairing request: another pdb-print pair may be running; try again")
+	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))

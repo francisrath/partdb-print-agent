@@ -480,6 +480,19 @@ func TestPairCmdSendsRequestNonce(t *testing.T) {
 	if len(got) != 3 || got[0] != "" || len(got[1]) != 64 || got[2] == got[1] || got[2] != string(file) {
 		t.Errorf("nonces sent %q, file %q", got, file)
 	}
+	// the service refuses: why depends on whether the nonce was written
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "run pdb-print pair as administrator", http.StatusForbidden)
+	}))
+	t.Cleanup(refuse.Close)
+	addr = []string{"--addr", strings.TrimPrefix(refuse.URL, "http://")}
+	if err := pairCmd(context.Background(), addr, &out); err == nil || !strings.Contains(err.Error(), "another pdb-print pair may be running") {
+		t.Errorf("nonce written, refused: %v", err)
+	}
+	os.RemoveAll(filepath.Join(pd, "pdb-print"))
+	if err := pairCmd(context.Background(), addr, &out); err == nil || !strings.Contains(err.Error(), "run pdb-print pair as administrator (can't write the pairing request: ") {
+		t.Errorf("no nonce, refused: %v", err)
+	}
 }
 
 func TestNeedsSetup(t *testing.T) {
@@ -595,6 +608,7 @@ func (f *fakeSys) RemoveService() error               { f.service = false; retur
 func (f *fakeSys) StartService() error                { f.portBusy = true; return nil }
 func (f *fakeSys) StopService(time.Duration) error    { f.stops++; f.portBusy = false; return nil }
 func (f *fakeSys) PortInUse(string) bool              { return f.portBusy }
+func (f *fakeSys) ServiceStopped() (bool, error)      { return false, nil }
 func (f *fakeSys) Listening(string) bool              { return f.portBusy }
 func (f *fakeSys) DeleteAfterExit(string) error       { return nil }
 func (f *fakeSys) OwnedByAdmins(string) (bool, error) { return true, nil }
