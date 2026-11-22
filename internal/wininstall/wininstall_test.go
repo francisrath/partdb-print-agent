@@ -249,6 +249,35 @@ func TestUninstall(t *testing.T) {
 	}
 }
 
+// Started with the program dir (or a folder in it) as working dir: it moves out first.
+func TestUninstallFromInsideProgramDir(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(l.ProgramDir)
+	if err := Uninstall(sys, PerUser, false, e); err != nil {
+		t.Fatal(err)
+	}
+	wd, _ := os.Getwd() // compared by name: on macOS it comes back as /private/var/…
+	if exists(l.ProgramDir) || filepath.Base(wd) != "Programs" {
+		t.Errorf("dir left: %v, cwd %s", exists(l.ProgramDir), wd)
+	}
+}
+
+func TestWithin(t *testing.T) {
+	d := filepath.Join("C", "Programs", "pdb-print")
+	for p, want := range map[string]bool{
+		d: true, filepath.Join(d, "x"): true, filepath.Join("C", "PROGRAMS", "PDB-print"): true,
+		filepath.Join("C", "Programs"): false, d + "2": false, filepath.Join("C", "Programs", "..pdb"): false,
+	} {
+		if got := within(p, d); got != want {
+			t.Errorf("within(%q) = %v", p, got)
+		}
+	}
+}
+
 func TestInstalled(t *testing.T) {
 	sys, e := newFake(), testEnv(t)
 	if _, ok := Installed(sys, e); ok {

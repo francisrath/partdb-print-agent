@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -193,6 +194,9 @@ func (osSystem) Spawn(exe string, args ...string) error {
 }
 
 func (osSystem) DeleteAfterExit(path string) error {
+	if strings.Contains(path, "%") { // cmd would expand it; cleanupOld removes the file on a later install
+		return nil
+	}
 	comspec := os.Getenv("ComSpec")
 	if comspec == "" {
 		comspec = filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")

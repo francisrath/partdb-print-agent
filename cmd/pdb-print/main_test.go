@@ -705,7 +705,7 @@ func TestInstallAsAdminWarns(t *testing.T) {
 	t.Setenv("USERNAME", "jdoe")
 	w.sys.admin = true
 	out, err := runOut("install", "--quiet")
-	if err != nil || !strings.HasPrefix(out, "Installing for jdoe (this window runs as administrator).\n") || w.sys.spawns != 1 {
+	if err != nil || !strings.HasPrefix(out, "Installing for jdoe (this window runs as administrator; the agent it starts runs as administrator until you log in again).\n") || w.sys.spawns != 1 {
 		t.Errorf("%v, %d spawns:\n%s", err, w.sys.spawns, out)
 	}
 	w.sys.admin = false
@@ -725,6 +725,9 @@ func TestLogWriter(t *testing.T) {
 		stub(t, &gui, tc.gui)
 		w := logWriter()
 		lf, ok := w.(*logfile.Writer)
+		if ok {
+			lf.Close() // also resets the crash output
+		}
 		if ok != tc.file || (!ok && w != io.Writer(os.Stderr)) {
 			t.Errorf("%s gui=%q: %T", tc.goos, tc.gui, w)
 		}

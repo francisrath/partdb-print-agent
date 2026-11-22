@@ -100,13 +100,16 @@ func main() {
 }
 
 // logWriter is stderr, except in pdb-printw.exe: it has no stderr, so a failing autostart would
-// leave no trace. That logs to %LOCALAPPDATA%\pdb-print\pdb-print.log, kept to 10 MB plus one old file.
+// leave no trace. That logs to %LOCALAPPDATA%\pdb-print\pdb-print.log, kept to 10 MB plus one old file,
+// panics included.
 func logWriter() io.Writer {
 	dir := os.Getenv("LOCALAPPDATA")
 	if goos != "windows" || gui != "1" || dir == "" {
 		return os.Stderr
 	}
-	return &logfile.Writer{Path: filepath.Join(dir, "pdb-print", "pdb-print.log"), Max: 10 << 20}
+	w := &logfile.Writer{Path: filepath.Join(dir, "pdb-print", "pdb-print.log"), Max: 10 << 20}
+	_ = w.KeepCrashes() // panics too; a log that can't be opened fails the first log write instead
+	return w
 }
 
 type app struct {

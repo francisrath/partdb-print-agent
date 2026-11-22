@@ -63,7 +63,7 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print is installed as a service: uninstall that first (pdb-print uninstall, as administrator)")
 	}
 	if sys.IsAdmin() {
-		fmt.Fprintf(out, "Installing for %s (this window runs as administrator).\n", os.Getenv("USERNAME"))
+		fmt.Fprintf(out, "Installing for %s (this window runs as administrator; the agent it starts runs as administrator until you log in again).\n", os.Getenv("USERNAME"))
 	}
 	stopped := false
 	if sys.Listening(agentAddr) {

@@ -287,6 +287,10 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if err := os.Remove(l.StartMenuLink); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Start menu link: %w", err)
 	}
+	// a process can't remove its own working dir on Windows (Settings may start us in it)
+	if wd, err := os.Getwd(); err == nil && within(wd, l.ProgramDir) {
+		_ = os.Chdir(filepath.Dir(l.ProgramDir))
+	}
 	aside, err := removeDir(l.ProgramDir)
 	if err != nil {
 		return fmt.Errorf("remove program dir: %w", err)
@@ -325,6 +329,12 @@ func removeDir(dir string) (aside []string, err error) {
 		aside = append(aside, a)
 	}
 	return aside, os.RemoveAll(dir)
+}
+
+// within reports whether path is dir or inside it, ignoring case as Windows does.
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(strings.ToLower(dir), strings.ToLower(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // DeleteLaterCmdLine is the cmd.exe command line that deletes path once it is no longer busy:
