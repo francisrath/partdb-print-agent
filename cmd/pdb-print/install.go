@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
@@ -32,14 +32,15 @@ var (
 	startedByExplorer           = startedByExplorerOS
 	stdin             io.Reader = os.Stdin
 	stdout            io.Writer = os.Stdout
-	// a running agent finishes in-flight prints (up to 2 min) before it lets go of the port
-	portWait = 2*time.Minute + 10*time.Second
-	portPoll = 250 * time.Millisecond
+	// a quitting agent finishes in-flight prints (up to 2 min) before it exits
+	exitWait  = 2*time.Minute + 10*time.Second
+	portPoll  = 250 * time.Millisecond
+	startWait = 10 * time.Second // for the new agent to listen before the browser opens
 )
 
 func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	service := fs.Bool("service", false, "install as a Windows service for all users (needs admin)")
+	service := fs.Bool("service", false, "install as a Windows service for all users (needs admin; not available yet)")
 	quiet := fs.Bool("quiet", false, "don't open the web UI afterwards")
 	noSelfUpdate := fs.Bool("no-self-update", false, "never update itself to a new release")
 	if _, err := parse(fs, args); err != nil {
@@ -49,17 +50,18 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print install works only on Windows (elsewhere: see the README)")
 	}
 	sys, env := newSystem(), envFromOS()
-	mode := wininstall.PerUser
 	if *service {
 		if !sys.IsAdmin() {
 			return errors.New("installing the service needs admin rights: run it as administrator")
 		}
-		mode = wininstall.Service
+		// ponytail: until service mode lands; checked before a running agent is stopped
+		return errors.New("installing as a service is not available yet")
 	} else if ok, err := sys.ServiceExists(); err != nil {
 		return fmt.Errorf("query service: %w", err)
 	} else if ok {
 		return errors.New("pdb-print is installed as a service: uninstall that first (pdb-print uninstall, as administrator)")
 	}
+	stopped := false
 	if sys.PortInUse(agentAddr) {
 		if _, ok := wininstall.Installed(sys, env); !ok {
 			return errors.New("port 8631 is in use: another pdb-print (or another program) is running; stop it and run install again")
@@ -67,28 +69,35 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		if err := stopAgent(ctx, sys); err != nil {
 			return err
 		}
+		stopped = true
 	}
-	if *noSelfUpdate {
-		if err := disableSelfUpdate(wininstall.LayoutFor(mode, env).Config); err != nil {
-			return err
-		}
+	l, err := install(sys, env, *quiet, *noSelfUpdate)
+	if err != nil && stopped {
+		return fmt.Errorf("%w (the running pdb-print was stopped; start it again from the Start menu or log off and on)", err)
 	}
-	self, err := selfExe()
-	if err != nil {
-		return err
-	}
-	l, err := wininstall.Install(sys, wininstall.Options{Mode: mode, Quiet: *quiet, NoSelfUpdate: *noSelfUpdate,
-		Self: self, Version: appVersion(), Env: env})
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "pdb-print %s is installed in %s and starts when you log in.\nWeb UI: http://%s (also in the Start menu)\n", appVersion(), l.ProgramDir, agentAddr)
-	if !*quiet && waitPort(sys, true, 10*time.Second) {
+	switch {
+	case *quiet:
+	case !waitPort(sys, true, startWait):
+		fmt.Fprintf(out, "pdb-print is starting; open http://%s in a moment.\n", agentAddr)
+	default:
 		if err := openBrowser("http://" + agentAddr); err != nil {
 			fmt.Fprintln(out, "couldn't open the browser:", err)
 		}
 	}
 	return nil
+}
+
+func install(sys wininstall.System, env wininstall.Env, quiet, noSelfUpdate bool) (wininstall.Layout, error) {
+	self, err := selfExe()
+	if err != nil {
+		return wininstall.Layout{}, err
+	}
+	return wininstall.Install(sys, wininstall.Options{Mode: wininstall.PerUser, Quiet: quiet, NoSelfUpdate: noSelfUpdate,
+		Self: self, Version: appVersion(), Env: env})
 }
 
 func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
@@ -124,13 +133,18 @@ func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
 	return nil
 }
 
-// stopAgent asks the agent on agentAddr to quit and waits until it lets go of the port.
+// stopAgent asks the agent on agentAddr to quit and waits until its process has exited
+// (in-flight prints done) and the port is free.
 func stopAgent(ctx context.Context, sys wininstall.System) error {
-	if err := quitAgent(ctx); err != nil {
-		return fmt.Errorf("couldn't stop the pdb-print running on port 8631 (end it in Task Manager, then try again): %w", err)
+	pid, err := quitAgent(ctx)
+	if err != nil {
+		return fmt.Errorf("port 8631 is in use and pdb-print couldn't stop it: %w (end it in Task Manager, then try again)", err)
 	}
-	if !waitPort(sys, false, portWait) {
-		return fmt.Errorf("the pdb-print running on port 8631 didn't stop within %s (end it in Task Manager, then try again)", portWait)
+	if err := sys.WaitExit(pid, exitWait); err != nil {
+		return fmt.Errorf("the pdb-print running on port 8631 didn't stop: %w (end it in Task Manager, then try again)", err)
+	}
+	if !waitPort(sys, false, startWait) {
+		return errors.New("the pdb-print on port 8631 has exited, but the port is still in use")
 	}
 	return nil
 }
@@ -147,35 +161,27 @@ func waitPort(sys wininstall.System, busy bool, timeout time.Duration) bool {
 	return true
 }
 
-// postQuit is POST /v1/quit; the header makes it a request no web page can send without a preflight.
-func postQuit(ctx context.Context) error {
+// postQuit is POST /v1/quit and returns the agent's pid. The header makes it a request no
+// web page can send without a preflight.
+func postQuit(ctx context.Context) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+agentAddr+"/v1/quit", nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("X-PDB-Print", "1")
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("/v1/quit: %s", resp.Status)
+		return 0, fmt.Errorf("/v1/quit: %s", resp.Status)
 	}
-	return nil
-}
-
-func disableSelfUpdate(path string) error {
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("cannot locate the config folder (got %q)", path)
+	var res struct{ PID int }
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil || res.PID <= 0 {
+		return 0, fmt.Errorf("/v1/quit: no pid in the reply (%v)", err)
 	}
-	cfg, err := config.Load(path, false)
-	if err != nil {
-		return err
-	}
-	off := false
-	cfg.SelfUpdate = &off
-	return cfg.Save(path)
+	return res.PID, nil
 }
 
 // doubleClick is what a pdb-print.exe opened from Explorer does: offer the per-user install.
@@ -187,6 +193,8 @@ func doubleClick(ctx context.Context) error {
 	case "", "y", "yes":
 	default:
 		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, "Press Enter to close.")
+		in.ReadString('\n')
 		return nil
 	}
 	err := installCmd(ctx, nil, stdout)

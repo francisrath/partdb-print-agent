@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -154,7 +155,10 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "quit not available", http.StatusServiceUnavailable)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
+		// the pid lets the caller wait until we have exited, in-flight prints included
+		_ = json.NewEncoder(w).Encode(map[string]int{"pid": os.Getpid()})
 		s.Quit() // the graceful shutdown waits for this response and in-flight prints
 	})
 	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {

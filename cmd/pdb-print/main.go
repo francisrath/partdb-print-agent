@@ -52,9 +52,9 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
-  install [--quiet] [--no-self-update] [--service]
+  install [--quiet] [--no-self-update]
                                    Windows: install for this user and start it at login (no window);
-                                   --quiet: don't open the web UI; --service: for all users (admin)
+                                   --quiet: don't open the web UI; --no-self-update: never update itself
   uninstall [--purge]              Windows: remove the install; --purge also deletes the config
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
@@ -128,10 +128,10 @@ func run(ctx context.Context, args []string) error {
 		return tryCmd(ctx, rest)
 	}
 	if cmd == "install" { // these need no config: they set up the program, not printing
-		return installCmd(ctx, rest, os.Stdout)
+		return installCmd(ctx, rest, stdout)
 	}
 	if cmd == "uninstall" {
-		return uninstallCmd(ctx, rest, os.Stdout)
+		return uninstallCmd(ctx, rest, stdout)
 	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)

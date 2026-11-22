@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/francisrath/pdb-print/internal/config"
 )
 
 const (
@@ -92,9 +94,11 @@ type System interface {
 	StopService(timeout time.Duration) error
 	Spawn(exe string, args ...string) error // detached, no window
 	PortInUse(addr string) bool
+	// WaitExit waits until process pid has exited; one that doesn't exist has.
+	WaitExit(pid int, timeout time.Duration) error
 }
 
-// Options for Install. NoSelfUpdate and Quiet are consumed by later tasks.
+// Options for Install. NoSelfUpdate writes self_update: false into the config; Quiet is for the caller.
 type Options struct {
 	Mode                Mode
 	Quiet, NoSelfUpdate bool
@@ -154,6 +158,11 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := os.WriteFile(l.StartMenuLink, []byte("[InternetShortcut]\r\nURL="+uiURL+"\r\n"), 0o644); err != nil {
 		return l, fmt.Errorf("write Start menu link: %w", err)
 	}
+	if o.NoSelfUpdate { // before the agent starts, so it reads the new value
+		if err := disableSelfUpdate(l.Config); err != nil {
+			return l, fmt.Errorf("write config: %w", err)
+		}
+	}
 	if err := sys.SetRun(name, Quote(l.ExeW)+" serve"); err != nil {
 		return l, fmt.Errorf("set Run value: %w", err)
 	}
@@ -161,6 +170,16 @@ func Install(sys System, o Options) (Layout, error) {
 		return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
 	}
 	return l, nil
+}
+
+func disableSelfUpdate(path string) error {
+	cfg, err := config.Load(path, false)
+	if err != nil {
+		return err
+	}
+	off := false
+	cfg.SelfUpdate = &off
+	return cfg.Save(path)
 }
 
 // check rejects an Env that lacks the folders mode m needs.

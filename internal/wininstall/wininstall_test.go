@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/francisrath/pdb-print/internal/config"
 )
 
 type fakeSystem struct {
@@ -32,6 +34,7 @@ func (f *fakeSystem) RemoveService() error                  { f.service = false;
 func (f *fakeSystem) StartService() error                   { return nil }
 func (f *fakeSystem) StopService(time.Duration) error       { return nil }
 func (f *fakeSystem) PortInUse(string) bool                 { return false }
+func (f *fakeSystem) WaitExit(int, time.Duration) error     { return nil }
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
 	return nil
@@ -295,5 +298,42 @@ func TestUninstallEmptyEnvRemovesNothing(t *testing.T) {
 	}
 	if !exists("pdb-print") {
 		t.Error("relative dir was removed")
+	}
+}
+
+// spawnSees records whether the config said self_update: false when the agent was started.
+type spawnSees struct {
+	*fakeSystem
+	path string
+	off  *bool
+}
+
+func (s spawnSees) Spawn(string, ...string) error {
+	c, err := config.Load(s.path, true)
+	*s.off = err == nil && c.SelfUpdate != nil && !*c.SelfUpdate
+	return nil
+}
+
+func TestInstallNoSelfUpdate(t *testing.T) {
+	e := testEnv(t)
+	path := LayoutFor(PerUser, e).Config
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.WriteFile(path, []byte("log_level: debug\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// a failed install leaves the config alone
+	if _, err := Install(newFake(), Options{Mode: PerUser, NoSelfUpdate: true, Self: filepath.Join(t.TempDir(), exeName), Env: e}); err == nil {
+		t.Fatal("install without the exes worked")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "log_level: debug\n" {
+		t.Errorf("config changed by a failed install: %q", b)
+	}
+	var off bool
+	if _, err := Install(spawnSees{newFake(), path, &off}, Options{Mode: PerUser, NoSelfUpdate: true, Self: fakeSelf(t), Env: e}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(path, true)
+	if err != nil || !off || c.LogLevel != "debug" {
+		t.Errorf("agent saw self_update off: %v; config %+v, %v", off, c, err)
 	}
 }

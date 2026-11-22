@@ -4,6 +4,7 @@ package wininstall
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"syscall"
 	"time"
@@ -187,6 +188,24 @@ func (osSystem) Spawn(exe string, args ...string) error {
 }
 
 func (osSystem) PortInUse(addr string) bool { return portInUse(addr) }
+
+func (osSystem) WaitExit(pid int, timeout time.Duration) error {
+	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return nil // no such process: it has already exited
+	} else if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	ev, err := windows.WaitForSingleObject(h, uint32(timeout.Milliseconds()))
+	switch {
+	case err != nil:
+		return err
+	case ev == uint32(windows.WAIT_TIMEOUT):
+		return fmt.Errorf("process %d still running after %s", pid, timeout)
+	}
+	return nil
+}
 
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -513,6 +515,9 @@ type fakeSys struct {
 	admin, service, portBusy bool
 	spawns                   int
 	unin                     map[wininstall.Mode]wininstall.Entry
+	waitErr                  error // WaitExit's result; nil = the process exits and frees the port
+	waited                   []int // WaitExit's pids
+	waitTimeout              time.Duration
 }
 
 func (f *fakeSys) IsAdmin() bool                { return f.admin }
@@ -527,6 +532,13 @@ func (f *fakeSys) StartService() error             { return nil }
 func (f *fakeSys) StopService(time.Duration) error { return nil }
 func (f *fakeSys) PortInUse(string) bool           { return f.portBusy }
 func (f *fakeSys) Spawn(string, ...string) error   { f.spawns++; f.portBusy = true; return nil }
+func (f *fakeSys) WaitExit(pid int, timeout time.Duration) error {
+	f.waited, f.waitTimeout = append(f.waited, pid), timeout
+	if f.waitErr == nil {
+		f.portBusy = false
+	}
+	return f.waitErr
+}
 func (f *fakeSys) WriteUninstall(m wininstall.Mode, e wininstall.Entry) error {
 	f.unin[m] = e
 	return nil
@@ -537,9 +549,19 @@ func (f *fakeSys) ReadUninstall(m wininstall.Mode) (wininstall.Entry, bool, erro
 }
 func (f *fakeSys) DeleteUninstall(m wininstall.Mode) error { delete(f.unin, m); return nil }
 
+const fakePID = 4242
+
+// fakeWin records what the install commands did; see fakeWindows.
+type fakeWin struct {
+	sys     *fakeSys
+	env     wininstall.Env
+	quits   int
+	browsed []string
+}
+
 // fakeWindows makes the install commands run as on Windows against fakeSys, in temp folders.
-// The quitAgent stub frees the port and counts into the returned int.
-func fakeWindows(t *testing.T) (*fakeSys, wininstall.Env, *int) {
+// The quitAgent stub answers fakePID and counts quits; opened browser URLs go to browsed.
+func fakeWindows(t *testing.T) *fakeWin {
 	t.Helper()
 	dir := t.TempDir()
 	e := wininstall.Env{LocalAppData: filepath.Join(dir, "local"), AppData: filepath.Join(dir, "roaming"),
@@ -550,17 +572,17 @@ func fakeWindows(t *testing.T) (*fakeSys, wininstall.Env, *int) {
 	for _, n := range []string{"pdb-print.exe", "pdb-printw.exe"} {
 		os.WriteFile(filepath.Join(src, n), []byte("exe"), 0o755)
 	}
-	sys := &fakeSys{unin: map[wininstall.Mode]wininstall.Entry{}}
-	quits := new(int)
+	w := &fakeWin{sys: &fakeSys{unin: map[wininstall.Mode]wininstall.Entry{}}, env: e}
 	stub(t, &goos, "windows")
-	stub(t, &newSystem, func() wininstall.System { return sys })
+	stub(t, &newSystem, func() wininstall.System { return w.sys })
 	stub(t, &envFromOS, func() wininstall.Env { return e })
 	stub(t, &selfExe, func() (string, error) { return filepath.Join(src, "pdb-print.exe"), nil })
-	stub(t, &quitAgent, func(context.Context) error { *quits++; sys.portBusy = false; return nil })
-	stub(t, &openBrowser, func(string) error { return nil })
+	stub(t, &quitAgent, func(context.Context) (int, error) { w.quits++; return fakePID, nil })
+	stub(t, &openBrowser, func(u string) error { w.browsed = append(w.browsed, u); return nil })
 	stub(t, &startedByExplorer, func() bool { return false })
 	stub(t, &portPoll, time.Millisecond)
-	return sys, e, quits
+	stub(t, &startWait, 5*time.Millisecond)
+	return w
 }
 
 // stub sets *p to v for the test.
@@ -568,6 +590,15 @@ func stub[T any](t *testing.T, p *T, v T) {
 	old := *p
 	*p = v
 	t.Cleanup(func() { *p = old })
+}
+
+func runOut(args ...string) (string, error) {
+	var out bytes.Buffer
+	old := stdout
+	stdout = &out
+	defer func() { stdout = old }()
+	err := run(context.Background(), args)
+	return out.String(), err
 }
 
 func TestInstallCmdNonWindows(t *testing.T) {
@@ -580,89 +611,128 @@ func TestInstallCmdNonWindows(t *testing.T) {
 	}
 }
 
-func TestInstallServiceNeedsAdmin(t *testing.T) {
-	fakeWindows(t)
+func TestInstallService(t *testing.T) {
+	w := fakeWindows(t)
 	if err := run(context.Background(), []string{"install", "--service"}); err == nil || !strings.Contains(err.Error(), "run it as administrator") {
-		t.Errorf("err = %v", err)
+		t.Errorf("not admin: %v", err)
+	}
+	// not available yet: a running per-user agent is left alone
+	w.sys.admin, w.sys.portBusy, w.sys.unin[wininstall.PerUser] = true, true, wininstall.Entry{InstallLocation: `C:\x`}
+	if err := run(context.Background(), []string{"install", "--service"}); err == nil || !strings.Contains(err.Error(), "not available yet") {
+		t.Errorf("admin: %v", err)
+	}
+	if w.quits != 0 {
+		t.Error("stopped the per-user agent")
 	}
 }
 
 func TestInstallPortBusy(t *testing.T) {
-	sys, _, quits := fakeWindows(t)
-	sys.portBusy = true
+	w := fakeWindows(t)
+	w.sys.portBusy = true
 	err := run(context.Background(), []string{"install"})
 	if err == nil || !strings.Contains(err.Error(), "port 8631") || !strings.Contains(err.Error(), "another pdb-print") {
 		t.Errorf("err = %v", err)
 	}
-	if *quits != 0 || sys.spawns != 0 {
-		t.Errorf("not installed, yet quit %d, spawned %d", *quits, sys.spawns)
+	if w.quits != 0 || w.sys.spawns != 0 {
+		t.Errorf("not installed, yet quit %d, spawned %d", w.quits, w.sys.spawns)
 	}
 }
 
 func TestInstallRefusedWhenServiceInstalled(t *testing.T) {
-	sys, _, _ := fakeWindows(t)
-	sys.service = true
+	w := fakeWindows(t)
+	w.sys.service = true
 	if err := run(context.Background(), []string{"install"}); err == nil || !strings.Contains(err.Error(), "installed as a service") {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestInstallAndUninstall(t *testing.T) {
-	sys, e, quits := fakeWindows(t)
-	if err := run(context.Background(), []string{"install", "--quiet"}); err != nil {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
 		t.Fatal(err)
 	}
-	l := wininstall.LayoutFor(wininstall.PerUser, e)
-	if _, err := os.Stat(l.ExeW); err != nil || sys.spawns != 1 || *quits != 0 {
-		t.Fatalf("install: %v, %d spawns, %d quits", err, sys.spawns, *quits)
+	l := wininstall.LayoutFor(wininstall.PerUser, w.env)
+	if _, err := os.Stat(l.ExeW); err != nil || w.sys.spawns != 1 || w.quits != 0 {
+		t.Fatalf("install: %v, %d spawns, %d quits", err, w.sys.spawns, w.quits)
 	}
-	// again, with the agent running: it is stopped first
-	if err := run(context.Background(), []string{"install", "--quiet"}); err != nil {
+	// again, with the agent running: it is stopped first and waited for until it has exited
+	if _, err := runOut("install", "--quiet"); err != nil {
 		t.Fatal(err)
 	}
-	if sys.spawns != 2 || *quits != 1 {
-		t.Errorf("reinstall: %d spawns, %d quits", sys.spawns, *quits)
+	if w.sys.spawns != 2 || w.quits != 1 || !slices.Equal(w.sys.waited, []int{fakePID}) || w.sys.waitTimeout != 2*time.Minute+10*time.Second {
+		t.Errorf("reinstall: %d spawns, %d quits, waited for %v (%s)", w.sys.spawns, w.quits, w.sys.waited, w.sys.waitTimeout)
 	}
-	if err := run(context.Background(), []string{"uninstall"}); err != nil {
+	if _, err := runOut("uninstall"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(l.ProgramDir); !os.IsNotExist(err) || *quits != 2 || len(sys.unin) != 0 {
-		t.Errorf("uninstall: %v, %d quits, entries %v", err, *quits, sys.unin)
+	if _, err := os.Stat(l.ProgramDir); !os.IsNotExist(err) || w.quits != 2 || len(w.sys.waited) != 2 || len(w.sys.unin) != 0 {
+		t.Errorf("uninstall: %v, %d quits, waited %v, entries %v", err, w.quits, w.sys.waited, w.sys.unin)
 	}
 }
 
 func TestInstallAgentWontStop(t *testing.T) {
-	sys, _, _ := fakeWindows(t)
-	if err := run(context.Background(), []string{"install", "--quiet"}); err != nil {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
 		t.Fatal(err)
 	}
-	stub(t, &portWait, 5*time.Millisecond)
-	quitAgent = func(context.Context) error { return nil } // the port stays busy
+	w.sys.waitErr = errors.New("timeout")
 	for _, cmd := range []string{"install", "uninstall"} {
-		if err := run(context.Background(), []string{cmd}); err == nil || !strings.Contains(err.Error(), "didn't stop") {
+		if _, err := runOut(cmd); err == nil || !strings.Contains(err.Error(), "didn't stop") {
 			t.Errorf("%s: %v", cmd, err)
 		}
 	}
-	if sys.spawns != 1 || len(sys.unin) != 1 {
-		t.Errorf("went ahead anyway: %d spawns, entries %v", sys.spawns, sys.unin)
+	if w.sys.spawns != 1 || len(w.sys.unin) != 1 {
+		t.Errorf("went ahead anyway: %d spawns, entries %v", w.sys.spawns, w.sys.unin)
 	}
 }
 
-func TestNoSelfUpdateWritesConfig(t *testing.T) {
-	_, e, _ := fakeWindows(t)
-	if err := run(context.Background(), []string{"install", "--quiet", "--no-self-update"}); err != nil {
+// The installed agent isn't what holds 8631 (or is too old for /v1/quit).
+func TestInstallQuitFails(t *testing.T) {
+	fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
 		t.Fatal(err)
 	}
-	path := wininstall.LayoutFor(wininstall.PerUser, e).Config
-	b, _ := os.ReadFile(path)
-	if !strings.Contains(string(b), "self_update: false") {
-		t.Errorf("config:\n%s", b)
-	}
-	cfg, err := config.Load(path, true)
-	if err != nil || cfg.SelfUpdate == nil || *cfg.SelfUpdate {
-		t.Errorf("load: %v %v", cfg, err)
+	quitAgent = func(context.Context) (int, error) { return 0, errors.New("403 Forbidden") }
+	if _, err := runOut("install"); err == nil || !strings.Contains(err.Error(), "port 8631 is in use and pdb-print couldn't stop it: 403") {
+		t.Errorf("err = %v", err)
 	}
 }
+
+func TestInstallFailsAfterStop(t *testing.T) {
+	fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	selfExe = func() (string, error) { return filepath.Join(t.TempDir(), "pdb-print.exe"), nil } // no pdb-printw.exe there
+	_, err := runOut("install", "--quiet")
+	if err == nil || !strings.Contains(err.Error(), "the running pdb-print was stopped") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestInstallOpensBrowser(t *testing.T) {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil || len(w.browsed) != 0 {
+		t.Fatalf("--quiet: %v, opened %v", err, w.browsed)
+	}
+	if _, err := runOut("install"); err != nil || !slices.Equal(w.browsed, []string{"http://127.0.0.1:8631"}) {
+		t.Errorf("%v, opened %v", err, w.browsed)
+	}
+}
+
+func TestInstallAgentSlowToListen(t *testing.T) {
+	w := fakeWindows(t)
+	newSystem = func() wininstall.System { return slowSys{w.sys} }
+	out, err := runOut("install")
+	if err != nil || len(w.browsed) != 0 || !strings.Contains(out, "pdb-print is starting; open http://127.0.0.1:8631 in a moment.") {
+		t.Errorf("%v, opened %v:\n%s", err, w.browsed, out)
+	}
+}
+
+// slowSys: the spawned agent never gets to listen.
+type slowSys struct{ *fakeSys }
+
+func (s slowSys) Spawn(string, ...string) error { s.spawns++; return nil }
 
 func TestDoubleClickPrompt(t *testing.T) {
 	for _, tc := range []struct {
@@ -670,23 +740,34 @@ func TestDoubleClickPrompt(t *testing.T) {
 		installed bool
 	}{{"y\n", true}, {"\n", true}, {"YES\n\n", true}, {"n\n", false}, {"later\n", false}} {
 		t.Run(strings.TrimSpace(tc.in), func(t *testing.T) {
-			sys, _, _ := fakeWindows(t)
+			w := fakeWindows(t)
 			startedByExplorer = func() bool { return true }
-			var out bytes.Buffer
 			stub[io.Reader](t, &stdin, strings.NewReader(tc.in))
-			stub[io.Writer](t, &stdout, &out)
-			if err := run(context.Background(), nil); err != nil {
+			out, err := runOut()
+			if err != nil {
 				t.Fatal(err)
 			}
-			if got := sys.spawns == 1; got != tc.installed {
-				t.Errorf("installed = %v:\n%s", got, out.String())
+			if got := w.sys.spawns == 1; got != tc.installed {
+				t.Errorf("installed = %v:\n%s", got, out)
 			}
-			if tc.installed != strings.Contains(out.String(), "Press Enter to close.") {
-				t.Errorf("Enter prompt:\n%s", out.String())
+			if !strings.HasSuffix(out, "Press Enter to close.") {
+				t.Errorf("no Enter prompt at the end:\n%s", out)
 			}
-			if !tc.installed && !strings.Contains(out.String(), "usage: pdb-print") {
-				t.Errorf("no usage:\n%s", out.String())
+			if !tc.installed && !strings.Contains(out, "usage: pdb-print") {
+				t.Errorf("no usage:\n%s", out)
 			}
 		})
+	}
+}
+
+// The flag reaches wininstall.Install, which writes it (tested there).
+func TestNoSelfUpdateWritesConfig(t *testing.T) {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet", "--no-self-update"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(wininstall.LayoutFor(wininstall.PerUser, w.env).Config, true)
+	if err != nil || cfg.SelfUpdate == nil || *cfg.SelfUpdate {
+		t.Errorf("load: %v %v", cfg, err)
 	}
 }

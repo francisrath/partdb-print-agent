@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -533,6 +534,9 @@ func TestQuitLoopbackWithHeaderOnly(t *testing.T) {
 			}
 			if wantQuit := btoi(tc.want == http.StatusAccepted); quit != wantQuit {
 				t.Errorf("Quit called %d times, want %d", quit, wantQuit)
+			}
+			if tc.want == http.StatusAccepted && strings.TrimSpace(w.Body.String()) != fmt.Sprintf(`{"pid":%d}`, os.Getpid()) {
+				t.Errorf("body %q, want our pid", w.Body)
 			}
 		})
 	}
