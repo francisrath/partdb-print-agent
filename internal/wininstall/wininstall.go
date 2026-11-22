@@ -107,12 +107,21 @@ type System interface {
 }
 
 // Options for Install. NoSelfUpdate writes self_update: false into the config; Quiet is for the caller.
+// Out gets notices for the user (nil = none).
 type Options struct {
 	Mode                Mode
 	Quiet, NoSelfUpdate bool
 	Self, Version       string
 	Env                 Env
+	Out                 io.Writer
 }
+
+// ErrCantWatch is WaitExit's answer for a process it may not open (another user's, or an elevated
+// one): wait for its port to free instead.
+var ErrCantWatch = errors.New("can't watch the process")
+
+// serviceStopWait is how long a stopping service may take: a print in progress finishes first.
+const serviceStopWait = 2 * time.Minute
 
 // Quote quotes one command-line argument (paths only: no embedded quotes).
 // Trailing backslashes are doubled so they do not escape the closing quote.
@@ -132,13 +141,26 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := o.Env.check(o.Mode); err != nil {
 		return l, err
 	}
-	if o.Mode == Service {
-		return l, errors.New("service install: not implemented yet")
-	}
 	selfW := filepath.Join(filepath.Dir(o.Self), exeWName)
 	if _, err := os.Stat(selfW); err != nil {
 		return l, fmt.Errorf("%s not found next to %s (extract the whole zip first, then run %s from the extracted folder): %w",
 			exeWName, o.Self, exeName, err)
+	}
+	hadService := false
+	if o.Mode == Service {
+		var err error
+		if hadService, err = sys.ServiceExists(); err != nil {
+			return l, fmt.Errorf("query service: %w", err)
+		}
+		if hadService { // waits for a print in progress; its exes can then be swapped
+			if err := sys.StopService(serviceStopWait); err != nil {
+				return l, fmt.Errorf("stop service: %w", err)
+			}
+		}
+		// before any file goes in it: ProgramData lets every user create files (a planted session.key)
+		if err := MkdirAdminOnly(filepath.Dir(l.Config)); err != nil {
+			return l, fmt.Errorf("create %s: %w", filepath.Dir(l.Config), err)
+		}
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
 		return l, fmt.Errorf("create program dir: %w", err)
@@ -168,10 +190,27 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := os.WriteFile(l.StartMenuLink, []byte("[InternetShortcut]\r\nURL="+uiURL+"\r\n"), 0o644); err != nil {
 		return l, fmt.Errorf("write Start menu link: %w", err)
 	}
+	if o.Mode == Service {
+		if err := takeOver(sys, o, l.Config); err != nil {
+			return l, err
+		}
+	}
 	if o.NoSelfUpdate { // before the agent starts, so it reads the new value
 		if err := disableSelfUpdate(l.Config); err != nil {
 			return l, fmt.Errorf("write config: %w", err)
 		}
+	}
+	if o.Mode == Service {
+		if !hadService {
+			// raw paths: the service manager quotes them
+			if err := sys.InstallService(l.Exe, []string{"service", "run", "--config", l.Config}); err != nil {
+				return l, fmt.Errorf("install service: %w", err)
+			}
+		}
+		if err := sys.StartService(); err != nil {
+			return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
+		}
+		return l, nil
 	}
 	if err := sys.SetRun(name, Quote(l.ExeW)+" serve"); err != nil {
 		return l, fmt.Errorf("set Run value: %w", err)
@@ -180,6 +219,56 @@ func Install(sys System, o Options) (Layout, error) {
 		return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
 	}
 	return l, nil
+}
+
+// takeOver replaces this user's per-user install with the service: its config is copied to cfg
+// (unless the service has one already), then the per-user install is removed. The caller has
+// stopped the per-user agent.
+func takeOver(sys System, o Options, cfg string) error {
+	if _, ok, err := sys.ReadUninstall(PerUser); err != nil {
+		return fmt.Errorf("read per-user uninstall entry: %w", err)
+	} else if !ok {
+		return nil
+	}
+	from := LayoutFor(PerUser, o.Env).Config
+	copied := false
+	if _, err := os.Stat(cfg); errors.Is(err, os.ErrNotExist) {
+		b, err := os.ReadFile(from)
+		if err == nil {
+			if err := os.WriteFile(cfg, b, 0o600); err != nil {
+				return fmt.Errorf("copy config: %w", err)
+			}
+			copied = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read per-user config: %w", err)
+		}
+	}
+	if err := Uninstall(sys, PerUser, false, o.Env); err != nil {
+		return fmt.Errorf("remove the per-user install: %w", err)
+	}
+	if o.Out == nil {
+		return nil
+	}
+	fmt.Fprintf(o.Out, "Replaced the per-user install of pdb-print; its config stays in %s.\n", filepath.Dir(from))
+	if copied && keychainTokens(cfg) {
+		// the token is in this user's keychain; the service (LocalSystem) has its own
+		fmt.Fprintln(o.Out, "The service can't read this user's keychain: re-enter the Part-DB token in the web UI (pair with `pdb-print pair`).")
+	}
+	return nil
+}
+
+// keychainTokens reports whether the config has an instance whose token isn't in the file.
+func keychainTokens(path string) bool {
+	cfg, err := config.Load(path, true)
+	if err != nil {
+		return false
+	}
+	for _, in := range cfg.Instances {
+		if in.Token == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func disableSelfUpdate(path string) error {
@@ -280,7 +369,7 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 			return fmt.Errorf("query service: %w", err)
 		}
 		if ok {
-			if err := sys.StopService(30 * time.Second); err != nil {
+			if err := sys.StopService(serviceStopWait); err != nil {
 				return fmt.Errorf("stop service: %w", err)
 			}
 			if err := sys.RemoveService(); err != nil {

@@ -14,14 +14,16 @@ import (
 )
 
 type fakeSystem struct {
-	run     map[string]string
-	unin    map[Mode]Entry
-	service bool
-	spawns  [][]string
-	uninErr error // DeleteUninstall fails with it
-	readErr error // ReadUninstall fails with it
-	delErr  error // DeleteAfterExit fails with it
-	writeOK int   // WriteUninstall calls that succeed before it fails (-1 = always)
+	run      map[string]string
+	unin     map[Mode]Entry
+	service  bool
+	spawns   [][]string
+	uninErr  error    // DeleteUninstall fails with it
+	readErr  error    // ReadUninstall fails with it
+	delErr   error    // DeleteAfterExit fails with it
+	writeOK  int      // WriteUninstall calls that succeed before it fails (-1 = always)
+	calls    []string // service calls in order
+	startErr error    // StartService fails with it
 }
 
 func newFake() *fakeSystem {
@@ -46,15 +48,26 @@ func (f *fakeSystem) DeleteUninstall(m Mode) error {
 	delete(f.unin, m)
 	return nil
 }
-func (f *fakeSystem) ServiceExists() (bool, error)          { return f.service, nil }
-func (f *fakeSystem) InstallService(string, []string) error { f.service = true; return nil }
-func (f *fakeSystem) RemoveService() error                  { f.service = false; return nil }
-func (f *fakeSystem) StartService() error                   { return nil }
-func (f *fakeSystem) StopService(time.Duration) error       { return nil }
-func (f *fakeSystem) PortInUse(string) bool                 { return false }
-func (f *fakeSystem) Listening(string) bool                 { return false }
-func (f *fakeSystem) DeleteAfterExit(string) error          { return f.delErr }
-func (f *fakeSystem) WaitExit(int, time.Duration) error     { return nil }
+func (f *fakeSystem) ServiceExists() (bool, error) { return f.service, nil }
+func (f *fakeSystem) InstallService(exe string, args []string) error {
+	f.calls = append(f.calls, "install "+strings.Join(append([]string{exe}, args...), "|"))
+	f.service = true
+	return nil
+}
+func (f *fakeSystem) RemoveService() error {
+	f.calls = append(f.calls, "remove")
+	f.service = false
+	return nil
+}
+func (f *fakeSystem) StartService() error { f.calls = append(f.calls, "start"); return f.startErr }
+func (f *fakeSystem) StopService(d time.Duration) error {
+	f.calls = append(f.calls, "stop "+d.String())
+	return nil
+}
+func (f *fakeSystem) PortInUse(string) bool             { return false }
+func (f *fakeSystem) Listening(string) bool             { return false }
+func (f *fakeSystem) DeleteAfterExit(string) error      { return f.delErr }
+func (f *fakeSystem) WaitExit(int, time.Duration) error { return nil }
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
 	return nil
@@ -239,9 +252,121 @@ func TestInstallMissingGUIExe(t *testing.T) {
 	}
 }
 
-func TestInstallServiceNotYet(t *testing.T) {
-	if _, err := Install(newFake(), Options{Mode: Service, Self: fakeSelf(t), Env: testEnv(t)}); err == nil {
-		t.Error("want error")
+func TestInstallServiceTakesOverPerUser(t *testing.T) {
+	for _, tt := range []struct {
+		name, perUserCfg, serviceCfg, want string
+		token                              bool // the re-enter-the-token notice
+	}{
+		{"keychain token", "instances:\n  - id: home\n    base_url: https://p.example\n", "", "instances:\n  - id: home\n    base_url: https://p.example\n", true},
+		{"token in config", "instances:\n  - id: home\n    base_url: https://p.example\n    token: t\n", "", "instances:\n  - id: home\n    base_url: https://p.example\n    token: t\n", false},
+		{"service config kept", "instances:\n  - id: home\n    base_url: https://p.example\n", "log_level: debug\n", "log_level: debug\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			pu, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.MkdirAll(filepath.Dir(pu.Config), 0o755)
+			os.WriteFile(pu.Config, []byte(tt.perUserCfg), 0o600)
+			ls := LayoutFor(Service, e)
+			if tt.serviceCfg != "" {
+				os.MkdirAll(filepath.Dir(ls.Config), 0o755)
+				os.WriteFile(ls.Config, []byte(tt.serviceCfg), 0o600)
+			}
+			var out strings.Builder
+			l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Version: "2", Env: e, Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if l != ls {
+				t.Errorf("layout %+v", l)
+			}
+			for _, p := range []string{l.Exe, l.ExeW, l.StartMenuLink} {
+				if !exists(p) {
+					t.Errorf("%s missing", p)
+				}
+			}
+			want := []string{"install " + l.Exe + "|service|run|--config|" + l.Config, "start"}
+			if strings.Join(sys.calls, ";") != strings.Join(want, ";") {
+				t.Errorf("calls %q, want %q", sys.calls, want)
+			}
+			if en := sys.unin[Service]; en.DisplayVersion != "2" || en.InstallLocation != l.ProgramDir || en.DisplayIcon != l.Exe ||
+				en.UninstallString != Quote(l.Exe)+" uninstall" {
+				t.Errorf("service entry %+v", en)
+			}
+			// the per-user install is gone, its config stays
+			if _, ok := sys.unin[PerUser]; ok || len(sys.run) != 0 || exists(pu.ProgramDir) || exists(pu.StartMenuLink) || !exists(pu.Config) {
+				t.Errorf("per-user leftovers: run %v, entries %v", sys.run, sys.unin)
+			}
+			if b, _ := os.ReadFile(l.Config); string(b) != tt.want {
+				t.Errorf("service config %q, want %q", b, tt.want)
+			}
+			if fi, err := os.Stat(filepath.Dir(l.Config)); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+				t.Errorf("config dir %v %v", fi.Mode(), err)
+			}
+			if got := strings.Contains(out.String(), "re-enter the Part-DB token in the web UI (pair with `pdb-print pair`)"); got != tt.token {
+				t.Errorf("token notice %v:\n%s", got, out.String())
+			}
+		})
+	}
+}
+
+// Over an existing service: stopped first (waiting for a print), the exes swapped, started again.
+func TestInstallServiceReinstall(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err != nil {
+		t.Fatal(err)
+	}
+	sys.calls = nil
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, NoSelfUpdate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(sys.calls, ";"); got != "stop 2m0s;start" {
+		t.Errorf("calls %q", got)
+	}
+	if b, _ := os.ReadFile(l.Config); !strings.Contains(string(b), "self_update: false") {
+		t.Errorf("config %q", b)
+	}
+	sys.startErr = errors.New("boom")
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); !errors.Is(err, ErrNotStarted) {
+		t.Errorf("start failure: %v", err)
+	}
+}
+
+func TestUninstallServiceStopsFirst(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.calls = nil
+	if err := Uninstall(sys, Service, false, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(sys.calls, ";"); got != "stop 2m0s;remove" {
+		t.Errorf("calls %q", got)
+	}
+	if exists(l.ProgramDir) || exists(l.StartMenuLink) || len(sys.unin) != 0 {
+		t.Error("leftovers")
+	}
+}
+
+func TestMkdirAdminOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pd", "pdb-print")
+	if err := os.MkdirAll(dir, 0o777); err != nil { // existing and wide open: reset
+		t.Fatal(err)
+	}
+	os.Chmod(dir, 0o777)
+	for range 2 {
+		if err := MkdirAdminOnly(dir); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(dir); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+			t.Errorf("mode %v %v", fi.Mode(), err)
+		}
+		os.RemoveAll(dir) // the second round creates it
 	}
 }
 

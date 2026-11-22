@@ -32,6 +32,14 @@ func (osSystem) Listening(addr string) bool              { return listening(addr
 func (osSystem) DeleteAfterExit(string) error            { return ErrNotWindows }
 func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows }
 
+// MkdirAdminOnly creates dir (and its parents) for its owner only, or resets an existing one to that.
+func MkdirAdminOnly(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
+}
+
 func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
 
 // WriteAdminOnly writes data to path readable only by its owner: a new 0600 temp file in the same

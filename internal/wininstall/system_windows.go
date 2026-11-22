@@ -143,13 +143,16 @@ func (osSystem) InstallService(exe string, args []string) error {
 		return err
 	}
 	defer m.Disconnect()
-	s, err := m.CreateService(name, exe, mgr.Config{DisplayName: name, StartType: mgr.StartAutomatic}, args...)
+	s, err := m.CreateService(name, exe, mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic}, args...)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 	r := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: 5 * time.Second}
-	return s.SetRecoveryActions([]mgr.RecoveryAction{r, r, r}, 86400)
+	if err := s.SetRecoveryActions([]mgr.RecoveryAction{r, r, r}, 86400); err != nil {
+		return err
+	}
+	return s.SetRecoveryActionsOnNonCrashFailures(true) // also when serve fails (exit code 1), e.g. port busy at boot
 }
 
 func withService(f func(*mgr.Service) error) error {
@@ -247,6 +250,8 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return nil // no such process: it has already exited
+	} else if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return ErrCantWatch // another user's or an elevated process
 	} else if err != nil {
 		return err
 	}
@@ -263,6 +268,35 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
+}
+
+// adminOnlyDir: Administrators and SYSTEM, inherited by what is created inside; nothing from the parent.
+const adminOnlyDir = "D:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
+
+// MkdirAdminOnly creates dir with an ACL of Administrators + SYSTEM only (set at creation, so no
+// other user can get a file into it first), or resets an existing dir's ACL to that.
+func MkdirAdminOnly(dir string) error {
+	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	p, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	if err := windows.CreateDirectory(p, sa); !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return err // nil: created with the ACL
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }
 
 // WriteAdminOnly writes data to path readable only by Administrators and SYSTEM. The file is
