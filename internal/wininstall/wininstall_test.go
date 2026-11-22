@@ -1,6 +1,7 @@
 package wininstall
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -124,13 +125,67 @@ func TestInstallPerUser(t *testing.T) {
 
 func TestInstallTwiceIsInPlace(t *testing.T) {
 	sys, o := newFake(), Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: testEnv(t)}
-	for i := 0; i < 2; i++ {
-		if _, err := Install(sys, o); err != nil {
-			t.Fatalf("install %d: %v", i, err)
-		}
+	l, err := Install(sys, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(o.Self, []byte("new build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(sys, o); err != nil {
+		t.Fatal(err)
 	}
 	if len(sys.run) != 1 {
 		t.Errorf("run values = %v", sys.run)
+	}
+	if b, _ := os.ReadFile(l.Exe); string(b) != "new build" {
+		t.Errorf("exe not replaced: %q", b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(l.ProgramDir, "*.old")); len(left) > 0 {
+		t.Errorf("leftover %v", left)
+	}
+	if left, _ := filepath.Glob(filepath.Join(l.ProgramDir, "*.new")); len(left) > 0 {
+		t.Errorf("leftover %v", left)
+	}
+}
+
+func TestCopyExeFailureKeepsOriginal(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "x.exe")
+	if err := os.WriteFile(dst, []byte("good"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A directory as source opens fine but cannot be read, so the copy fails midway.
+	if err := copyExe(t.TempDir(), dst); err == nil {
+		t.Fatal("want error")
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "good" {
+		t.Errorf("original damaged: %q", b)
+	}
+	if left, _ := filepath.Glob(dst + ".*"); len(left) > 0 {
+		t.Errorf("leftover %v", left)
+	}
+}
+
+func TestInstallEmptyEnv(t *testing.T) {
+	e := testEnv(t)
+	e.LocalAppData = ""
+	if _, err := Install(newFake(), Options{Mode: PerUser, Self: fakeSelf(t), Env: e}); err == nil {
+		t.Error("want error for empty LOCALAPPDATA")
+	}
+}
+
+type failSpawn struct{ *fakeSystem }
+
+func (failSpawn) Spawn(string, ...string) error { return errors.New("boom") }
+
+func TestInstallSpawnFailure(t *testing.T) {
+	sys := failSpawn{newFake()}
+	_, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: testEnv(t)})
+	if !errors.Is(err, ErrNotStarted) {
+		t.Errorf("err = %v", err)
+	}
+	if len(sys.unin) != 1 {
+		t.Error("install should be complete")
 	}
 }
 
@@ -170,8 +225,12 @@ func TestUninstall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.MkdirAll(filepath.Dir(l.Config), 0o755)
-		os.WriteFile(l.Config, []byte("x: 1"), 0o600)
+		if err := os.MkdirAll(filepath.Dir(l.Config), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(l.Config, []byte("x: 1"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if err := Uninstall(sys, PerUser, purge, e); err != nil {
 			t.Fatal(err)
 		}
@@ -186,11 +245,11 @@ func TestUninstall(t *testing.T) {
 
 func TestInstalled(t *testing.T) {
 	sys, e := newFake(), testEnv(t)
-	if _, ok := Installed(sys); ok {
+	if _, ok := Installed(sys, e); ok {
 		t.Error("nothing installed yet")
 	}
 	l, _ := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
-	got, ok := Installed(sys)
+	got, ok := Installed(sys, e)
 	if !ok || got.Mode != PerUser || got.ProgramDir != l.ProgramDir || got.Exe != l.Exe {
 		t.Errorf("got %+v, %v", got, ok)
 	}
@@ -219,5 +278,8 @@ func TestPortInUse(t *testing.T) {
 	ln.Close()
 	if portInUse(addr) {
 		t.Error("closed port reported in use")
+	}
+	if portInUse("not-an-address") {
+		t.Error("malformed address reported in use")
 	}
 }

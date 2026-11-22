@@ -155,6 +155,9 @@ func (osSystem) StartService() error {
 func (osSystem) StopService(timeout time.Duration) error {
 	return withService(func(s *mgr.Service) error {
 		st, err := s.Control(svc.Stop)
+		if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+			return nil // already stopped
+		}
 		if err != nil {
 			return err
 		}
@@ -184,3 +187,7 @@ func (osSystem) Spawn(exe string, args ...string) error {
 }
 
 func (osSystem) PortInUse(addr string) bool { return portInUse(addr) }
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
+}

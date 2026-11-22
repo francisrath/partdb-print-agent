@@ -2,7 +2,11 @@
 
 package wininstall
 
-import "time"
+import (
+	"errors"
+	"syscall"
+	"time"
+)
 
 type osSystem struct{}
 
@@ -22,3 +26,5 @@ func (osSystem) StartService() error                     { return ErrNotWindows 
 func (osSystem) StopService(time.Duration) error         { return ErrNotWindows }
 func (osSystem) Spawn(string, ...string) error           { return ErrNotWindows }
 func (osSystem) PortInUse(addr string) bool              { return portInUse(addr) }
+
+func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
