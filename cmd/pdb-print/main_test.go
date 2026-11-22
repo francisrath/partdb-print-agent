@@ -683,20 +683,25 @@ func TestUninstallNotInstalled(t *testing.T) {
 }
 
 // Started from Settings → Apps: the window stays open until Enter.
-func TestUninstallFromSettingsWaits(t *testing.T) {
-	fakeWindows(t)
+// From Settings → Apps: a successful uninstall closes its window by itself after a moment; an
+// error waits for Enter so it can be read.
+func TestUninstallFromSettingsWindow(t *testing.T) {
+	w := fakeWindows(t)
 	if _, err := runOut("install", "--quiet"); err != nil {
 		t.Fatal(err)
 	}
 	startedByExplorer = func() bool { return true }
+	stub(t, &closeDelay, 0)
 	stub[io.Reader](t, &stdin, strings.NewReader("\n"))
+	w.sys.portBusy, w.sys.waitErr = true, errors.New("still there")
 	out, err := runOut("uninstall")
-	if err != nil || !strings.Contains(out, "pdb-print is uninstalled.") || !strings.HasSuffix(out, "Press Enter to close.") {
-		t.Errorf("%v:\n%s", err, out)
+	if err == nil || !strings.Contains(out, "error:") || !strings.HasSuffix(out, "Press Enter to close.") {
+		t.Errorf("failed uninstall: %v:\n%s", err, out)
 	}
-	out, _ = runOut("uninstall")
-	if !strings.HasPrefix(out, "pdb-print is not installed.") || !strings.HasSuffix(out, "Press Enter to close.") {
-		t.Errorf("again:\n%s", out)
+	w.sys.portBusy, w.sys.waitErr = false, nil
+	out, err = runOut("uninstall")
+	if err != nil || !strings.Contains(out, "pdb-print is uninstalled.") || strings.Contains(out, "Press Enter") {
+		t.Errorf("successful uninstall: %v:\n%s", err, out)
 	}
 }
 

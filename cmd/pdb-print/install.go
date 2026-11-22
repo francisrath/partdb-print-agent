@@ -105,14 +105,19 @@ func install(sys wininstall.System, env wininstall.Env, quiet, noSelfUpdate bool
 		Self: self, Version: appVersion(), Env: env})
 }
 
+// closeDelay is how long a successful uninstall started from Settings → Apps stays on screen.
+var closeDelay = 3 * time.Second
+
 // uninstallCmd: started from Settings → Apps, its console window would close before the result
-// can be read, so it then waits for Enter.
+// can be read: on success it stays a few seconds, on an error it waits for Enter.
 func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
 	err := uninstall(ctx, args, out)
 	if startedByExplorer() {
-		if err != nil {
-			fmt.Fprintln(out, "error:", err)
+		if err == nil {
+			time.Sleep(closeDelay)
+			return nil
 		}
+		fmt.Fprintln(out, "error:", err)
 		fmt.Fprint(out, "Press Enter to close.")
 		bufio.NewReader(stdin).ReadString('\n')
 	}
@@ -149,7 +154,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	if *purge {
 		fmt.Fprintln(out, "pdb-print is uninstalled, its config deleted.")
 	} else {
-		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s.\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
+		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s (for a reinstall; pdb-print uninstall --purge also removes it).\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
 	}
 	return nil
 }

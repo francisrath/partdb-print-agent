@@ -20,6 +20,7 @@ type fakeSystem struct {
 	spawns  [][]string
 	uninErr error // DeleteUninstall fails with it
 	readErr error // ReadUninstall fails with it
+	delErr  error // DeleteAfterExit fails with it
 	writeOK int   // WriteUninstall calls that succeed before it fails (-1 = always)
 }
 
@@ -52,7 +53,7 @@ func (f *fakeSystem) StartService() error                   { return nil }
 func (f *fakeSystem) StopService(time.Duration) error       { return nil }
 func (f *fakeSystem) PortInUse(string) bool                 { return false }
 func (f *fakeSystem) Listening(string) bool                 { return false }
-func (f *fakeSystem) DeleteAfterExit(string) error          { return nil }
+func (f *fakeSystem) DeleteAfterExit(string) error          { return f.delErr }
 func (f *fakeSystem) WaitExit(int, time.Duration) error     { return nil }
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
@@ -317,12 +318,20 @@ func TestUninstallUnreadableEntryRemovesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(l.Config), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(l.Config, []byte("x: 1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	sys.readErr = errors.New("access denied")
-	if err := Uninstall(sys, PerUser, false, e); err == nil || !strings.Contains(err.Error(), "read uninstall entry") {
+	if err := Uninstall(sys, PerUser, true, e); err == nil || !strings.Contains(err.Error(), "read uninstall entry") {
 		t.Fatalf("err = %v", err)
 	}
-	if _, ok := sys.unin[PerUser]; !ok || !exists(l.Exe) {
-		t.Error("something was removed")
+	_, entry := sys.unin[PerUser]
+	_, run := sys.run[name]
+	if !entry || !run || !exists(l.Exe) || !exists(l.StartMenuLink) || !exists(l.Config) {
+		t.Errorf("changed: entry=%v run=%v exe=%v link=%v config=%v; want all kept", entry, run, exists(l.Exe), exists(l.StartMenuLink), exists(l.Config))
 	}
 }
 
@@ -343,6 +352,22 @@ func TestUninstallReportsFailedRestore(t *testing.T) {
 	sys.writeOK = 0
 	err = Uninstall(sys, PerUser, false, e)
 	if err == nil || !strings.Contains(err.Error(), "couldn't be restored") || !strings.Contains(err.Error(), l.ProgramDir) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A file moved aside whose deletion can't be scheduled is named in the error.
+func TestUninstallReportsUnscheduledLeftovers(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	if _, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e}); err != nil {
+		t.Fatal(err)
+	}
+	aside := filepath.Join(t.TempDir(), "pdb-print.exe.pdb-print.old.1")
+	removeDirFn = func(dir string) ([]string, error) { return []string{aside}, os.RemoveAll(dir) }
+	t.Cleanup(func() { removeDirFn = removeDir })
+	sys.delErr = errors.New("its path has a % in it")
+	err := Uninstall(sys, PerUser, false, e)
+	if err == nil || !strings.Contains(err.Error(), aside) || !strings.Contains(err.Error(), "uninstalled") {
 		t.Fatalf("err = %v", err)
 	}
 }

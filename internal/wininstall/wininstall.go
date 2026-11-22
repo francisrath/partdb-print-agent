@@ -268,6 +268,12 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 		return err
 	}
 	l := LayoutFor(m, e)
+	// read first: if removing the files fails later, this entry is written back (see below), and
+	// if it can't be read, nothing has been changed yet
+	entry, hadEntry, err := sys.ReadUninstall(m)
+	if err != nil {
+		return fmt.Errorf("read uninstall entry: %w", err)
+	}
 	if m == Service {
 		ok, err := sys.ServiceExists()
 		if err != nil {
@@ -295,10 +301,6 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	// The uninstall entry runs the exe in the program dir, so it goes before the files do: an entry
 	// must never point at a removed exe. If removing the files fails and the exe is still there, the
 	// entry comes back, so Settings → Apps can run the uninstall again.
-	entry, hadEntry, err := sys.ReadUninstall(m)
-	if err != nil {
-		return fmt.Errorf("read uninstall entry: %w", err)
-	}
 	if err := sys.DeleteUninstall(m); err != nil {
 		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
@@ -306,7 +308,7 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if wd, err := os.Getwd(); err == nil && within(wd, l.ProgramDir) {
 		_ = os.Chdir(filepath.Dir(l.ProgramDir))
 	}
-	aside, err := removeDir(l.ProgramDir)
+	aside, err := removeDirFn(l.ProgramDir)
 	var leftover []string // files moved aside that nothing will delete
 	for _, p := range aside {
 		if sys.DeleteAfterExit(p) != nil {
@@ -335,6 +337,10 @@ func byHand(files []string) string {
 	}
 	return "; also delete " + strings.Join(files, ", ")
 }
+
+// removeDirFn is removeDir; tests replace it to get files moved aside, which a non-Windows
+// system can't produce (it can delete a file in use).
+var removeDirFn = removeDir
 
 // removeDir deletes dir. A running exe cannot be deleted on Windows but can be
 // renamed, so on failure each busy file is moved next to dir (same volume, unlike

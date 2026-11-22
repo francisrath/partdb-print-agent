@@ -90,8 +90,19 @@ func (osSystem) ReadUninstall(m Mode) (Entry, bool, error) {
 		return Entry{}, false, err
 	}
 	defer k.Close()
-	get := func(n string) string { s, _, _ := k.GetStringValue(n); return s }
-	return Entry{get("DisplayName"), get("DisplayVersion"), get("Publisher"), get("InstallLocation"), get("UninstallString"), get("DisplayIcon")}, true, nil
+	var e Entry
+	for _, v := range []struct {
+		name string
+		to   *string
+	}{{"DisplayName", &e.DisplayName}, {"DisplayVersion", &e.DisplayVersion}, {"Publisher", &e.Publisher},
+		{"InstallLocation", &e.InstallLocation}, {"UninstallString", &e.UninstallString}, {"DisplayIcon", &e.DisplayIcon}} {
+		s, _, err := k.GetStringValue(v.name)
+		if err != nil { // a partial entry written back would leave Settings with a broken uninstall
+			return Entry{}, false, fmt.Errorf("%s: %w", v.name, err)
+		}
+		*v.to = s
+	}
+	return e, true, nil
 }
 
 func (osSystem) DeleteUninstall(m Mode) error {
