@@ -626,6 +626,13 @@ func fakeWindows(t *testing.T) *fakeWin {
 	return w
 }
 
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
 // stub sets *p to v for the test.
 func stub[T any](t *testing.T, p *T, v T) {
 	old := *p
@@ -693,13 +700,21 @@ func TestInstallService(t *testing.T) {
 		want string // in the error; "" = none
 	}{{0, nil, ""}, {3, nil, "exit status 3"}, {0, errUACDeclined, "declined"}} {
 		var elevated [][]string
-		stub(t, &runElevated, func(args []string) (int, error) { elevated = append(elevated, args); return tt.code, tt.err })
+		var cwd string
+		t.Chdir(l.ProgramDir) // Settings → Apps starts the uninstall in it, and the elevated one removes it
+		stub(t, &runElevated, func(args []string) (int, error) {
+			elevated, cwd = append(elevated, args), must(os.Getwd())
+			return tt.code, tt.err
+		})
 		_, err := runOut("uninstall", "--purge")
 		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
 			t.Errorf("code %d, %v: err %v", tt.code, tt.err, err)
 		}
 		if len(elevated) != 1 || !slices.Equal(elevated[0], []string{"uninstall", "--purge"}) {
 			t.Errorf("elevated %v", elevated)
+		}
+		if rel, _ := filepath.Rel(l.ProgramDir, cwd); !strings.HasPrefix(rel, "..") {
+			t.Errorf("relaunched from inside the program dir: %s", cwd)
 		}
 		var ec exitCode
 		if tt.code != 0 && (!errors.As(err, &ec) || ec != 3) {

@@ -199,6 +199,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	}
 	mode := l.Mode
 	if mode == wininstall.Service && !sys.IsAdmin() { // e.g. from Settings → Apps: ask for admin rights
+		wininstall.LeaveDir(l.ProgramDir) // Settings starts us in it, and the elevated uninstall removes it
 		code, err := runElevated(append([]string{"uninstall"}, args...))
 		switch {
 		case errors.Is(err, errUACDeclined):

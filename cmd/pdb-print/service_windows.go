@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -99,6 +101,12 @@ func runElevatedOS(args []string) (int, error) {
 	params, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(args))
 	if err != nil {
 		return 0, err
+	}
+	// ShellExecuteEx may use COM (per its docs): initialise it on this thread for the call
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED|windows.COINIT_DISABLE_OLE1DDE); err == nil || err == syscall.Errno(1) { // S_FALSE: already initialised
+		defer windows.CoUninitialize()
 	}
 	const seeMaskNoCloseProcess = 0x40
 	info := shellExecuteInfo{mask: seeMaskNoCloseProcess, verb: verb, file: file, params: params, show: windows.SW_SHOWNORMAL}

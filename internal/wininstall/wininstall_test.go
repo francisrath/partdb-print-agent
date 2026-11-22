@@ -65,11 +65,16 @@ func (f *fakeSystem) StopService(d time.Duration) error {
 	f.calls = append(f.calls, "stop "+d.String())
 	return nil
 }
-func (f *fakeSystem) PortInUse(string) bool                { return false }
-func (f *fakeSystem) Listening(string) bool                { return false }
-func (f *fakeSystem) DeleteAfterExit(string) error         { return f.delErr }
-func (f *fakeSystem) WaitExit(int, time.Duration) error    { return nil }
-func (f *fakeSystem) OwnedByAdmins(p string) (bool, error) { return !f.notOwned[filepath.Base(p)], nil }
+func (f *fakeSystem) PortInUse(string) bool             { return false }
+func (f *fakeSystem) Listening(string) bool             { return false }
+func (f *fakeSystem) DeleteAfterExit(string) error      { return f.delErr }
+func (f *fakeSystem) WaitExit(int, time.Duration) error { return nil }
+func (f *fakeSystem) OwnedByAdmins(p string) (bool, error) {
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 { // the real one follows links
+		return false, errors.New("follows the link")
+	}
+	return !f.notOwned[filepath.Base(p)], nil
+}
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
 	return nil
@@ -385,6 +390,23 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 				t.Errorf("no notice:\n%s", out.String())
 			}
 		})
+	}
+}
+
+// A link in the config dir (a dangling one too) is removed without asking for its owner.
+func TestInstallServiceRemovesLinks(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	dir := filepath.Dir(LayoutFor(Service, e).Config)
+	os.MkdirAll(dir, 0o755)
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), filepath.Join(dir, "session.lnk")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	var out strings.Builder
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "session.lnk")); err == nil || !strings.Contains(out.String(), "session.lnk: a link") {
+		t.Errorf("link kept (%v):\n%s", err, out.String())
 	}
 }
 

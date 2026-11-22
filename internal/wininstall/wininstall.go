@@ -169,6 +169,9 @@ func Install(sys System, o Options) (l Layout, err error) {
 		if err := MkdirAdminOnly(dir); err != nil {
 			return l, fmt.Errorf("create %s: %w", dir, err)
 		}
+		if err := notLink(dir); err != nil { // swapped for a link before the ACL reset
+			return l, err
+		}
 		if !hadService {
 			if err := cleanConfigDir(sys, dir, o.Out); err != nil {
 				return l, err
@@ -241,20 +244,22 @@ func cleanConfigDir(sys System, dir string, out io.Writer) error {
 	}
 	for _, en := range entries {
 		p := filepath.Join(dir, en.Name())
-		drop := en.Name() == "session.key" || en.Name() == "pair-code.txt"
+		drop, why := en.Name() == "session.key" || en.Name() == "pair-code.txt", ""
 		if !drop {
 			fi, err := os.Lstat(p)
 			if err != nil {
 				return err
 			}
-			owned, err := sys.OwnedByAdmins(p)
-			if err != nil {
+			if isReparse(fi) { // before the owner: that check follows links (a dangling one fails)
+				drop, why = true, "a link"
+			} else if owned, err := sys.OwnedByAdmins(p); err != nil {
 				return fmt.Errorf("owner of %s: %w", p, err)
+			} else if !owned {
+				drop, why = true, "not made by an administrator"
 			}
-			drop = isReparse(fi) || !owned
-			if drop && out != nil {
-				fmt.Fprintf(out, "Removed %s: not made by an administrator.\n", p)
-			}
+		}
+		if why != "" && out != nil {
+			fmt.Fprintf(out, "Removed %s: %s.\n", p, why)
 		}
 		if drop {
 			if err := os.RemoveAll(p); err != nil {
@@ -445,10 +450,7 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if err := sys.DeleteUninstall(m); err != nil {
 		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
-	// a process can't remove its own working dir on Windows (Settings may start us in it)
-	if wd, err := os.Getwd(); err == nil && within(wd, l.ProgramDir) {
-		_ = os.Chdir(filepath.Dir(l.ProgramDir))
-	}
+	LeaveDir(l.ProgramDir) // Settings may start us in it
 	aside, err := removeDirFn(l.ProgramDir)
 	var leftover []string // files moved aside that nothing will delete
 	for _, p := range aside {
@@ -503,6 +505,14 @@ func removeDir(dir string) (aside []string, err error) {
 		aside = append(aside, a)
 	}
 	return aside, os.RemoveAll(dir)
+}
+
+// LeaveDir moves this process's working dir out of dir if it is in it: on Windows a dir that is
+// some process's working dir can't be removed.
+func LeaveDir(dir string) {
+	if wd, err := os.Getwd(); err == nil && within(wd, dir) {
+		_ = os.Chdir(filepath.Dir(dir))
+	}
 }
 
 // within reports whether path is dir or inside it, ignoring case as Windows does.

@@ -147,16 +147,7 @@ func (osSystem) InstallService(exe string, args []string) error {
 	c := mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic}
 	s, err := m.OpenService(name)
 	if err == nil {
-		cur, err := s.Config()
-		if err == nil {
-			cur.DisplayName, cur.Description, cur.StartType, cur.DelayedAutoStart = c.DisplayName, c.Description, c.StartType, false
-			cur.BinaryPathName = syscall.EscapeArg(exe) // as CreateService builds it
-			for _, a := range args {
-				cur.BinaryPathName += " " + syscall.EscapeArg(a)
-			}
-			err = s.UpdateConfig(cur)
-		}
-		if err != nil {
+		if err := resetConfig(s, exe, args, c.Description); err != nil {
 			s.Close()
 			return err
 		}
@@ -169,6 +160,38 @@ func (osSystem) InstallService(exe string, args []string) error {
 		return err
 	}
 	return s.SetRecoveryActionsOnNonCrashFailures(true) // also when serve fails (exit code 1), e.g. port busy at boot
+}
+
+// resetConfig gives an existing service what CreateService gives a new one: own process, automatic
+// start (not delayed), normal error control, LocalSystem, no dependencies, the command line, names.
+// (mgr's UpdateConfig can't clear dependencies.)
+func resetConfig(s *mgr.Service, exe string, args []string, desc string) error {
+	cmd := syscall.EscapeArg(exe) // as CreateService builds it
+	for _, a := range args {
+		cmd += " " + syscall.EscapeArg(a)
+	}
+	var p [4]*uint16
+	for i, v := range []string{cmd, "LocalSystem", "", name} {
+		var err error
+		if p[i], err = windows.UTF16PtrFromString(v); err != nil {
+			return err
+		}
+	}
+	noDeps := []uint16{0, 0}
+	if err := windows.ChangeServiceConfig(s.Handle, windows.SERVICE_WIN32_OWN_PROCESS, windows.SERVICE_AUTO_START,
+		windows.SERVICE_ERROR_NORMAL, p[0], nil, nil, &noDeps[0], p[1], p[2], p[3]); err != nil {
+		return err
+	}
+	d, err := windows.UTF16PtrFromString(desc)
+	if err != nil {
+		return err
+	}
+	sd := windows.SERVICE_DESCRIPTION{Description: d}
+	if err := windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_DESCRIPTION, (*byte)(unsafe.Pointer(&sd))); err != nil {
+		return err
+	}
+	delayed := windows.SERVICE_DELAYED_AUTO_START_INFO{IsDelayedAutoStartUp: 0}
+	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_DELAYED_AUTO_START_INFO, (*byte)(unsafe.Pointer(&delayed)))
 }
 
 func withService(f func(*mgr.Service) error) error {
@@ -195,26 +218,23 @@ func (osSystem) StartService() error {
 
 func (osSystem) StopService(timeout time.Duration) error {
 	return withService(func(s *mgr.Service) error {
-		st, err := s.Control(svc.Stop)
-		if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
-			return nil // already stopped
-		}
-		if errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL) { // already stopping: wait for it
-			st, err = s.Query()
-		}
-		if err != nil {
-			return err
-		}
-		for end := time.Now().Add(timeout); st.State != svc.Stopped; {
+		// Stop is sent until the service says it isn't running: one that is starting (or already
+		// stopping) can't take it yet and answers CANNOT_ACCEPT_CTRL.
+		for end := time.Now().Add(timeout); ; {
+			st, err := s.Control(svc.Stop)
+			switch {
+			case errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE):
+				return nil // stopped
+			case err == nil && st.State == svc.Stopped:
+				return nil
+			case err != nil && !errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL):
+				return err
+			}
 			if time.Now().After(end) {
 				return errors.New("timeout waiting for service to stop")
 			}
 			time.Sleep(300 * time.Millisecond)
-			if st, err = s.Query(); err != nil {
-				return err
-			}
 		}
-		return nil
 	})
 }
 
@@ -339,8 +359,12 @@ func MkdirAdminOnly(dir string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+	err = windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf("can't take over %s (made by another user without access for administrators): delete it and run the install again", dir)
+	}
+	return err
 }
 
 // WriteAdminOnly writes data to path readable only by Administrators and SYSTEM. The file is
