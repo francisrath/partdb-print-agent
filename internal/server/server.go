@@ -120,9 +120,11 @@ type Server struct {
 	flash       *flash
 	jobs        []Job
 	seen        map[string]time.Time // used handoff signatures
+	updateErr   string               // the last update's failure, shown once
+	installed   string               // a version swapped in but not restarted into
 	updating    atomic.Bool          // an Updater.Apply runs
 	updateWG    sync.WaitGroup       // the Apply goroutine
-	updateCtx   context.Context      // Apply's; cancelled by StopUpdate
+	updateCtx   context.Context      // Apply's (under mu, made on first use); cancelled by StopUpdate
 	updateStop  context.CancelFunc
 }
 
@@ -146,14 +148,24 @@ func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Lo
 	s.Window.OnClose = s.kickSetup
 	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	s.finishGrace = 10 * time.Second
-	s.updateCtx, s.updateStop = context.WithCancel(context.Background())
 	return s
+}
+
+// stopCtx is the context updates run under; StopUpdate cancels it.
+func (s *Server) stopCtx() (context.Context, context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.updateCtx == nil {
+		s.updateCtx, s.updateStop = context.WithCancel(context.Background())
+	}
+	return s.updateCtx, s.updateStop
 }
 
 // StopUpdate cancels a running update's download and waits for it, so serve never exits while
 // the exes are half swapped.
 func (s *Server) StopUpdate() {
-	s.updateStop()
+	_, stop := s.stopCtx()
+	stop()
 	s.updateWG.Wait()
 }
 
@@ -447,8 +459,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		data["HotFolder"] = fmt.Sprintf("%s (%s) → %s", dir, defaultStr(hf.Pattern, "label_*.pdf"), hf.Printer)
 	}
 
+	if rel := s.Updates.Latest(); rel != nil { // from the setting now, as the button
+		data["Hint"] = update.Hint(rel.Version, data["SelfUpdate"] == true)
+	}
 	s.mu.Lock()
 	data["Flash"], s.flash = s.flash, nil
+	data["UpdateErr"], s.updateErr = s.updateErr, ""
+	data["Installed"] = s.installed
 	data["Jobs"] = append([]Job(nil), s.jobs...)
 	s.mu.Unlock()
 	if err := pages.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -480,19 +497,32 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "an update is already running", http.StatusConflict)
 		return
 	}
+	ctx, _ := s.stopCtx()
 	s.updateWG.Add(1)
 	go func() {
 		defer s.updateWG.Done()
-		defer s.updating.Store(false)
+		defer s.updating.Store(false) // after updateResult: a page that sees it done sees the result
 		s.Log.Info("updating", "to", rel.Version, "running", s.Version)
-		if err := u.Apply(s.updateCtx, rel.Version); err != nil { // returns only when it failed
+		err := u.Apply(ctx, rel.Version) // returns only when it failed, or during a shutdown
+		if err != nil {
 			s.Log.Error("update failed", "to", rel.Version, "err", err)
-			s.mu.Lock()
-			s.flash = &flash{Text: "Update failed: " + err.Error(), Err: true}
-			s.mu.Unlock()
 		}
+		s.updateResult(err, rel.Version)
 	}()
-	s.redirect(w, r, "Updating to "+rel.Version+": this page reloads when pdb-print has restarted", nil)
+	// the page shows the update's state (index), not a flash a fast failure could race with
+	http.Redirect(w, r, "/?manual", http.StatusSeeOther)
+}
+
+// updateResult records how Apply ended for the page.
+func (s *Server) updateResult(err error, version string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case errors.Is(err, selfupdate.ErrInstalled):
+		s.installed = version
+	case err != nil:
+		s.updateErr = "Update failed: " + err.Error()
+	}
 }
 
 func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {

@@ -39,7 +39,8 @@ type Checker struct {
 	URL     string       // "" = GitHub's latest-release endpoint
 	Client  *http.Client // nil = 15 s timeout
 	Log     *slog.Logger // nil = no logging
-	// SelfUpdate: this Windows install updates itself (the web UI's Update now button).
+	// SelfUpdate: this Windows install updates itself (the web UI's Update now button); only for
+	// Release.Hint, which the log shows (the web UI computes its hint when it renders).
 	SelfUpdate bool
 
 	mu     sync.Mutex
@@ -100,7 +101,7 @@ func (c *Checker) Check(ctx context.Context) (*Release, error) {
 	var rel *Release
 	if newer(r.Tag, c.Current) {
 		v := strings.TrimPrefix(r.Tag, "v")
-		rel = &Release{Version: v, URL: r.URL, Hint: hint(Install(), v, c.SelfUpdate)}
+		rel = &Release{Version: v, URL: r.URL, Hint: Hint(v, c.SelfUpdate)}
 	}
 	c.mu.Lock()
 	c.latest = rel
@@ -168,6 +169,9 @@ func install(goos, exe string, docker, winInstalled bool) string {
 	}
 	return "archive"
 }
+
+// Hint says how to update this install to version v; selfUpdate: it updates itself (the button).
+func Hint(v string, selfUpdate bool) string { return hint(Install(), v, selfUpdate) }
 
 // hint says how to update an install of kind how to version v.
 func hint(how, v string, selfUpdate bool) string {

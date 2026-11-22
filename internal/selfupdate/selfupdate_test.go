@@ -250,8 +250,8 @@ func TestApplyRestartsWhileQuiesced(t *testing.T) {
 		}
 		return errors.New("restart failed")
 	}
-	if err := u.Apply(context.Background(), ver); err == nil {
-		t.Fatal("Restart's error was swallowed")
+	if err := u.Apply(context.Background(), ver); err == nil || !errors.Is(err, ErrInstalled) {
+		t.Fatalf("Restart's error: %v, want one that is ErrInstalled", err)
 	}
 	select {
 	case <-started: // released after Restart returned an error

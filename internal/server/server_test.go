@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"html/template"
+
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/francisrath/pdb-print/internal/driver"
@@ -782,5 +784,57 @@ func TestUpdateTwice409(t *testing.T) {
 	defer mu.Unlock()
 	if gets != 1 {
 		t.Errorf("%d downloads, want 1", gets)
+	}
+}
+
+// A download that fails at once: its error is on the next page, once, never replaced by the
+// "Updating" notice, and no "reloads" text shows without the element that polls.
+func TestUpdateFailsFast(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close() // refuses connections
+	h.srv.Updater.Base = dead.URL
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("POST: %d", w.Code)
+	}
+	h.srv.updateWG.Wait()
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if strings.Count(body, "Update failed: ") != 1 {
+		t.Errorf("failure not shown once: %s", body)
+	}
+	if strings.Contains(body, "reloads") && !strings.Contains(body, "data-updating") {
+		t.Error(`"reloads" without polling`)
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") || !strings.Contains(body, `action="/update"`) {
+		t.Errorf("second page: failure again, or no button to retry: %s", body)
+	}
+}
+
+// Swapped but not restarted: the page says to restart instead of offering the same update again.
+func TestUpdateInstalledNotRestarted(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	h.srv.updateResult(selfupdate.ErrInstalled, "9.0.0")
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if strings.Contains(body, `action="/update"`) || !strings.Contains(body, "pdb-print 9.0.0 is installed; restart pdb-print") {
+		t.Errorf("after a failed restart: %s", body)
+	}
+}
+
+// A Server not made by New: StopUpdate doesn't panic.
+func TestStopUpdateZeroServer(t *testing.T) {
+	(&Server{}).StopUpdate()
+}
+
+// The hint follows the current self_update setting when the page is rendered.
+func TestUpdateHintAtRender(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	off := false
+	h.srv.cfg.SelfUpdate = &off
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if want := update.Hint("9.0.0", false); !strings.Contains(body, template.HTMLEscapeString(want)) {
+		t.Errorf("hint %q missing: %s", want, body)
 	}
 }

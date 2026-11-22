@@ -1193,7 +1193,7 @@ func TestSelfUpdateRestart(t *testing.T) {
 		sys := &fakeSys{spawnErr: c.spawnErr}
 		code := -1
 		stub(t, &exit, func(n int) { code = n })
-		err := restartInto(sys, dir, "cfg.yaml", c.service)()
+		err := restartInto(sys, dir, "cfg.yaml", c.service, func() bool { return false })()
 		if code != c.code || strings.Join(sys.spawned, " ") != c.spawned || (err != nil) != (c.spawnErr != nil) {
 			t.Errorf("%s: exit %d, spawned %q, err %v", c.name, code, sys.spawned, err)
 		}
@@ -1211,5 +1211,73 @@ func TestUpdateBase(t *testing.T) {
 	stub(t, &updateBase, "http://127.0.0.1:9999")
 	if got := latestURL(); got != "http://127.0.0.1:9999/latest" {
 		t.Errorf("latestURL %q", got)
+	}
+}
+
+// A shutdown that began after the swap: no restart; the next start runs the new exes.
+func TestRestartWhileStopping(t *testing.T) {
+	for _, service := range []bool{true, false} {
+		sys := &fakeSys{}
+		code := -1
+		stub(t, &exit, func(n int) { code = n })
+		if err := restartInto(sys, t.TempDir(), "cfg.yaml", service, func() bool { return true })(); err != nil || code != -1 || sys.spawns != 0 {
+			t.Errorf("service=%v: err %v, exit %d, %d spawns", service, err, code, sys.spawns)
+		}
+	}
+}
+
+func TestTakeWaitPid(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		pid  int
+		rest string
+		bad  bool
+	}{
+		{[]string{"--addr", "x"}, 0, "--addr x", false},
+		{[]string{"--wait-pid", "42", "--addr", "x"}, 42, "--addr x", false},
+		{[]string{"-wait-pid=7"}, 7, "", false},
+		{[]string{"--wait-pid"}, 0, "", true},
+		{[]string{"--wait-pid", "x"}, 0, "", true},
+	} {
+		pid, rest, err := takeWaitPid(c.args)
+		if (err != nil) != c.bad || !c.bad && (pid != c.pid || strings.Join(rest, " ") != c.rest) {
+			t.Errorf("%q: %d %q %v", c.args, pid, rest, err)
+		}
+	}
+}
+
+// The Updater is wired only for a copy in a Windows program dir with self_update on.
+func TestSetupSelfUpdate(t *testing.T) {
+	local := t.TempDir()
+	env := wininstall.Env{LocalAppData: local, AppData: t.TempDir()}
+	installed := filepath.Join(local, "Programs", "pdb-print", "pdb-print.exe")
+	off := false
+	for _, c := range []struct {
+		name, goos, exe string
+		self            *bool
+		want            bool
+	}{
+		{"not windows", "linux", installed, nil, false},
+		{"not installed", "windows", filepath.Join(t.TempDir(), "pdb-print.exe"), nil, false},
+		{"self_update off", "windows", installed, &off, false},
+		{"windows, on", "windows", installed, nil, true},
+	} {
+		stub(t, &goos, c.goos)
+		stub(t, &selfExe, func() (string, error) { return c.exe, nil })
+		stub(t, &envFromOS, func() wininstall.Env { return env })
+		sys := &fakeSys{unin: map[wininstall.Mode]wininstall.Entry{wininstall.PerUser: {DisplayVersion: "0.0.1"}}}
+		stub(t, &newSystem, func() wininstall.System { return sys })
+		stub(t, &updateBase, "http://fake")
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		a := &app{cfg: &config.Config{SelfUpdate: c.self}, cfgPath: "cfg.yaml", log: log, svc: &printing.Service{Log: log}}
+		srv := server.New(a.cfg, a.cfgPath, a.svc, log, "127.0.0.1:8631", "test")
+		a.setupSelfUpdate(context.Background(), srv)
+		u := srv.Updater
+		if (u != nil) != c.want || u != nil && (u.Dir != filepath.Dir(installed) || u.Base != "http://fake") {
+			t.Errorf("%s: updater %+v", c.name, u)
+		}
+		if synced := sys.unin[wininstall.PerUser].DisplayVersion != "0.0.1"; synced != (c.goos == "windows" && c.exe == installed) {
+			t.Errorf("%s: version synced %v", c.name, synced)
+		}
 	}
 }

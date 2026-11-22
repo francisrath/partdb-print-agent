@@ -380,7 +380,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8631", "listen address (loopback only)")
 	setupWindow := fs.Bool("setup-window", false, "open the setup wizard to the LAN at start when no Part-DB is set up")
-	waitPid := fs.Int("wait-pid", 0, "wait for this process to exit first") // hidden: the restart after Update now
+	waitPid, args, err := takeWaitPid(args) // kept out of the usage: only the restart after Update now passes it
+	if err != nil {
+		return err
+	}
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -392,9 +395,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		// ponytail: LAN bind needs the admin password from architecture §10; not built yet.
 		return fmt.Errorf("refusing to listen on %s: only loopback addresses are supported", host)
 	}
-	if *waitPid > 0 { // the agent we updated: it frees the port when it exits
-		if err := newSystem().WaitExit(*waitPid, exitWait); err != nil {
-			a.log.Warn("waiting for the old pdb-print to exit", "pid", *waitPid, "err", err)
+	if waitPid > 0 { // the agent we updated: it frees the port when it exits
+		if err := newSystem().WaitExit(waitPid, exitWait); err != nil {
+			a.log.Warn("waiting for the old pdb-print to exit", "pid", waitPid, "err", err)
 		}
 	}
 	ln, err := net.Listen("tcp", *addr)
@@ -406,7 +409,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	srv := a.newServer(ln.Addr().String(), quit)
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
-	a.setupSelfUpdate(srv)
+	a.setupSelfUpdate(ctx, srv)
 	if a.cfg.UpdateCheckOn() {
 		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log, URL: latestURL(), SelfUpdate: srv.Updater != nil}
 		go srv.Updates.Run(ctx)
@@ -488,10 +491,11 @@ func (a *app) newServer(addr string, quit func()) *server.Server {
 	return srv
 }
 
-// setupSelfUpdate: in a Windows install's program dir, it tidies up after an update (the .old exes,
-// the version in Settings → Apps) and, unless self_update is off, offers the next one (srv.Updater).
-func (a *app) setupSelfUpdate(srv *server.Server) {
-	if update.Install() != "windows" {
+// setupSelfUpdate: in a Windows install's program dir (update.Install() == "windows"), it tidies up
+// after an update (the .old exes, the version in Settings → Apps) and, unless self_update is off,
+// offers the next one (srv.Updater). Once ctx ends (shutdown), an update no longer restarts.
+func (a *app) setupSelfUpdate(ctx context.Context, srv *server.Server) {
+	if goos != "windows" {
 		return
 	}
 	exe, err := selfExe()
@@ -499,18 +503,42 @@ func (a *app) setupSelfUpdate(srv *server.Server) {
 		a.log.Warn("self-update off", "err", err)
 		return
 	}
+	m, ok := wininstall.ModeOf(exe, envFromOS())
+	if !ok {
+		return
+	}
 	dir := filepath.Dir(exe)
 	selfupdate.CleanupOld(dir)
 	sys := newSystem()
-	if m, ok := wininstall.ModeOf(exe, envFromOS()); ok {
-		if err := wininstall.SyncVersion(sys, m, appVersion()); err != nil {
-			a.log.Warn("updating the version in Settings → Apps", "err", err)
-		}
+	if err := wininstall.SyncVersion(sys, m, appVersion()); err != nil {
+		a.log.Warn("updating the version in Settings → Apps", "err", err)
 	}
 	if !a.cfg.SelfUpdateOn() {
 		return
 	}
-	srv.Updater = &selfupdate.Updater{Base: updateBase, Dir: dir, Quiesce: a.svc.Quiesce, Restart: restartInto(sys, dir, a.cfgPath, serviceMode)}
+	stopping := func() bool { return ctx.Err() != nil }
+	srv.Updater = &selfupdate.Updater{Base: updateBase, Dir: dir, Quiesce: a.svc.Quiesce, Restart: restartInto(sys, dir, a.cfgPath, serviceMode, stopping)}
+}
+
+// takeWaitPid removes serve's hidden --wait-pid N (or -wait-pid, =N) from args.
+func takeWaitPid(args []string) (pid int, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		name, val, eq := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		if name != "wait-pid" || !strings.HasPrefix(args[i], "-") {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !eq {
+			if i++; i == len(args) {
+				return 0, nil, errors.New("--wait-pid needs a process id")
+			}
+			val = args[i]
+		}
+		if pid, err = strconv.Atoi(val); err != nil {
+			return 0, nil, fmt.Errorf("--wait-pid: %w", err)
+		}
+	}
+	return pid, rest, nil
 }
 
 // updateBase is for testing the updater against a fake release server (-ldflags "-X main.updateBase=http://host:port"); releases leave it empty.
@@ -530,8 +558,12 @@ var exit = os.Exit
 // restartInto is the Updater's Restart (called with jobs held back, so exiting loses none). The
 // service exits with an error: its recovery settings start the new exe. A per-user agent starts the
 // new pdb-printw.exe from dir, which waits for this process to exit before it takes the port.
-func restartInto(sys wininstall.System, dir, cfgPath string, service bool) func() error {
+// During a shutdown (stopping) it does neither: the shutdown finishes and the next start runs the new exes.
+func restartInto(sys wininstall.System, dir, cfgPath string, service bool, stopping func() bool) func() error {
 	return func() error {
+		if stopping() {
+			return nil
+		}
 		if service {
 			exit(3)
 			return nil

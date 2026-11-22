@@ -23,6 +23,10 @@ const (
 	maxZip      = 200 << 20
 )
 
+// ErrInstalled marks Apply's error when the new exes are in place but Restart failed: the next start
+// runs the new version.
+var ErrInstalled = errors.New("the new version is installed")
+
 // exes are the only files taken from the zip.
 var exes = []string{"pdb-print.exe", "pdb-printw.exe"}
 
@@ -91,7 +95,9 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return fmt.Errorf("waiting for running jobs: %w", err)
 	}
 	if err = u.swap(tmp); err == nil {
-		err = u.Restart()
+		if err = u.Restart(); err != nil {
+			err = fmt.Errorf("%w, but not restarted: %w", ErrInstalled, err)
+		}
 	}
 	release() // only reached when the swap or the restart failed, or Restart returned
 	return err
