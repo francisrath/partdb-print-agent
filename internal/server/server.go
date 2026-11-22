@@ -498,8 +498,15 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "No newer release to update to", nil)
 		return
 	}
+	s.mu.Lock()
+	installed := s.installed == rel.Version
+	s.mu.Unlock()
+	if installed { // swapped already, the restart failed: the page says to restart
+		http.Redirect(w, r, "/?manual", http.StatusSeeOther)
+		return
+	}
 	if !s.updating.CompareAndSwap(false, true) { // a second tab: never two swaps at once
-		http.Error(w, "an update is already running", http.StatusConflict)
+		http.Error(w, "pdb-print is already updating; reload the page in a moment.", http.StatusConflict)
 		return
 	}
 	ctx, _ := s.stopCtx()

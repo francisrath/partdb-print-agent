@@ -2,6 +2,9 @@
 
 Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in three jobs.
 
+Before tagging: a new install, model or field value in usage reports needs the pdb-print-stats collector
+redeployed before the release (it rejects values it doesn't know, so those reports would be lost).
+
 1. **`release`** (ubuntu, `.goreleaser.yaml`): runs the tests, builds the Linux archives, the `.deb`
    packages, the Docker images (including `:latest`) and `checksums.txt`, and creates a **draft** GitHub release.
 2. **`release-windows`** (ubuntu, `.goreleaser-windows.yaml`, needs `release`): builds `pdb-print.exe` and

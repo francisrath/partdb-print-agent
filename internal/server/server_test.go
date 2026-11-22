@@ -762,8 +762,8 @@ func TestUpdateTwice409(t *testing.T) {
 	if !strings.Contains(h.do("GET", "/?manual", nil).Body.String(), "Updating to 9.0.0") {
 		t.Error("no running notice")
 	}
-	if w := h.post("/update", nil); w.Code != http.StatusConflict {
-		t.Errorf("second POST: %d, want 409", w.Code)
+	if w := h.post("/update", nil); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "reload the page in a moment") {
+		t.Errorf("second POST: %d %q, want 409 with a message for people", w.Code, w.Body)
 	}
 	if w := h.do("POST", "/update", url.Values{}); w.Code != http.StatusForbidden {
 		t.Errorf("POST without CSRF token: %d", w.Code)
@@ -836,5 +836,20 @@ func TestUpdateHintAtRender(t *testing.T) {
 	body := h.do("GET", "/?manual", nil).Body.String()
 	if want := update.Hint("9.0.0", false); !strings.Contains(body, template.HTMLEscapeString(want)) {
 		t.Errorf("hint %q missing: %s", want, body)
+	}
+}
+
+// A stale tab after a swap whose restart failed: no second download, back to the restart notice.
+func TestUpdateAgainAfterInstalled(t *testing.T) {
+	h := newHarness(t)
+	gets := 0
+	withRelease(t, h, func(w http.ResponseWriter, r *http.Request) { gets++; http.NotFound(w, r) })
+	h.srv.updateResult(selfupdate.ErrInstalled, "9.0.0")
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/?manual" {
+		t.Fatalf("POST: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	h.srv.updateWG.Wait()
+	if gets != 0 || h.srv.updating.Load() {
+		t.Errorf("%d downloads, updating %v", gets, h.srv.updating.Load())
 	}
 }
