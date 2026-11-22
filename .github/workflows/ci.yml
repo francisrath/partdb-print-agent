@@ -137,6 +137,12 @@ jobs:
           [ "$(grep -c . dist/checksums-windows.txt)" = 2 ]
           (cd dist && sha256sum -c checksums-windows.txt)
           file "$setup" | grep -q 'PE32 executable (GUI)'
+      # to try a PR's setup.exe on a Windows machine
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-setup
+          path: dist/pdb-print_*_windows_amd64_setup.exe
+          retention-days: 7
 
   # the macOS release half (.goreleaser-darwin.yaml), as release.yml's release-darwin job runs it
   packaging-darwin:
