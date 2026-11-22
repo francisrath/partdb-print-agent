@@ -52,6 +52,10 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
+  install [--quiet] [--no-self-update] [--service]
+                                   Windows: install for this user and start it at login (no window);
+                                   --quiet: don't open the web UI; --service: for all users (admin)
+  uninstall [--purge]              Windows: remove the install; --purge also deletes the config
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
@@ -103,6 +107,9 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	if g.NArg() == 0 {
+		if startedByExplorer() {
+			return doubleClick(ctx)
+		}
 		g.Usage()
 		return errors.New("no command")
 	}
@@ -119,6 +126,12 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "try" { // a guided test of a printer; needs no config
 		return tryCmd(ctx, rest)
+	}
+	if cmd == "install" { // these need no config: they set up the program, not printing
+		return installCmd(ctx, rest, os.Stdout)
+	}
+	if cmd == "uninstall" {
+		return uninstallCmd(ctx, rest, os.Stdout)
 	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)
