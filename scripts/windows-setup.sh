@@ -13,8 +13,10 @@ inno_url=https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetu
 inno_sha256=8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
 
 export WINEDEBUG=-all WINEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/pdb-print-inno-$inno_version"
-# waits for Wine's programs to finish; Ubuntu keeps it off PATH
-wineserver=$(command -v wineserver || find /usr/lib/wine -name "wineserver*" -type f | head -n1)
+# wineserver -w waits for Wine's background processes (the installer and ISCC already run to the end);
+# Ubuntu keeps wineserver off PATH
+wineserver=$(command -v wineserver || find /usr/lib /usr/libexec -name 'wineserver*' -type f 2>/dev/null | head -n1 || true)
+wine_wait() { if [ -n "$wineserver" ]; then "$wineserver" -w; fi; }
 iscc="$WINEPREFIX/drive_c/inno/ISCC.exe"
 if [ ! -f "$iscc" ]; then
   rm -rf "$WINEPREFIX"
@@ -22,7 +24,7 @@ if [ ! -f "$iscc" ]; then
   curl -fsSLo "$WINEPREFIX/is.exe" "$inno_url"
   echo "$inno_sha256  $WINEPREFIX/is.exe" | sha256sum -c -
   xvfb-run -a wine "$WINEPREFIX/is.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- '/DIR=C:\inno' '/LOG=C:\is.log' || true
-  "$wineserver" -w
+  wine_wait
   if [ ! -f "$iscc" ]; then
     echo "Inno Setup didn't install:" >&2
     cat "$WINEPREFIX/drive_c/is.log" >&2 || true
@@ -42,7 +44,7 @@ done
 cp packaging/windows/pdb-print.iss assets/icon/windows/pdb-print.ico "$work/"
 
 (cd "$work" && xvfb-run -a wine "$iscc" "/DVersion=$v" pdb-print.iss)
-"$wineserver" -w
+wine_wait
 
 mv "$work/$setup" dist/
 (cd dist && sha256sum "$setup" >>checksums-windows.txt)
