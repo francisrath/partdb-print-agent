@@ -109,6 +109,9 @@ release:
   replace_existing_artifacts: true # … and overwrites what the first run uploaded
   extra_files:
     - glob: scripts/install.sh
+  # SignPath Foundation's terms want this link on every release page
+  footer: |
+    [Code signing policy](https://github.com/francisrath/pdb-print/blob/main/docs/code-signing.md)
 
 changelog:
   use: github

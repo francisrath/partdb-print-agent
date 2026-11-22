@@ -2,6 +2,9 @@
 
 Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in two jobs.
 
+Release notes end with the [Code signing policy](code-signing.md) link (GoReleaser adds it as the footer;
+keep it when replacing the notes by hand): SignPath Foundation's terms require it on every release page.
+
 1. **`release`** (ubuntu, `.goreleaser.yaml`): runs the tests, builds Linux and Windows archives, the `.deb`
    packages, the Docker images (including `:latest`) and `checksums.txt`, and creates a **draft** GitHub release.
 2. **`release-darwin`** (macos-latest, `.goreleaser-darwin.yaml`, needs `release`): builds the universal
