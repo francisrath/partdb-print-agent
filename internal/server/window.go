@@ -37,6 +37,7 @@ type Window struct {
 	mu       sync.Mutex
 	open     bool
 	code     string
+	used     bool // the code paired a browser: it is single-use
 	tries    int
 	opened   time.Time
 	expires  time.Time
@@ -61,7 +62,7 @@ func (w *Window) Open(now time.Time) (code string, expires time.Time) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.open, w.code, w.tries, w.gen = true, fmt.Sprintf("%06d", n.Int64()), 0, w.gen+1
+	w.open, w.code, w.used, w.tries, w.gen = true, fmt.Sprintf("%06d", n.Int64()), false, 0, w.gen+1
 	w.opened, w.expires = now, now.Add(windowOpen)
 	w.sessions = map[string]*Session{}
 	return w.code, w.expires
@@ -79,13 +80,15 @@ func (w *Window) IsOpen(now time.Time) bool {
 	return open
 }
 
-// Check tries code; a right one starts a session, a wrong one counts towards closing the window.
+// Check tries code; a right one starts a session and uses the code up (it pairs one browser), a
+// wrong one counts towards closing the window. Once the code is used, nothing pairs and tries no
+// longer count: there is nothing left to guess, and closing would end the paired browser's session.
 func (w *Window) Check(code string, now time.Time) (*Session, bool) {
 	if !w.IsOpen(now) {
 		return nil, false
 	}
 	w.mu.Lock()
-	if !w.open || w.code == "" { // closed meanwhile
+	if !w.open || w.code == "" || w.used { // closed meanwhile, or the code is used up
 		w.mu.Unlock()
 		return nil, false
 	}
@@ -101,7 +104,15 @@ func (w *Window) Check(code string, now time.Time) (*Session, bool) {
 	defer w.mu.Unlock()
 	s := &Session{ID: randomHex(32), CSRF: randomHex(32), Draft: &Draft{}, Gen: w.gen}
 	w.sessions[s.ID] = s
+	w.used = true
 	return s, true
+}
+
+// CodeUsed reports whether this window's code already paired a browser.
+func (w *Window) CodeUsed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.used
 }
 
 // Session returns the request's session while the window is open.
@@ -495,6 +506,12 @@ func (s *Server) pairPage(w http.ResponseWriter, msg string, status int) {
 
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.Window.Check(r.FormValue("code"), time.Now())
+	if !ok && s.Window.CodeUsed() && s.Window.IsOpen(time.Now()) {
+		s.Log.Warn("setup window: pairing code already used", "from", r.RemoteAddr)
+		s.pairPage(w, "This code has already been used: it pairs one browser. For another browser, run "+
+			"\"pdb-print pair\" on the print server; it opens the window with a new code.", http.StatusForbidden)
+		return
+	}
 	if !ok {
 		s.Log.Warn("setup window: wrong pairing code", "from", r.RemoteAddr)
 		s.pairPage(w, "That code didn't match. Check the code and try again.", http.StatusForbidden)
