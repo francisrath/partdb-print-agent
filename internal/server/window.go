@@ -78,7 +78,11 @@ func (w *Window) OpenOrCurrent(now time.Time) (code string, expires time.Time, e
 	case !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
 		return "", time.Time{}, errTooSoon
 	}
+	kept := w.sessions // open with its code used: browsers already paired stay paired
 	code, expires = w.openLocked(now)
+	if open && kept != nil {
+		w.sessions = kept
+	}
 	return code, expires, nil
 }
 

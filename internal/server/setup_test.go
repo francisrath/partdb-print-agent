@@ -871,9 +871,16 @@ func TestHandoffOwnToken(t *testing.T) {
 		strings.Contains(w.Body.String(), h.srv.csrf) || !strings.Contains(w.Body.String(), h.srv.handoffCSRF) {
 		t.Fatalf("handoff page: %d, settings token shown or own token missing: %s", w.Code, w.Body)
 	}
-	if w := h.do("POST", "/v1/handoff", url.Values{"csrf": {h.srv.handoffCSRF}}); w.Code != http.StatusOK {
-		t.Errorf("handoff POST with its own token: %d %s", w.Code, w.Body)
+	form := url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {"32"}, "profile": {"2"}}
+	form.Set("csrf", h.srv.csrf)
+	if w := h.do("POST", "/v1/handoff", form); w.Code != http.StatusForbidden {
+		t.Errorf("handoff POST with the settings token: %d", w.Code)
 	}
+	form.Set("csrf", h.srv.handoffCSRF)
+	if w := h.do("POST", "/v1/handoff", form); !strings.Contains(w.Body.String(), "Printed ✓") {
+		t.Fatalf("handoff POST with its own token, unpaired: %d %s", w.Code, w.Body)
+	}
+	<-h.jobs
 	if w := h.do("POST", "/v1/handoff", url.Values{"csrf": {h.srv.csrf}}); w.Code != http.StatusForbidden {
 		t.Errorf("handoff POST with the settings token: %d", w.Code)
 	}
@@ -881,5 +888,31 @@ func TestHandoffOwnToken(t *testing.T) {
 	if w := h.do("POST", "/routes", url.Values{"csrf": {h.srv.handoffCSRF}, "profile": {"2"}, "printer": {"ql"}},
 		func(r *http.Request) { r.AddCookie(cookie) }); w.Code != http.StatusForbidden {
 		t.Errorf("settings POST with the handoff token: %d", w.Code)
+	}
+}
+
+func TestNewCodeKeepsPairedBrowser(t *testing.T) {
+	h := newHarness(t)
+	lan := h.srv.LANHandler()
+	code, _ := pairCode(t, h)
+	a := pairLAN(lan, code)
+	if a == nil {
+		t.Fatal("browser A didn't pair")
+	}
+	h.srv.Window.mu.Lock()
+	h.srv.Window.opened = h.srv.Window.opened.Add(-windowEvery)
+	h.srv.Window.mu.Unlock()
+	code2, _ := pairCode(t, h) // `pdb-print pair` for browser B
+	if code2 == code {
+		t.Fatal("no new code")
+	}
+	if w := serveLAN(lan, lanReq("GET", "/setup/partdb", nil, a)); w.Code != http.StatusOK {
+		t.Errorf("browser A after the new code: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	if b := pairLAN(lan, code2); b == nil {
+		t.Error("browser B didn't pair with the new code")
+	}
+	if w := serveLAN(lan, lanReq("GET", "/setup/partdb", nil, a)); w.Code != http.StatusOK {
+		t.Errorf("browser A after B paired: %d", w.Code)
 	}
 }
