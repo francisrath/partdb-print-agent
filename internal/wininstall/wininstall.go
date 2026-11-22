@@ -293,7 +293,9 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 		}
 	}
 	// The uninstall entry runs the exe in the program dir, so it goes before the files do: an entry
-	// must never point at a removed exe. If removing the files fails after that, say where they are.
+	// must never point at a removed exe. If removing the files fails and the exe is still there, the
+	// entry comes back, so Settings → Apps can run the uninstall again.
+	entry, hadEntry, _ := sys.ReadUninstall(m)
 	if err := sys.DeleteUninstall(m); err != nil {
 		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
@@ -302,11 +304,15 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 		_ = os.Chdir(filepath.Dir(l.ProgramDir))
 	}
 	aside, err := removeDir(l.ProgramDir)
-	if err != nil {
-		return fmt.Errorf("remove program dir (delete %s by hand): %w", l.ProgramDir, err)
-	}
 	for _, p := range aside {
 		_ = sys.DeleteAfterExit(p) // best effort: cleanupOld on a later install is the fallback
+	}
+	if err != nil {
+		if _, statErr := os.Stat(l.Exe); hadEntry && statErr == nil {
+			_ = sys.WriteUninstall(m, entry)
+			return fmt.Errorf("remove program dir (run the uninstall again): %w", err)
+		}
+		return fmt.Errorf("remove program dir (delete %s by hand): %w", l.ProgramDir, err)
 	}
 	return nil
 }

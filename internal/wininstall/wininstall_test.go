@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,10 +25,10 @@ func newFake() *fakeSystem {
 	return &fakeSystem{run: map[string]string{}, unin: map[Mode]Entry{}}
 }
 
-func (f *fakeSystem) IsAdmin() bool                         { return true }
-func (f *fakeSystem) SetRun(n, c string) error              { f.run[n] = c; return nil }
-func (f *fakeSystem) DeleteRun(n string) error              { delete(f.run, n); return nil }
-func (f *fakeSystem) WriteUninstall(m Mode, e Entry) error  { f.unin[m] = e; return nil }
+func (f *fakeSystem) IsAdmin() bool                        { return true }
+func (f *fakeSystem) SetRun(n, c string) error             { f.run[n] = c; return nil }
+func (f *fakeSystem) DeleteRun(n string) error             { delete(f.run, n); return nil }
+func (f *fakeSystem) WriteUninstall(m Mode, e Entry) error { f.unin[m] = e; return nil }
 func (f *fakeSystem) DeleteUninstall(m Mode) error {
 	if f.uninErr != nil {
 		return f.uninErr
@@ -270,6 +271,30 @@ func TestUninstallEntryNeverPointsAtRemovedExe(t *testing.T) {
 	}
 	if _, ok := sys.unin[PerUser]; !ok || !exists(l.Exe) {
 		t.Errorf("entry kept=%v, exe kept=%v; want both", ok, exists(l.Exe))
+	}
+}
+
+// Removing the files fails while the exe is still there: the entry comes back so Settings → Apps
+// can run the uninstall again.
+func TestUninstallRestoresEntryWhenFilesStay(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory doesn't stop deletion on Windows")
+	}
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(l.ProgramDir, 0o555); err != nil { // its files can't be removed or renamed
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(l.ProgramDir, 0o755) })
+	err = Uninstall(sys, PerUser, false, e)
+	if err == nil || !strings.Contains(err.Error(), "run the uninstall again") {
+		t.Fatalf("err = %v", err)
+	}
+	if got, ok := sys.unin[PerUser]; !ok || got.UninstallString == "" || !exists(l.Exe) {
+		t.Errorf("entry restored=%v, exe kept=%v; want both", ok, exists(l.Exe))
 	}
 }
 
