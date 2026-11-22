@@ -25,6 +25,7 @@ type fakeSystem struct {
 	calls    []string        // service calls in order
 	startErr error           // StartService fails with it
 	notOwned map[string]bool // base names OwnedByAdmins says an ordinary user owns
+	busy     bool            // PortInUse says yes
 }
 
 func newFake() *fakeSystem {
@@ -65,7 +66,7 @@ func (f *fakeSystem) StopService(d time.Duration) error {
 	f.calls = append(f.calls, "stop "+d.String())
 	return nil
 }
-func (f *fakeSystem) PortInUse(string) bool             { return false }
+func (f *fakeSystem) PortInUse(string) bool             { return f.busy }
 func (f *fakeSystem) Listening(string) bool             { return false }
 func (f *fakeSystem) DeleteAfterExit(string) error      { return f.delErr }
 func (f *fakeSystem) WaitExit(int, time.Duration) error { return nil }
@@ -358,7 +359,7 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 		kept, gone []string
 	}{
 		{"fresh", []string{"planted.txt", "sub"}, false, []string{"config.yaml", "pdb-print.log"}, []string{"session.key", "pair-code.txt", "planted.txt", "sub"}},
-		{"planted config", []string{"config.yaml"}, false, []string{"pdb-print.log"}, []string{"config.yaml", "session.key"}},
+		{"planted config", []string{"config.yaml"}, false, []string{"pdb-print.log"}, []string{"session.key"}}, // config: an empty one
 		{"reinstall", []string{"planted.txt"}, true, []string{"config.yaml", "session.key", "pair-code.txt", "planted.txt"}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,6 +387,9 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 					t.Errorf("%s kept", n)
 				}
 			}
+			if b, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); tt.name == "planted config" && len(b) != 0 {
+				t.Errorf("planted config kept: %q", b)
+			}
 			if !tt.hadService && !strings.Contains(out.String(), "not made by an administrator") {
 				t.Errorf("no notice:\n%s", out.String())
 			}
@@ -407,6 +411,102 @@ func TestInstallServiceRemovesLinks(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "session.lnk")); err == nil || !strings.Contains(out.String(), "session.lnk: a link") {
 		t.Errorf("link kept (%v):\n%s", err, out.String())
+	}
+}
+
+// A fresh service install with no per-user install to take over still leaves a config for `service run --config`.
+func TestInstallServiceWritesEmptyConfig(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(l.Config); err != nil || len(b) != 0 {
+		t.Errorf("config %q %v", b, err)
+	}
+	if _, err := config.Load(l.Config, true); err != nil {
+		t.Errorf("empty config doesn't load: %v", err)
+	}
+}
+
+// A config dir an ordinary user made, a link or a file is moved aside, never re-ACL'd in place; a new
+// one is created. One administrators own stays (and is cleaned on a first install).
+func TestInstallServiceMovesUntrustedDirAside(t *testing.T) {
+	for _, tt := range []struct {
+		name, why string
+		make      func(t *testing.T, dir string)
+	}{
+		{"not owned", "not made by an administrator", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o777)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o666)
+		}},
+		{"link", "is a link", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Skip("no symlinks here:", err)
+			}
+		}},
+		{"file", "not a folder", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			os.WriteFile(dir, []byte("x"), 0o666)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			sys.notOwned = map[string]bool{"pdb-print": tt.name == "not owned"}
+			dir := filepath.Dir(LayoutFor(Service, e).Config)
+			tt.make(t, dir)
+			var out strings.Builder
+			l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			aside, _ := filepath.Glob(dir + ".untrusted.*")
+			if len(aside) != 1 || !strings.Contains(out.String(), "Moved "+dir+" aside to "+aside[0]) || !strings.Contains(out.String(), tt.why) {
+				t.Errorf("aside %v:\n%s", aside, out.String())
+			}
+			fi, err := os.Lstat(dir)
+			if err != nil || !fi.IsDir() || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+				t.Fatalf("new dir %v %v", fi, err)
+			}
+			if b, err := os.ReadFile(l.Config); err != nil || len(b) != 0 { // the planted config stays aside
+				t.Errorf("config %q %v", b, err)
+			}
+		})
+	}
+	t.Run("admin owned", func(t *testing.T) {
+		sys, e := newFake(), testEnv(t)
+		l := LayoutFor(Service, e)
+		os.MkdirAll(filepath.Dir(l.Config), 0o777)
+		os.WriteFile(l.Config, []byte("log_level: debug\n"), 0o600)
+		var out strings.Builder
+		if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
+			t.Fatal(err)
+		}
+		if aside, _ := filepath.Glob(filepath.Dir(l.Config) + ".untrusted.*"); len(aside) != 0 || strings.Contains(out.String(), "aside") {
+			t.Errorf("moved aside: %v\n%s", aside, out.String())
+		}
+		if b, _ := os.ReadFile(l.Config); string(b) != "log_level: debug\n" {
+			t.Errorf("config %q", b)
+		}
+	})
+}
+
+// Port 8631 held by another program: refused before anything changes; a service that doesn't come up names the log.
+func TestInstallServicePortAndStart(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	sys.busy = true
+	l := LayoutFor(Service, e)
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "port 8631 is in use") {
+		t.Errorf("busy port: %v", err)
+	}
+	if exists(l.ProgramDir) || exists(filepath.Dir(l.Config)) || len(sys.calls) != 0 {
+		t.Errorf("changed things: %v", sys.calls)
+	}
+	sys.busy, sys.startErr = false, errors.New("it stopped")
+	_, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+	if !errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "didn't start (it stopped); see "+filepath.Join(filepath.Dir(l.Config), "pdb-print.log")) {
+		t.Errorf("start failure: %v", err)
 	}
 }
 
@@ -629,6 +729,28 @@ func TestInstalled(t *testing.T) {
 	got, ok, _ := Installed(sys, e)
 	if !ok || got.Mode != PerUser || got.ProgramDir != l.ProgramDir || got.Exe != l.Exe {
 		t.Errorf("got %+v, %v", got, ok)
+	}
+}
+
+func TestModeOf(t *testing.T) {
+	e := testEnv(t)
+	for _, tt := range []struct {
+		exe string
+		m   Mode
+		ok  bool
+	}{
+		{LayoutFor(Service, e).Exe, Service, true},
+		{strings.ToUpper(LayoutFor(Service, e).Exe), Service, true},
+		{LayoutFor(PerUser, e).ExeW, PerUser, true},
+		{filepath.Join(e.LocalAppData, "Downloads", "pdb-print.exe"), PerUser, false},
+		{LayoutFor(Service, e).ProgramDir + "-old" + string(filepath.Separator) + "pdb-print.exe", PerUser, false},
+	} {
+		if m, ok := ModeOf(tt.exe, e); m != tt.m || ok != tt.ok {
+			t.Errorf("%s: %v %v, want %v %v", tt.exe, m, ok, tt.m, tt.ok)
+		}
+	}
+	if _, ok := ModeOf(`pdb-print.exe`, Env{}); ok { // no folders known: never a match
+		t.Error("empty env matched")
 	}
 }
 

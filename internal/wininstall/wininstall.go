@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	name     = "pdb-print"
-	exeName  = "pdb-print.exe"
-	exeWName = "pdb-printw.exe"
-	uiURL    = "http://127.0.0.1:8631"
+	name      = "pdb-print"
+	exeName   = "pdb-print.exe"
+	exeWName  = "pdb-printw.exe"
+	agentAddr = "127.0.0.1:8631"
+	uiURL     = "http://" + agentAddr
 )
 
 // ErrNotWindows is returned by the System on non-Windows platforms.
@@ -164,18 +165,12 @@ func Install(sys System, o Options) (l Layout, err error) {
 				}
 			}()
 		}
+		if sys.PortInUse(agentAddr) { // not our (now stopped) service, nor the per-user agent the caller stopped
+			return l, errors.New("port 8631 is in use by another program: stop it and run the install again")
+		}
 		// before any file goes in it: ProgramData lets every user create files (a planted session.key)
-		dir := filepath.Dir(l.Config)
-		if err := MkdirAdminOnly(dir); err != nil {
-			return l, fmt.Errorf("create %s: %w", dir, err)
-		}
-		if err := notLink(dir); err != nil { // swapped for a link before the ACL reset
+		if err := readyConfigDir(sys, filepath.Dir(l.Config), hadService, o.Out); err != nil {
 			return l, err
-		}
-		if !hadService {
-			if err := cleanConfigDir(sys, dir, o.Out); err != nil {
-				return l, err
-			}
 		}
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
@@ -210,6 +205,11 @@ func Install(sys System, o Options) (l Layout, err error) {
 		if err := takeOver(sys, o, l.Config); err != nil {
 			return l, err
 		}
+		if _, err := os.Stat(l.Config); errors.Is(err, os.ErrNotExist) { // service run --config needs one
+			if err := WriteAdminOnly(l.Config, nil); err != nil {
+				return l, fmt.Errorf("write config: %w", err)
+			}
+		}
 	}
 	if o.NoSelfUpdate { // before the agent starts, so it reads the new value
 		if err := disableSelfUpdate(l.Config); err != nil {
@@ -222,7 +222,8 @@ func Install(sys System, o Options) (l Layout, err error) {
 			return l, fmt.Errorf("install service: %w", err)
 		}
 		if err := sys.StartService(); err != nil {
-			return l, fmt.Errorf("%w: %v", ErrNotStarted, err)
+			return l, fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s", ErrNotStarted, err,
+				filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
 		}
 		return l, nil
 	}
@@ -266,6 +267,60 @@ func cleanConfigDir(sys System, dir string, out io.Writer) error {
 				return fmt.Errorf("remove %s: %w", p, err)
 			}
 		}
+	}
+	return nil
+}
+
+// readyConfigDir makes dir the service's admin-only config dir. One an ordinary user made, or a link,
+// is moved aside rather than re-ACL'd in place (its maker may hold a handle to it and swap it later),
+// and a new one is created with the ACL. A first install also cleans an admin-owned one (cleanConfigDir).
+func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) error {
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return createConfigDir(dir)
+	} else if err != nil {
+		return err
+	}
+	why := ""
+	switch {
+	case isReparse(fi): // before the owner: that check follows links
+		why = "it is a link"
+	case !fi.IsDir():
+		why = "it is not a folder"
+	default:
+		owned, err := sys.OwnedByAdmins(dir)
+		if err != nil {
+			return fmt.Errorf("owner of %s: %w", dir, err)
+		} else if !owned {
+			why = "it was not made by an administrator"
+		}
+	}
+	if why != "" {
+		aside := fmt.Sprintf("%s.untrusted.%d", dir, time.Now().Unix())
+		if err := os.Rename(dir, aside); err != nil {
+			return fmt.Errorf("%s can't be used (%s) or moved aside: %w (another user may have it open: sign them out or restart Windows, then run the install again)", dir, why, err)
+		}
+		if out != nil {
+			fmt.Fprintf(out, "Moved %s aside to %s: %s.\n", dir, aside, why)
+		}
+		return createConfigDir(dir)
+	}
+	if err := MkdirAdminOnly(dir); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if !hadService {
+		return cleanConfigDir(sys, dir, out)
+	}
+	return nil
+}
+
+// createConfigDir creates dir admin-only; one that exists already was made by someone else meanwhile.
+func createConfigDir(dir string) error {
+	err := createAdminOnly(dir)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s was created by someone else while the install ran: run the install again", dir)
+	} else if err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
 	}
 	return nil
 }
@@ -533,19 +588,37 @@ func DeleteLaterCmdLine(path string) string {
 // dir taken from its uninstall entry.
 func Installed(sys System, e Env) (Layout, bool, error) {
 	for _, m := range []Mode{PerUser, Service} {
-		en, ok, err := sys.ReadUninstall(m)
-		if err != nil { // can't tell: don't report "not installed"
-			return Layout{}, false, fmt.Errorf("read uninstall entry: %w", err)
-		}
-		if ok && en.InstallLocation != "" {
-			l := LayoutFor(m, e)
-			l.ProgramDir = en.InstallLocation
-			l.Exe = filepath.Join(l.ProgramDir, exeName)
-			l.ExeW = filepath.Join(l.ProgramDir, exeWName)
-			return l, true, nil
+		if l, ok, err := InstalledAs(sys, m, e); err != nil || ok {
+			return l, ok, err
 		}
 	}
 	return Layout{}, false, nil
+}
+
+// InstalledAs reports whether mode m is installed, with the program dir taken from its uninstall entry.
+func InstalledAs(sys System, m Mode, e Env) (Layout, bool, error) {
+	en, ok, err := sys.ReadUninstall(m)
+	if err != nil { // can't tell: don't report "not installed"
+		return Layout{}, false, fmt.Errorf("read uninstall entry: %w", err)
+	}
+	if !ok || en.InstallLocation == "" {
+		return Layout{}, false, nil
+	}
+	l := LayoutFor(m, e)
+	l.ProgramDir = en.InstallLocation
+	l.Exe = filepath.Join(l.ProgramDir, exeName)
+	l.ExeW = filepath.Join(l.ProgramDir, exeWName)
+	return l, true, nil
+}
+
+// ModeOf reports which mode's program dir exe is in (false: neither, e.g. a copy run from a zip).
+func ModeOf(exe string, e Env) (Mode, bool) {
+	for _, m := range []Mode{Service, PerUser} {
+		if d := LayoutFor(m, e).ProgramDir; filepath.IsAbs(d) && within(exe, d) {
+			return m, true
+		}
+	}
+	return PerUser, false
 }
 
 // listening reports whether something accepts TCP connections on addr.

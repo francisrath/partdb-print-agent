@@ -144,7 +144,8 @@ func (osSystem) InstallService(exe string, args []string) error {
 		return err
 	}
 	defer m.Disconnect()
-	c := mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic}
+	c := mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic,
+		ErrorControl: mgr.ErrorNormal} // mgr's default is ERROR_IGNORE
 	s, err := m.OpenService(name)
 	if err == nil {
 		if err := resetConfig(s, exe, args, c.Description); err != nil {
@@ -155,6 +156,11 @@ func (osSystem) InstallService(exe string, args []string) error {
 		return err
 	}
 	defer s.Close()
+	// at system shutdown a print in progress may finish: serve waits up to 2 min (default: 10 s)
+	pre := uint32(serviceStopWait.Milliseconds()) // SERVICE_PRESHUTDOWN_INFO
+	if err := windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_PRESHUTDOWN_INFO, (*byte)(unsafe.Pointer(&pre))); err != nil {
+		return err
+	}
 	r := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: 5 * time.Second}
 	if err := s.SetRecoveryActions([]mgr.RecoveryAction{r, r, r}, 86400); err != nil {
 		return err
@@ -163,7 +169,8 @@ func (osSystem) InstallService(exe string, args []string) error {
 }
 
 // resetConfig gives an existing service what CreateService gives a new one: own process, automatic
-// start (not delayed), normal error control, LocalSystem, no dependencies, the command line, names.
+// start (not delayed), normal error control, no load-order group, LocalSystem, no dependencies, the
+// command line, names.
 // (mgr's UpdateConfig can't clear dependencies.)
 func resetConfig(s *mgr.Service, exe string, args []string, desc string) error {
 	cmd := syscall.EscapeArg(exe) // as CreateService builds it
@@ -179,7 +186,7 @@ func resetConfig(s *mgr.Service, exe string, args []string, desc string) error {
 	}
 	noDeps := []uint16{0, 0}
 	if err := windows.ChangeServiceConfig(s.Handle, windows.SERVICE_WIN32_OWN_PROCESS, windows.SERVICE_AUTO_START,
-		windows.SERVICE_ERROR_NORMAL, p[0], nil, nil, &noDeps[0], p[1], p[2], p[3]); err != nil {
+		windows.SERVICE_ERROR_NORMAL, p[0], p[2], nil, &noDeps[0], p[1], p[2], p[3]); err != nil { // "" clears; nil keeps
 		return err
 	}
 	d, err := windows.UTF16PtrFromString(desc)
@@ -212,8 +219,27 @@ func (osSystem) RemoveService() error {
 	return withService(func(s *mgr.Service) error { return s.Delete() })
 }
 
+// StartService starts the service and waits (up to 15 s) until it reports Running.
 func (osSystem) StartService() error {
-	return withService(func(s *mgr.Service) error { return s.Start() })
+	return withService(func(s *mgr.Service) error {
+		if err := s.Start(); err != nil {
+			return err
+		}
+		for end := time.Now().Add(15 * time.Second); ; {
+			st, err := s.Query()
+			switch {
+			case err != nil:
+				return err
+			case st.State == svc.Running:
+				return nil
+			case st.State == svc.Stopped:
+				return errors.New("it stopped")
+			case time.Now().After(end):
+				return errors.New("not running after 15 s")
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
 }
 
 func (osSystem) StopService(timeout time.Duration) error {
@@ -305,7 +331,10 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	return nil
 }
 
-func (osSystem) OwnedByAdmins(path string) (bool, error) {
+func (osSystem) OwnedByAdmins(path string) (bool, error) { return OwnedByAdmins(path) }
+
+// OwnedByAdmins reports whether path (a link followed) is owned by Administrators or SYSTEM.
+func OwnedByAdmins(path string) (bool, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return false, err
@@ -330,12 +359,9 @@ func isAddrInUse(err error) bool {
 // inside; nothing from the parent.
 const adminOnlyDir = "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
 
-// MkdirAdminOnly creates dir with an ACL of Administrators + SYSTEM only (set at creation, so no
-// other user can get a file into it first), or resets an existing dir's owner and ACL to that.
-func MkdirAdminOnly(dir string) error {
-	if err := notLink(dir); err != nil {
-		return err
-	}
+// createAdminOnly creates dir (not its parents' ACL) with an ACL of Administrators + SYSTEM only, set
+// at creation, so no other user can get a file into it first. It fails if dir exists (os.ErrExist).
+func createAdminOnly(dir string) error {
 	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
 	if err != nil {
 		return err
@@ -348,8 +374,24 @@ func MkdirAdminOnly(dir string) error {
 		return err
 	}
 	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
-	if err := windows.CreateDirectory(p, sa); !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+	if err := windows.CreateDirectory(p, sa); err != nil {
+		return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+	}
+	return nil
+}
+
+// MkdirAdminOnly creates dir as createAdminOnly does, or resets an existing dir's owner and ACL to
+// that. Reset only a dir administrators own: its maker may hold a handle to it.
+func MkdirAdminOnly(dir string) error {
+	if err := notLink(dir); err != nil {
+		return err
+	}
+	if err := createAdminOnly(dir); !errors.Is(err, os.ErrExist) {
 		return err // nil: created with the ACL
+	}
+	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
+	if err != nil {
+		return err
 	}
 	owner, _, err := sd.Owner()
 	if err != nil {
@@ -362,7 +404,7 @@ func MkdirAdminOnly(dir string) error {
 	err = windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-		return fmt.Errorf("can't take over %s (made by another user without access for administrators): delete it and run the install again", dir)
+		return fmt.Errorf(`can't take it over (no access for administrators): as administrator run takeown /f "%[1]s" /r /d y and icacls "%[1]s" /reset /t, then delete it and run the install again`, dir)
 	}
 	return err
 }

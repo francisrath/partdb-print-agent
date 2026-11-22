@@ -35,6 +35,14 @@ func (osSystem) OwnedByAdmins(string) (bool, error)      { return false, ErrNotW
 
 func isReparse(fi os.FileInfo) bool { return fi.Mode()&os.ModeSymlink != 0 }
 
+// createAdminOnly creates dir (and its parents) for its owner only; it fails if dir exists.
+func createAdminOnly(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	return os.Mkdir(dir, 0o700)
+}
+
 // MkdirAdminOnly creates dir (and its parents) for its owner only, or resets an existing one to that.
 func MkdirAdminOnly(dir string) error {
 	if err := notLink(dir); err != nil {
