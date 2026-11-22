@@ -41,3 +41,8 @@ document.querySelectorAll('[data-token-page]').forEach((b) => {
     window.open(base + b.dataset.tokenPage, '_blank', 'noopener');
   });
 });
+
+// Steps that search for printers take up to 30 s: show it on the button that started one.
+const busy = (el) => { el.textContent = el.dataset.busy; el.classList.add('busy'); el.setAttribute('aria-busy', 'true'); };
+document.querySelectorAll('a[data-busy]').forEach((a) => a.addEventListener('click', () => busy(a)));
+document.addEventListener('submit', (e) => { if (!e.defaultPrevented && e.submitter && e.submitter.dataset.busy) busy(e.submitter); });

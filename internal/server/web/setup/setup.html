@@ -38,12 +38,12 @@ in Part-DB, click your user name (top right) → User settings → API tokens, a
 <form method="post" action="/setup/partdb">
   {{template "csrf" .}}
   <label>Part-DB address <input name="base_url" value="{{.BaseURL}}" placeholder="https://partdb.example.org" required autofocus></label>
-  <p><button type="button" class="secondary" data-token-page="/en/user/api_token/create">Create a token in Part-DB</button>
-  <span class="muted">opens Part-DB in a new tab: choose “Read only”, create it, copy it here</span></p>
   <label>API token <input name="token" type="password" autocomplete="off" required></label>
+  <p class="hint muted">No token yet? <button type="button" class="link" data-token-page="/en/user/api_token/create">Create one in Part-DB</button>
+  (new tab): choose “Read only”, then paste it here.</p>
   <label class="check"><span><input type="checkbox" name="allow_http"{{if .AllowHTTP}} checked{{end}}> Allow plain http
   <span class="muted">(only for a Part-DB without https on your own network)</span></span></label>
-  <div class="nav">{{if .Local}}<a class="button secondary" href="/?manual">Set up by hand</a>{{else}}<span></span>{{end}}<button>Next</button></div>
+  <div class="nav">{{if .Local}}<a class="button secondary" href="/?manual">Set up by hand</a>{{else}}<span></span>{{end}}<button data-busy="Searching for printers…">Next</button></div>
 </form>
 {{template "setup-bottom" .}}{{end}}
 
@@ -76,11 +76,11 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
 <form method="post" action="/setup/printer/probe" class="inline-form">
   {{template "csrf" .}}
   <label>Not listed? Printer's IP address <input name="ip" placeholder="192.168.1.50" inputmode="decimal"></label>
-  <button class="secondary">Look there</button>
+  <button class="secondary" data-busy="Looking…">Look there</button>
 </form>
 <div class="nav">
   <a class="button secondary" href="/setup/partdb?edit=1">Back</a>
-  <span><a class="button secondary" href="/setup/printer?rescan=1">Search again</a>
+  <span><a class="button secondary" href="/setup/printer?rescan=1" data-busy="Searching…">Search again</a>
   {{if .Rows}}<button form="pick">Next</button>{{end}}</span>
 </div>
 {{template "setup-bottom" .}}{{end}}

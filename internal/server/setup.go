@@ -198,8 +198,11 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	var scanErr, bleNote string
 	if !d.Scanned || r.URL.Query().Get("rescan") != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		start := time.Now()
 		cs, note, err := s.discover(ctx, "")
 		cancel()
+		s.Log.Info("setup: printer search", "subnets", fmt.Sprint(discovery.LocalSubnets()), "found", len(cs),
+			"took", time.Since(start).Round(time.Millisecond), "bluetooth", note, "err", err)
 		if err != nil && len(cs) == 0 {
 			scanErr = err.Error()
 		}
