@@ -107,10 +107,36 @@ jobs:
           if compgen -G 'dist/*darwin*' >/dev/null; then exit 1; fi # macOS is built by packaging-darwin
           grep -q 'Depends: init-system-helpers, poppler-utils' <<<"$(dpkg-deb -I dist/pdb-print_*_armhf.deb)"
           grep -q 'Depends: init-system-helpers$' <<<"$(dpkg-deb -I dist/pdb-print_*_arm64.deb)"
-          zip=$(unzip -l dist/pdb-print_*_windows_amd64.zip)
-          grep -q ' try-printer.cmd$' <<<"$zip"
-          grep -q ' TRY.md$' <<<"$zip"
+          if compgen -G 'dist/*windows*' >/dev/null; then exit 1; fi # Windows is built by packaging-windows
           if grep -q try-printer <<<"$(tar tzf dist/pdb-print_*_linux_amd64.tar.gz)"; then exit 1; fi
+
+  # the Windows release half (.goreleaser-windows.yaml plus setup.exe), as release.yml's release-windows
+  # job runs it
+  packaging-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: build packages
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --snapshot --clean --skip=publish --config .goreleaser-windows.yaml
+      - name: build setup.exe
+        run: scripts/windows-setup.sh
+      - name: check packages
+        run: |
+          zip=$(unzip -l dist/pdb-print_*_windows_amd64.zip)
+          for f in pdb-print.exe pdb-printw.exe try-printer.cmd TRY.md; do grep -q " $f$" <<<"$zip"; done
+          setup=$(ls dist/pdb-print_*_windows_amd64_setup.exe)
+          [ "$(grep -c . dist/checksums-windows.txt)" = 2 ]
+          (cd dist && sha256sum -c checksums-windows.txt)
+          file "$setup" | grep -q 'PE32 executable (GUI)'
 
   # the macOS release half (.goreleaser-darwin.yaml), as release.yml's release-darwin job runs it
   packaging-darwin:

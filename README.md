@@ -81,10 +81,13 @@ brew install --cask pdb-print
 ```
 The macOS binaries are signed with a Developer ID and notarised by Apple.
 
-**Windows:** download the `windows_amd64` zip from the
-[releases page](https://github.com/francisrath/pdb-print/releases), unzip it and double-click
-`pdb-print.exe`, then answer the question with Enter. Or run `pdb-print install` in a terminal
-(`--quiet` skips opening the web UI). It installs for your user only (no admin needed) into
+**Windows:** download `pdb-print_…_windows_amd64_setup.exe` from the
+[releases page](https://github.com/francisrath/pdb-print/releases) and run it; choose "Install for me
+only" (no admin needed) or "for all users" (the Windows service below). Or download the
+`windows_amd64` zip, unzip it and double-click `pdb-print.exe`, then answer the question with Enter;
+or run `pdb-print install` in a terminal (`--quiet` skips opening the web UI). Silently:
+`setup.exe /VERYSILENT` for your user, `setup.exe /VERYSILENT /ALLUSERS` (as administrator) for the
+service, `/NOSELFUPDATE` to turn self-update off. It installs for your user only (no admin needed) into
 `%LOCALAPPDATA%\Programs\pdb-print`, starts at login without a window and adds the web UI to the
 Start menu. Its log is in `%LOCALAPPDATA%\pdb-print\pdb-print.log`. To remove it: Settings → Apps →
 pdb-print, or `pdb-print uninstall` (`--purge` also deletes the config in `%AppData%\pdb-print`).
@@ -92,7 +95,7 @@ Until releases are signed, SmartScreen warns about the download and the first st
 "Run anyway".
 
 **Windows service:** for labels printed while nobody is logged in, or a PC several people share, run
-`pdb-print install --service` in a terminal opened as administrator. It installs into
+setup.exe "for all users", or `pdb-print install --service` in a terminal opened as administrator. It installs into
 `%ProgramFiles%\pdb-print` and runs as the Windows service `pdb-print`, started with Windows. Config
 and log are in `%ProgramData%\pdb-print` (`config.yaml`, `pdb-print.log`), readable by administrators
 only. It replaces your per-user install and copies its config; a Part-DB token kept in your keychain
