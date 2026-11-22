@@ -542,6 +542,17 @@ func TestQuitLoopbackWithHeaderOnly(t *testing.T) {
 	}
 }
 
+func TestQuitNotOfferedWithoutQuit(t *testing.T) {
+	h := newHarness(t) // Quit unset, as serve leaves it outside Windows
+	w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+		r.RemoteAddr = "127.0.0.1:50000"
+		r.Header.Set("X-PDB-Print", "1")
+	})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+}
+
 func btoi(b bool) int {
 	if b {
 		return 1

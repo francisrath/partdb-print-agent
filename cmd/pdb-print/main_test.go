@@ -22,6 +22,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/blecore"
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/discovery"
+	"github.com/francisrath/pdb-print/internal/logfile"
 	"github.com/francisrath/pdb-print/internal/server"
 	"github.com/francisrath/pdb-print/internal/transport/bt"
 	"github.com/francisrath/pdb-print/internal/wininstall"
@@ -531,6 +532,8 @@ func (f *fakeSys) RemoveService() error            { return nil }
 func (f *fakeSys) StartService() error             { return nil }
 func (f *fakeSys) StopService(time.Duration) error { return nil }
 func (f *fakeSys) PortInUse(string) bool           { return f.portBusy }
+func (f *fakeSys) Listening(string) bool           { return f.portBusy }
+func (f *fakeSys) DeleteAfterExit(string) error    { return nil }
 func (f *fakeSys) Spawn(string, ...string) error   { f.spawns++; f.portBusy = true; return nil }
 func (f *fakeSys) WaitExit(pid int, timeout time.Duration) error {
 	f.waited, f.waitTimeout = append(f.waited, pid), timeout
@@ -667,6 +670,67 @@ func TestInstallAndUninstall(t *testing.T) {
 	}
 	if _, err := os.Stat(l.ProgramDir); !os.IsNotExist(err) || w.quits != 2 || len(w.sys.waited) != 2 || len(w.sys.unin) != 0 {
 		t.Errorf("uninstall: %v, %d quits, waited %v, entries %v", err, w.quits, w.sys.waited, w.sys.unin)
+	}
+}
+
+func TestUninstallNotInstalled(t *testing.T) {
+	w := fakeWindows(t)
+	w.sys.portBusy = true // a copy running from a zip
+	out, err := runOut("uninstall")
+	if err != nil || out != "pdb-print is not installed.\n" || w.quits != 0 {
+		t.Errorf("%v, %d quits:\n%s", err, w.quits, out)
+	}
+}
+
+// Started from Settings → Apps: the window stays open until Enter.
+func TestUninstallFromSettingsWaits(t *testing.T) {
+	fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	startedByExplorer = func() bool { return true }
+	stub[io.Reader](t, &stdin, strings.NewReader("\n"))
+	out, err := runOut("uninstall")
+	if err != nil || !strings.Contains(out, "pdb-print is uninstalled.") || !strings.HasSuffix(out, "Press Enter to close.") {
+		t.Errorf("%v:\n%s", err, out)
+	}
+	out, _ = runOut("uninstall")
+	if !strings.HasPrefix(out, "pdb-print is not installed.") || !strings.HasSuffix(out, "Press Enter to close.") {
+		t.Errorf("again:\n%s", out)
+	}
+}
+
+func TestInstallAsAdminWarns(t *testing.T) {
+	w := fakeWindows(t)
+	t.Setenv("USERNAME", "jdoe")
+	w.sys.admin = true
+	out, err := runOut("install", "--quiet")
+	if err != nil || !strings.HasPrefix(out, "Installing for jdoe (this window runs as administrator).\n") || w.sys.spawns != 1 {
+		t.Errorf("%v, %d spawns:\n%s", err, w.sys.spawns, out)
+	}
+	w.sys.admin = false
+	if out, _ := runOut("install", "--quiet"); strings.Contains(out, "administrator") {
+		t.Errorf("warned without admin:\n%s", out)
+	}
+}
+
+func TestLogWriter(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", dir)
+	for _, tc := range []struct {
+		goos, gui string
+		file      bool
+	}{{"windows", "1", true}, {"windows", "", false}, {"linux", "1", false}} {
+		stub(t, &goos, tc.goos)
+		stub(t, &gui, tc.gui)
+		w := logWriter()
+		lf, ok := w.(*logfile.Writer)
+		if ok != tc.file || (!ok && w != io.Writer(os.Stderr)) {
+			t.Errorf("%s gui=%q: %T", tc.goos, tc.gui, w)
+		}
+		if ok && (lf.Path != filepath.Join(dir, "pdb-print", "pdb-print.log") || lf.Max != 10<<20) {
+			t.Errorf("file %s, max %d", lf.Path, lf.Max)
+		}
 	}
 }
 
@@ -827,7 +891,7 @@ func TestStopAgentWithoutPID(t *testing.T) {
 	stub(t, &exitWait, 5*time.Millisecond)
 	w.sys.portBusy, n = true, 1<<30
 	err := stopAgent(context.Background(), sys)
-	if err == nil || !strings.Contains(err.Error(), "was asked to stop but is still running; end it in Task Manager (pdb-printw.exe)") {
+	if err == nil || !strings.Contains(err.Error(), "was asked to stop but is still running; end it in Task Manager (pdb-printw.exe or pdb-print.exe)") {
 		t.Errorf("never frees: %v", err)
 	}
 }

@@ -34,6 +34,8 @@ func (f *fakeSystem) RemoveService() error                  { f.service = false;
 func (f *fakeSystem) StartService() error                   { return nil }
 func (f *fakeSystem) StopService(time.Duration) error       { return nil }
 func (f *fakeSystem) PortInUse(string) bool                 { return false }
+func (f *fakeSystem) Listening(string) bool                 { return false }
+func (f *fakeSystem) DeleteAfterExit(string) error          { return nil }
 func (f *fakeSystem) WaitExit(int, time.Duration) error     { return nil }
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
@@ -114,7 +116,7 @@ func TestInstallPerUser(t *testing.T) {
 		t.Errorf("run = %q, want %q", got, want)
 	}
 	en := sys.unin[PerUser]
-	if en.DisplayVersion != "1.2.3" || en.UninstallString != Quote(l.Exe)+" uninstall" || en.InstallLocation != l.ProgramDir {
+	if en.DisplayVersion != "1.2.3" || en.UninstallString != Quote(l.Exe)+" uninstall" || en.InstallLocation != l.ProgramDir || en.DisplayIcon != l.Exe {
 		t.Errorf("entry = %+v", en)
 	}
 	b, err := os.ReadFile(l.StartMenuLink)
@@ -210,7 +212,8 @@ func TestInstallFromProgramDir(t *testing.T) {
 func TestInstallMissingGUIExe(t *testing.T) {
 	self := fakeSelf(t)
 	os.Remove(filepath.Join(filepath.Dir(self), "pdb-printw.exe"))
-	if _, err := Install(newFake(), Options{Mode: PerUser, Self: self, Env: testEnv(t)}); err == nil || !strings.Contains(err.Error(), "pdb-printw.exe") {
+	if _, err := Install(newFake(), Options{Mode: PerUser, Self: self, Env: testEnv(t)}); err == nil ||
+		!strings.Contains(err.Error(), "pdb-printw.exe not found") || !strings.Contains(err.Error(), "extract the whole zip first") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -284,6 +287,30 @@ func TestPortInUse(t *testing.T) {
 	}
 	if portInUse("not-an-address") {
 		t.Error("malformed address reported in use")
+	}
+}
+
+func TestListening(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if !listening(addr) {
+		t.Error("listening port not seen")
+	}
+	ln.Close()
+	if listening(addr) {
+		t.Error("closed port seen as listening")
+	}
+}
+
+func TestDeleteLaterCmdLine(t *testing.T) {
+	const f = `C:\Users\Jöhn Doe\AppData\Local\Programs\pdb-print.exe.pdb-print.old.7`
+	want := `cmd.exe /d /c for /l %i in (1,1,600) do @(ping -n 2 127.0.0.1 >nul & del /f /q "` + f +
+		`" >nul 2>&1 & if not exist "` + f + `" exit)`
+	if got := DeleteLaterCmdLine(f); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
 

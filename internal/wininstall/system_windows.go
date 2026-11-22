@@ -5,7 +5,9 @@ package wininstall
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -65,7 +67,7 @@ func (osSystem) WriteUninstall(m Mode, e Entry) error {
 	defer k.Close()
 	for n, v := range map[string]string{
 		"DisplayName": e.DisplayName, "DisplayVersion": e.DisplayVersion, "Publisher": e.Publisher,
-		"InstallLocation": e.InstallLocation, "UninstallString": e.UninstallString,
+		"InstallLocation": e.InstallLocation, "UninstallString": e.UninstallString, "DisplayIcon": e.DisplayIcon,
 	} {
 		if err := k.SetStringValue(n, v); err != nil {
 			return err
@@ -88,7 +90,7 @@ func (osSystem) ReadUninstall(m Mode) (Entry, bool, error) {
 	}
 	defer k.Close()
 	get := func(n string) string { s, _, _ := k.GetStringValue(n); return s }
-	return Entry{get("DisplayName"), get("DisplayVersion"), get("Publisher"), get("InstallLocation"), get("UninstallString")}, true, nil
+	return Entry{get("DisplayName"), get("DisplayVersion"), get("Publisher"), get("InstallLocation"), get("UninstallString"), get("DisplayIcon")}, true, nil
 }
 
 func (osSystem) DeleteUninstall(m Mode) error {
@@ -100,19 +102,25 @@ func (osSystem) DeleteUninstall(m Mode) error {
 
 func connect() (*mgr.Mgr, error) { return mgr.Connect() }
 
+// ServiceExists asks with the least rights there are, so it works without admin
+// (mgr.Connect and OpenService ask for all access and are denied to normal users).
 func (osSystem) ServiceExists() (bool, error) {
-	m, err := connect()
+	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return false, err
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(name)
+	defer windows.CloseServiceHandle(m)
+	n, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return false, err
+	}
+	s, err := windows.OpenService(m, n, windows.SERVICE_QUERY_STATUS)
 	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return false, nil
 	} else if err != nil {
 		return false, err
 	}
-	s.Close()
+	windows.CloseServiceHandle(s)
 	return true, nil
 }
 
@@ -176,11 +184,40 @@ func (osSystem) StopService(timeout time.Duration) error {
 }
 
 func (osSystem) Spawn(exe string, args ...string) error {
-	c := exec.Command(exe, args...)
-	c.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
+	return startDetached(func() *exec.Cmd {
+		c := exec.Command(exe, args...)
+		c.Dir = filepath.Dir(exe) // not the installer's folder, which the user may want to delete
+		c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
+		return c
+	})
+}
+
+func (osSystem) DeleteAfterExit(path string) error {
+	comspec := os.Getenv("ComSpec")
+	if comspec == "" {
+		comspec = filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
 	}
+	return startDetached(func() *exec.Cmd {
+		c := exec.Command(comspec)
+		c.Dir = filepath.Dir(path) // the folder that holds it, not the one being removed
+		c.SysProcAttr = &syscall.SysProcAttr{CmdLine: DeleteLaterCmdLine(path), CreationFlags: windows.CREATE_NO_WINDOW}
+		return c
+	})
+}
+
+// startDetached starts newCmd() outside our job object, so it survives the job closing (an
+// OpenSSH session kills its job on logout). A job that forbids breakaway denies the start; then
+// it starts inside the job.
+func startDetached(newCmd func() *exec.Cmd) error {
+	err := start(newCmd(), windows.CREATE_BREAKAWAY_FROM_JOB)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		err = start(newCmd(), 0)
+	}
+	return err
+}
+
+func start(c *exec.Cmd, flags uint32) error {
+	c.SysProcAttr.CreationFlags |= flags
 	if err := c.Start(); err != nil {
 		return err
 	}
@@ -188,6 +225,7 @@ func (osSystem) Spawn(exe string, args ...string) error {
 }
 
 func (osSystem) PortInUse(addr string) bool { return portInUse(addr) }
+func (osSystem) Listening(addr string) bool { return listening(addr) }
 
 func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))

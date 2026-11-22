@@ -77,7 +77,9 @@ func LayoutFor(m Mode, e Env) Layout {
 }
 
 // Entry is the "Apps & features" uninstall entry.
-type Entry struct{ DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString string }
+type Entry struct {
+	DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, DisplayIcon string
+}
 
 // System is everything that touches the registry, services and processes.
 type System interface {
@@ -92,8 +94,14 @@ type System interface {
 	RemoveService() error
 	StartService() error
 	StopService(timeout time.Duration) error
-	Spawn(exe string, args ...string) error // detached, no window
+	Spawn(exe string, args ...string) error // detached, no window, cwd = exe's dir
+	// PortInUse reports whether addr can't be bound: use it to see that a port is free.
 	PortInUse(addr string) bool
+	// Listening reports whether something accepts connections on addr (a dial, never a bind,
+	// so it can't take the port from an agent that is starting).
+	Listening(addr string) bool
+	// DeleteAfterExit deletes path once this process has exited (a busy exe), in the background.
+	DeleteAfterExit(path string) error
 	// WaitExit waits until process pid has exited; one that doesn't exist has.
 	WaitExit(pid int, timeout time.Duration) error
 }
@@ -129,7 +137,8 @@ func Install(sys System, o Options) (Layout, error) {
 	}
 	selfW := filepath.Join(filepath.Dir(o.Self), exeWName)
 	if _, err := os.Stat(selfW); err != nil {
-		return l, fmt.Errorf("%s not found next to %s: %w", exeWName, o.Self, err)
+		return l, fmt.Errorf("%s not found next to %s (extract the whole zip first, then run %s from the extracted folder): %w",
+			exeWName, o.Self, exeName, err)
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
 		return l, fmt.Errorf("create program dir: %w", err)
@@ -148,6 +157,7 @@ func Install(sys System, o Options) (Layout, error) {
 		Publisher:       name,
 		InstallLocation: l.ProgramDir,
 		UninstallString: Quote(l.Exe) + " uninstall",
+		DisplayIcon:     l.Exe,
 	})
 	if err != nil {
 		return l, fmt.Errorf("write uninstall entry: %w", err)
@@ -277,8 +287,12 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if err := os.Remove(l.StartMenuLink); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Start menu link: %w", err)
 	}
-	if err := removeDir(l.ProgramDir); err != nil {
+	aside, err := removeDir(l.ProgramDir)
+	if err != nil {
 		return fmt.Errorf("remove program dir: %w", err)
+	}
+	for _, p := range aside {
+		_ = sys.DeleteAfterExit(p) // best effort: cleanupOld on a later install is the fallback
 	}
 	if purge {
 		if err := os.RemoveAll(filepath.Dir(l.Config)); err != nil {
@@ -293,10 +307,10 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 
 // removeDir deletes dir. A running exe cannot be deleted on Windows but can be
 // renamed, so on failure each busy file is moved next to dir (same volume, unlike
-// %TEMP%) as <file>.pdb-print.old.<n>; cleanupOld removes it on a later install.
-func removeDir(dir string) error {
+// %TEMP%) as <file>.pdb-print.old.<n>, and returned so they can be deleted once free.
+func removeDir(dir string) (aside []string, err error) {
 	if err := os.RemoveAll(dir); err == nil || os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 	files, _ := os.ReadDir(dir)
 	for _, f := range files {
@@ -304,12 +318,21 @@ func removeDir(dir string) error {
 		if os.Remove(p) == nil {
 			continue
 		}
-		aside := filepath.Join(filepath.Dir(dir), fmt.Sprintf("%s.%s.old.%d", f.Name(), name, time.Now().UnixNano()))
-		if err := os.Rename(p, aside); err != nil {
-			return err
+		a := filepath.Join(filepath.Dir(dir), fmt.Sprintf("%s.%s.old.%d", f.Name(), name, time.Now().UnixNano()))
+		if err := os.Rename(p, a); err != nil {
+			return aside, err
 		}
+		aside = append(aside, a)
 	}
-	return os.RemoveAll(dir)
+	return aside, os.RemoveAll(dir)
+}
+
+// DeleteLaterCmdLine is the cmd.exe command line that deletes path once it is no longer busy:
+// it retries every second for up to 10 minutes, as the uninstall window may wait for Enter first.
+func DeleteLaterCmdLine(path string) string {
+	q := `"` + path + `"`
+	return `cmd.exe /d /c for /l %i in (1,1,600) do @(ping -n 2 127.0.0.1 >nul & del /f /q ` + q +
+		` >nul 2>&1 & if not exist ` + q + ` exit)`
 }
 
 // Installed reports which mode is installed (per-user first), with the program
@@ -325,6 +348,16 @@ func Installed(sys System, e Env) (Layout, bool) {
 		}
 	}
 	return Layout{}, false
+}
+
+// listening reports whether something accepts TCP connections on addr.
+func listening(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
 
 // portInUse reports whether addr is already bound. Other listen errors

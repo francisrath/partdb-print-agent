@@ -166,7 +166,7 @@ func hint(v string) string {
 	case "brew":
 		return "brew upgrade --cask pdb-print"
 	case "zip":
-		return "download pdb-print_" + v + "_windows_amd64.zip from the release page and double-click pdb-print.exe in it (that updates the install)"
+		return "download pdb-print_" + v + "_windows_amd64.zip from the release page, extract it and double-click pdb-print.exe to install or update"
 	case "docker":
 		return "pull the new image (ghcr.io/francisrath/pdb-print:" + v + ") and recreate the container"
 	case "deb":

@@ -62,8 +62,11 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	} else if ok {
 		return errors.New("pdb-print is installed as a service: uninstall that first (pdb-print uninstall, as administrator)")
 	}
+	if sys.IsAdmin() {
+		fmt.Fprintf(out, "Installing for %s (this window runs as administrator).\n", os.Getenv("USERNAME"))
+	}
 	stopped := false
-	if sys.PortInUse(agentAddr) {
+	if sys.Listening(agentAddr) {
 		if _, ok := wininstall.Installed(sys, env); !ok {
 			return errors.New("port 8631 is in use: another pdb-print (or another program) is running; stop it and run install again")
 		}
@@ -101,7 +104,21 @@ func install(sys wininstall.System, env wininstall.Env, quiet, noSelfUpdate bool
 		Self: self, Version: appVersion(), Env: env})
 }
 
+// uninstallCmd: started from Settings → Apps, its console window would close before the result
+// can be read, so it then waits for Enter.
 func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
+	err := uninstall(ctx, args, out)
+	if startedByExplorer() {
+		if err != nil {
+			fmt.Fprintln(out, "error:", err)
+		}
+		fmt.Fprint(out, "Press Enter to close.")
+		bufio.NewReader(stdin).ReadString('\n')
+	}
+	return err
+}
+
+func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	purge := fs.Bool("purge", false, "also delete the config")
 	if _, err := parse(fs, args); err != nil {
@@ -111,14 +128,16 @@ func uninstallCmd(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print uninstall works only on Windows")
 	}
 	sys, env := newSystem(), envFromOS()
-	mode := wininstall.PerUser
-	if l, ok := wininstall.Installed(sys, env); ok {
-		mode = l.Mode
+	l, ok := wininstall.Installed(sys, env)
+	if !ok { // a copy running from a zip is not ours to stop
+		fmt.Fprintln(out, "pdb-print is not installed.")
+		return nil
 	}
+	mode := l.Mode
 	if mode == wininstall.Service && !sys.IsAdmin() {
 		return errors.New("pdb-print is installed as a service: run it as administrator")
 	}
-	if sys.PortInUse(agentAddr) {
+	if sys.Listening(agentAddr) {
 		if err := stopAgent(ctx, sys); err != nil {
 			return err
 		}
@@ -141,7 +160,7 @@ func stopAgent(ctx context.Context, sys wininstall.System) error {
 	if err != nil {
 		return fmt.Errorf("port 8631 is in use and pdb-print couldn't stop it: %w (end it in Task Manager, then try again)", err)
 	}
-	const still = "the pdb-print on port 8631 was asked to stop but is still running; end it in Task Manager (pdb-printw.exe) and try again"
+	const still = "the pdb-print on port 8631 was asked to stop but is still running; end it in Task Manager (pdb-printw.exe or pdb-print.exe) and try again"
 	portLimit := startWait
 	if pid == 0 { // no pid in the reply: the port going free is all we can wait for
 		portLimit = exitWait
@@ -154,10 +173,15 @@ func stopAgent(ctx context.Context, sys wininstall.System) error {
 	return nil
 }
 
-// waitPort polls until agentAddr is busy (or free), at most timeout.
+// waitPort polls until agentAddr is busy (or free), at most timeout. Busy is a dial, not a bind,
+// which could take the port from the agent that is starting.
 func waitPort(sys wininstall.System, busy bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for sys.PortInUse(agentAddr) != busy {
+	check := func() bool { return !sys.PortInUse(agentAddr) }
+	if busy {
+		check = func() bool { return sys.Listening(agentAddr) }
+	}
+	for !check() {
 		if time.Now().After(deadline) {
 			return false
 		}

@@ -151,8 +151,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
 	mux.HandleFunc("POST /v1/pair", s.pairAPI)
 	mux.HandleFunc("POST /v1/quit", func(w http.ResponseWriter, r *http.Request) {
-		if s.Quit == nil {
-			http.Error(w, "quit not available", http.StatusServiceUnavailable)
+		if s.Quit == nil { // only offered on Windows
+			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

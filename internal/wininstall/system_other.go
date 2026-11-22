@@ -10,7 +10,7 @@ import (
 
 type osSystem struct{}
 
-// NewSystem returns the real System; on this platform every method but PortInUse fails.
+// NewSystem returns the real System; on this platform every method but PortInUse and Listening fails.
 func NewSystem() System { return osSystem{} }
 
 func (osSystem) IsAdmin() bool                           { return false }
@@ -26,6 +26,8 @@ func (osSystem) StartService() error                     { return ErrNotWindows 
 func (osSystem) StopService(time.Duration) error         { return ErrNotWindows }
 func (osSystem) Spawn(string, ...string) error           { return ErrNotWindows }
 func (osSystem) PortInUse(addr string) bool              { return portInUse(addr) }
+func (osSystem) Listening(addr string) bool              { return listening(addr) }
+func (osSystem) DeleteAfterExit(string) error            { return ErrNotWindows }
 func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows }
 
 func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
