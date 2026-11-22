@@ -576,6 +576,10 @@ func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no code file configured", http.StatusInternalServerError)
 		return
 	}
+	if s.PairLoopback && !s.pairRequested(r) { // or any local user could open windows and guess codes
+		http.Error(w, "run pdb-print pair as administrator", http.StatusForbidden)
+		return
+	}
 	code, expires, err := s.Window.OpenOrCurrent(time.Now())
 	if errors.Is(err, errTooSoon) {
 		http.Error(w, err.Error(), http.StatusTooManyRequests)
@@ -595,6 +599,21 @@ func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("setup window opened", "code", code, "urls", urls, "until", expires.Format("15:04"))
 	writeJSON(w, map[string]any{"code": code, "urls": urls, "expires": expires})
+}
+
+// PairRequestHeader carries the nonce from PairRequestFile with POST /v1/pair.
+const PairRequestHeader = "X-PDB-Pair-Request"
+
+// pairRequested reports whether r carries the nonce in PairRequestFile, which only an administrator
+// can write. The file is removed on a match, so each nonce opens (or shows) one window.
+func (s *Server) pairRequested(r *http.Request) bool {
+	want, err := os.ReadFile(s.PairRequestFile)
+	if err != nil || len(want) == 0 {
+		return false
+	}
+	got := r.Header.Get(PairRequestHeader)
+	// whoever removes the file wins: a nonce can't be used twice, even by requests at the same time
+	return subtle.ConstantTimeCompare([]byte(got), want) == 1 && os.Remove(s.PairRequestFile) == nil
 }
 
 // loopbackRemote reports whether a request came from this machine.

@@ -29,6 +29,14 @@ func (s *Server) sessionKey(create bool) ([]byte, error) {
 	s.keyMu.Lock()
 	defer s.keyMu.Unlock()
 	key, err := os.ReadFile(s.SessionKeyFile)
+	if err == nil && keyOwnerOK != nil { // (session_windows.go) a key someone else planted signs nothing; a new one replaces it
+		if ok, oerr := keyOwnerOK(s.SessionKeyFile); !ok {
+			s.badKeyOnce.Do(func() {
+				s.Log.Warn("session key not owned by Administrators or SYSTEM: ignored", "file", s.SessionKeyFile, "err", oerr)
+			})
+			key, err = nil, fmt.Errorf("%s: not owned by Administrators or SYSTEM: %w", s.SessionKeyFile, os.ErrNotExist)
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) && create {
 		key = make([]byte, 32)
 		if _, err = rand.Read(key); err == nil {

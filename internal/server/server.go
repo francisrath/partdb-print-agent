@@ -85,10 +85,14 @@ type Server struct {
 	// answering it. Both are set before Handler.
 	PairLoopback bool
 	PairCodeFile string
+	// PairRequestFile (PairLoopback): /v1/pair opens a window only for a request that carries, in
+	// the PairRequestHeader, the nonce `pdb-print pair` wrote there (admin-only): proof of admin.
+	PairRequestFile string
 	// SessionKeyFile holds the secret that signs PairLoopback's long-lived sessions (created on first
 	// pairing, admin-only); deleting it signs every browser out.
 	SessionKeyFile string
 	keyMu          sync.Mutex // creating the session key
+	badKeyOnce     sync.Once  // logs an untrusted key file once
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr

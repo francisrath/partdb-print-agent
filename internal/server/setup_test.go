@@ -565,8 +565,19 @@ func pairLoopbackHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	h.srv.PairLoopback = true
 	h.srv.SessionKeyFile = filepath.Join(t.TempDir(), "session.key")
+	h.srv.PairRequestFile = filepath.Join(t.TempDir(), "pair-request")
 	h.h = h.srv.Handler()
 	return h
+}
+
+// pairRequest writes a nonce to the request file, as `pdb-print pair` does, and returns a request
+// option that sends it.
+func pairRequest(t *testing.T, h *harness, nonce string) func(*http.Request) {
+	t.Helper()
+	if err := os.WriteFile(h.srv.PairRequestFile, []byte(nonce), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return func(r *http.Request) { r.Header.Set(PairRequestHeader, nonce) }
 }
 
 func fromLoopback(r *http.Request) { r.RemoteAddr = "127.0.0.1:50000" }
@@ -627,6 +638,36 @@ func pairLoopback(t *testing.T, h *harness) *http.Cookie {
 	}
 	t.Fatalf("no session cookie: %v", w.Result().Cookies())
 	return nil
+}
+
+// A session key file not owned by Administrators/SYSTEM (planted) signs nothing: its cookies are
+// refused, and the next pairing replaces it.
+func TestPairLoopbackUntrustedKey(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	cookie := pairLoopback(t, h)
+	withCookie := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := h.do("GET", "/", nil, fromLoopback, withCookie); w.Code != http.StatusOK {
+		t.Fatalf("paired: %d", w.Code)
+	}
+	owned := false
+	oldCheck := keyOwnerOK
+	keyOwnerOK = func(string) (bool, error) { return owned, nil }
+	t.Cleanup(func() { keyOwnerOK = oldCheck })
+	if w := h.do("GET", "/", nil, fromLoopback, withCookie); w.Code != http.StatusSeeOther {
+		t.Errorf("planted key accepted: %d", w.Code)
+	}
+	old, _ := os.ReadFile(h.srv.SessionKeyFile)
+	fresh := pairLoopback(t, h) // replaces the key
+	if b, _ := os.ReadFile(h.srv.SessionKeyFile); len(b) != 32 || string(b) == string(old) {
+		t.Errorf("key not replaced")
+	}
+	owned = true
+	if w := h.do("GET", "/", nil, fromLoopback, func(r *http.Request) { r.AddCookie(fresh) }); w.Code != http.StatusOK {
+		t.Errorf("new session: %d", w.Code)
+	}
+	if w := h.do("GET", "/", nil, fromLoopback, withCookie); w.Code != http.StatusSeeOther {
+		t.Errorf("old cookie after the key changed: %d", w.Code)
+	}
 }
 
 func TestPairLoopbackPairs(t *testing.T) {
@@ -736,7 +777,11 @@ func TestNoLongSessionByDefault(t *testing.T) {
 // pairCode posts /v1/pair and returns the code (from the reply or its code file) and the expiry.
 func pairCode(t *testing.T, h *harness) (string, time.Time) {
 	t.Helper()
-	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	opts := []func(*http.Request){fromLoopback}
+	if h.srv.PairLoopback {
+		opts = append(opts, pairRequest(t, h, randomHex(32)))
+	}
+	w := h.do("POST", "/v1/pair", url.Values{}, opts...)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -810,7 +855,7 @@ func TestPairAPIOncePerMinute(t *testing.T) {
 func TestPairCodeFile(t *testing.T) {
 	h := pairLoopbackHarness(t)
 	h.srv.PairCodeFile = filepath.Join(t.TempDir(), "pair-code.txt")
-	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback, pairRequest(t, h, "ab12"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -847,6 +892,40 @@ func TestDefaultLoopbackUnchanged(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res["code"] == nil || res["code_file"] != nil {
 		t.Errorf("pair reply %s: %v", w.Body, err)
 	}
+}
+
+// Under PairLoopback only an administrator opens a window: the request needs the nonce from the
+// admin-only request file, once.
+func TestPairLoopbackNeedsRequest(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	h.srv.PairCodeFile = filepath.Join(t.TempDir(), "pair-code.txt")
+	refused := func(what string, opts ...func(*http.Request)) {
+		t.Helper()
+		w := h.do("POST", "/v1/pair", url.Values{}, append([]func(*http.Request){fromLoopback}, opts...)...)
+		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "run pdb-print pair as administrator") {
+			t.Errorf("%s: %d %s", what, w.Code, w.Body)
+		}
+		if h.srv.Window.IsOpen(time.Now()) {
+			t.Fatalf("%s: window opened", what)
+		}
+	}
+	refused("no request file")
+	refused("no file, empty header", func(r *http.Request) { r.Header.Set(PairRequestHeader, "") })
+	pairRequest(t, h, "c0ffee")
+	refused("no header")
+	refused("wrong nonce", func(r *http.Request) { r.Header.Set(PairRequestHeader, "c0ffef") })
+	ok := func(r *http.Request) { r.Header.Set(PairRequestHeader, "c0ffee") }
+	if w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback, ok); w.Code != http.StatusOK {
+		t.Fatalf("right nonce: %d %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(h.srv.PairRequestFile); !os.IsNotExist(err) {
+		t.Errorf("request file kept: %v", err)
+	}
+	h.srv.Window.Close()
+	h.srv.Window.mu.Lock()
+	h.srv.Window.opened = h.srv.Window.opened.Add(-windowEvery) // not the once-a-minute limit
+	h.srv.Window.mu.Unlock()
+	refused("nonce used twice", ok)
 }
 
 func TestPairLoopbackNeedsCodeFile(t *testing.T) {
