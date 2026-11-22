@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,16 +27,23 @@ const (
 var exes = []string{"pdb-print.exe", "pdb-printw.exe"}
 
 type Updater struct {
-	Base    string       // "" = the GitHub releases download URL
-	Client  *http.Client // nil = 5 min timeout
-	Dir     string       // program dir holding pdb-print.exe and pdb-printw.exe
-	Quiesce func(ctx context.Context) (release func(), err error)
-	Restart func() error // per-user: spawn the new pdb-printw serve; service: os.Exit(3)
+	Base    string                                                // "" = the GitHub releases download URL
+	Client  *http.Client                                          // nil = 5 min timeout
+	Dir     string                                                // program dir holding pdb-print.exe and pdb-printw.exe
+	Quiesce func(ctx context.Context) (release func(), err error) // required
+	// Restart is required and runs while jobs are still held back. On success it does not return (the
+	// process exits); if it returns an error the jobs are released and the error is passed on.
+	Restart func() error
+
+	create func(path string) (*os.File, error) // tests: a failing target; nil = create new, exclusive
 }
 
 // Apply installs release version: download, verify, extract outside Dir, then swap under Quiesce.
-// Restart runs once, after a successful swap.
+// Restart runs once, after a successful swap and before the jobs are released.
 func (u *Updater) Apply(ctx context.Context, version string) error {
+	if u.Quiesce == nil || u.Restart == nil {
+		return errors.New("selfupdate: Quiesce and Restart are required")
+	}
 	base := u.Base
 	if base == "" {
 		base = defaultBase
@@ -70,25 +78,27 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	if err := extract(zf.Name(), tmp); err != nil {
-		return err
-	}
-
-	release := func() {}
-	if u.Quiesce != nil {
-		if release, err = u.Quiesce(ctx); err != nil {
-			return fmt.Errorf("waiting for running jobs: %w", err)
-		}
-	}
-	err = u.swap(tmp)
-	release()
+	fi, err := zf.Stat()
 	if err != nil {
 		return err
 	}
-	return u.Restart()
+	if err := extract(zf, fi.Size(), tmp); err != nil {
+		return err
+	}
+
+	release, err := u.Quiesce(ctx)
+	if err != nil {
+		return fmt.Errorf("waiting for running jobs: %w", err)
+	}
+	if err = u.swap(tmp); err == nil {
+		err = u.Restart()
+	}
+	release() // only reached when the swap or the restart failed, or Restart returned
+	return err
 }
 
-// swap renames each exe to .old and moves the new one in; on an error it puts the originals back.
+// swap renames each exe to .old and copies the new one in (a copy, so it gets the program dir's
+// permissions, not the temp dir's); on an error it puts the originals back.
 func (u *Updater) swap(from string) (err error) {
 	var done []string
 	defer func() {
@@ -97,8 +107,10 @@ func (u *Updater) swap(from string) (err error) {
 		}
 		for _, n := range done {
 			p := filepath.Join(u.Dir, n)
-			_ = os.Remove(p)
-			_ = os.Rename(p+".old", p)
+			if e := os.Remove(p); e != nil && !errors.Is(e, os.ErrNotExist) {
+				err = errors.Join(err, e)
+			}
+			err = errors.Join(err, os.Rename(p+".old", p))
 		}
 	}()
 	for _, n := range exes {
@@ -108,24 +120,25 @@ func (u *Updater) swap(from string) (err error) {
 			return err
 		}
 		done = append(done, n)
-		if err = move(filepath.Join(from, n), p); err != nil {
+		if err = u.copyIn(filepath.Join(from, n), p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// move renames, or copies then removes when src is on another volume. A failed copy leaves nothing at dst.
-func move(src, dst string) error {
-	if os.Rename(src, dst) == nil {
-		return nil
-	}
+// copyIn copies src to a new file dst; a failed copy leaves nothing at dst.
+func (u *Updater) copyIn(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	create := u.create
+	if create == nil {
+		create = func(p string) (*os.File, error) { return os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755) }
+	}
+	out, err := create(dst)
 	if err != nil {
 		return err
 	}
@@ -136,11 +149,8 @@ func move(src, dst string) error {
 	}
 	if err != nil {
 		_ = os.Remove(dst)
-		return err
 	}
-	_ = in.Close()
-	_ = os.Remove(src)
-	return nil
+	return err
 }
 
 func (u *Updater) get(ctx context.Context, url string) (*http.Response, error) {
@@ -204,12 +214,11 @@ func checksumFor(sums, name string) string {
 }
 
 // extract writes the exes from the zip into dir; any other entry is ignored.
-func extract(zipPath, dir string) error {
-	zr, err := zip.OpenReader(zipPath)
+func extract(r io.ReaderAt, size int64, dir string) error {
+	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return fmt.Errorf("open update zip: %w", err)
 	}
-	defer zr.Close()
 	for _, n := range exes {
 		var f *zip.File
 		for _, e := range zr.File {

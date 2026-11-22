@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,10 +36,8 @@ func fakeZip(t *testing.T) []byte {
 func sum(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
 // setup serves zip and checksums under /v1.2.3/ and returns an Updater over a dir holding old exes.
-func setup(t *testing.T, serve http.HandlerFunc) (*Updater, string, *int) {
+func setup(t *testing.T) (*Updater, string, *int) {
 	t.Helper()
-	srv := httptest.NewServer(serve)
-	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	for _, n := range []string{"pdb-print.exe", "pdb-printw.exe"} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("old"), 0o755); err != nil {
@@ -46,7 +45,9 @@ func setup(t *testing.T, serve http.HandlerFunc) (*Updater, string, *int) {
 		}
 	}
 	restarts := new(int)
-	return &Updater{Base: srv.URL, Dir: dir, Restart: func() error { *restarts++; return nil }}, dir, restarts
+	return &Updater{Dir: dir,
+		Quiesce: func(context.Context) (func(), error) { return func() {}, nil },
+		Restart: func() error { *restarts++; return nil }}, dir, restarts
 }
 
 func good(t *testing.T, checksum string) http.HandlerFunc {
@@ -77,8 +78,7 @@ func read(t *testing.T, p string) string {
 }
 
 func TestApplySwaps(t *testing.T) {
-	u, dir, restarts := setup(t, nil)
-	u.Client = nil
+	u, dir, restarts := setup(t)
 	srv := httptest.NewServer(good(t, ""))
 	defer srv.Close()
 	u.Base = srv.URL
@@ -116,7 +116,7 @@ func untouched(t *testing.T, dir string) {
 }
 
 func TestApplyBadChecksum(t *testing.T) {
-	u, dir, restarts := setup(t, nil)
+	u, dir, restarts := setup(t)
 	srv := httptest.NewServer(good(t, sum([]byte("other"))))
 	defer srv.Close()
 	u.Base = srv.URL
@@ -130,7 +130,7 @@ func TestApplyBadChecksum(t *testing.T) {
 }
 
 func TestApplyInterruptedDownload(t *testing.T) {
-	u, dir, _ := setup(t, nil)
+	u, dir, _ := setup(t)
 	zb := fakeZip(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprint(len(zb)))
@@ -146,7 +146,7 @@ func TestApplyInterruptedDownload(t *testing.T) {
 }
 
 func TestApplyRollsBack(t *testing.T) {
-	u, dir, restarts := setup(t, nil)
+	u, dir, restarts := setup(t)
 	srv := httptest.NewServer(good(t, ""))
 	defer srv.Close()
 	u.Base = srv.URL
@@ -157,6 +157,9 @@ func TestApplyRollsBack(t *testing.T) {
 	if err := u.Apply(context.Background(), ver); err == nil {
 		t.Fatal("swap of a missing exe succeeded")
 	}
+	if es, _ := os.ReadDir(dir); len(es) != 1 {
+		t.Errorf("dir has %v after rollback, want only pdb-print.exe", es)
+	}
 	if got := read(t, filepath.Join(dir, "pdb-print.exe")); got != "old" {
 		t.Errorf("pdb-print.exe = %q after rollback, want old", got)
 	}
@@ -166,7 +169,7 @@ func TestApplyRollsBack(t *testing.T) {
 }
 
 func TestApplyWaitsForPrint(t *testing.T) {
-	u, dir, _ := setup(t, nil)
+	u, dir, _ := setup(t)
 	srv := httptest.NewServer(good(t, ""))
 	defer srv.Close()
 	u.Base = srv.URL
@@ -198,13 +201,103 @@ func TestApplyWaitsForPrint(t *testing.T) {
 }
 
 func TestApplyQuiesceError(t *testing.T) {
-	u, dir, restarts := setup(t, nil)
+	u, dir, restarts := setup(t)
 	srv := httptest.NewServer(good(t, ""))
 	defer srv.Close()
 	u.Base = srv.URL
 	u.Quiesce = func(context.Context) (func(), error) { return nil, errors.New("busy") }
 	if err := u.Apply(context.Background(), ver); err == nil {
 		t.Fatal("expected error")
+	}
+	untouched(t, dir)
+	if *restarts != 0 {
+		t.Error("Restart called after a failure")
+	}
+}
+
+func TestApplyNeedsQuiesceAndRestart(t *testing.T) {
+	for _, drop := range []func(*Updater){func(u *Updater) { u.Quiesce = nil }, func(u *Updater) { u.Restart = nil }} {
+		u, _, _ := setup(t)
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }))
+		u.Base = srv.URL
+		drop(u)
+		if err := u.Apply(context.Background(), ver); err == nil {
+			t.Error("Apply without Quiesce or Restart succeeded")
+		}
+		srv.Close()
+		if hit {
+			t.Error("downloaded before checking the callbacks")
+		}
+	}
+}
+
+// Jobs stay held back until Restart is done, so none is cut off by the exit.
+func TestApplyRestartsWhileQuiesced(t *testing.T) {
+	u, _, _ := setup(t)
+	srv := httptest.NewServer(good(t, ""))
+	defer srv.Close()
+	u.Base = srv.URL
+	var mu sync.RWMutex // stands in for printing.Service's gate
+	u.Quiesce = func(context.Context) (func(), error) { mu.Lock(); return mu.Unlock, nil }
+	started := make(chan struct{})
+	u.Restart = func() error {
+		go func() { mu.RLock(); close(started); mu.RUnlock() }() // a job arriving now
+		select {
+		case <-started:
+			t.Error("a job started before Restart returned")
+		case <-time.After(50 * time.Millisecond):
+		}
+		return errors.New("restart failed")
+	}
+	if err := u.Apply(context.Background(), ver); err == nil {
+		t.Fatal("Restart's error was swallowed")
+	}
+	select {
+	case <-started: // released after Restart returned an error
+	case <-time.After(2 * time.Second):
+		t.Fatal("jobs not released after a failed Restart")
+	}
+}
+
+func TestApplyLeavesNoTempFiles(t *testing.T) {
+	for _, bad := range []bool{true, false} {
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+		t.Setenv("TMP", tmp)
+		t.Setenv("TEMP", tmp)
+		u, _, _ := setup(t)
+		sumArg := ""
+		if bad {
+			sumArg = sum([]byte("other"))
+		}
+		srv := httptest.NewServer(good(t, sumArg))
+		u.Base = srv.URL
+		err := u.Apply(context.Background(), ver)
+		srv.Close()
+		if (err != nil) != bad {
+			t.Fatalf("bad=%v: err %v", bad, err)
+		}
+		if es, _ := os.ReadDir(tmp); len(es) != 0 {
+			t.Errorf("bad=%v: temp dir holds %v", bad, es)
+		}
+	}
+}
+
+func TestApplyFailedCopyRestoresOriginals(t *testing.T) {
+	u, dir, restarts := setup(t)
+	srv := httptest.NewServer(good(t, ""))
+	defer srv.Close()
+	u.Base = srv.URL
+	u.create = func(p string) (*os.File, error) {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+		if err == nil && filepath.Base(p) == "pdb-printw.exe" {
+			f.Close() // writing to it fails
+		}
+		return f, err
+	}
+	if err := u.Apply(context.Background(), ver); err == nil {
+		t.Fatal("a failed copy was reported as success")
 	}
 	untouched(t, dir)
 	if *restarts != 0 {
