@@ -17,7 +17,7 @@ ARG INNO_SHA256=8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
 RUN curl -fsSLo /tmp/is.exe "https://github.com/jrsoftware/issrc/releases/download/${INNO_TAG}/innosetup-${INNO_VERSION}-x64.exe" \
  && echo "${INNO_SHA256}  /tmp/is.exe" | sha256sum -c - \
  && xvfb-run -a wineboot --init && wineserver -w \
- && { xvfb-run -a wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER "/DIR=C:\\inno" "/LOG=C:\\is.log"; rc=$?; wineserver -w; \
+ && { xvfb-run -a wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=C:\\inno" "/LOG=C:\\is.log"; rc=$?; wineserver -w; \
       if [ ! -f "$WINEPREFIX/drive_c/inno/ISCC.exe" ]; then echo "Inno Setup install failed (wine exit $rc):"; cat "$WINEPREFIX/drive_c/is.log" 2>/dev/null; exit 1; fi; } \
  && rm -f /tmp/is.exe "$WINEPREFIX/drive_c/is.log"
 
