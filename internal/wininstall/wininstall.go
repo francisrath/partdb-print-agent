@@ -380,17 +380,21 @@ func DeleteLaterCmdLine(path string) string {
 
 // Installed reports which mode is installed (per-user first), with the program
 // dir taken from its uninstall entry.
-func Installed(sys System, e Env) (Layout, bool) {
+func Installed(sys System, e Env) (Layout, bool, error) {
 	for _, m := range []Mode{PerUser, Service} {
-		if en, ok, err := sys.ReadUninstall(m); err == nil && ok && en.InstallLocation != "" {
+		en, ok, err := sys.ReadUninstall(m)
+		if err != nil { // can't tell: don't report "not installed"
+			return Layout{}, false, fmt.Errorf("read uninstall entry: %w", err)
+		}
+		if ok && en.InstallLocation != "" {
 			l := LayoutFor(m, e)
 			l.ProgramDir = en.InstallLocation
 			l.Exe = filepath.Join(l.ProgramDir, exeName)
 			l.ExeW = filepath.Join(l.ProgramDir, exeWName)
-			return l, true
+			return l, true, nil
 		}
 	}
-	return Layout{}, false
+	return Layout{}, false, nil
 }
 
 // listening reports whether something accepts TCP connections on addr.

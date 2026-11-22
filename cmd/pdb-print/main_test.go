@@ -519,6 +519,7 @@ type fakeSys struct {
 	waitErr                  error // WaitExit's result; nil = the process exits and frees the port
 	waited                   []int // WaitExit's pids
 	waitTimeout              time.Duration
+	readErr                  error // ReadUninstall's error
 }
 
 func (f *fakeSys) IsAdmin() bool                { return f.admin }
@@ -547,6 +548,9 @@ func (f *fakeSys) WriteUninstall(m wininstall.Mode, e wininstall.Entry) error {
 	return nil
 }
 func (f *fakeSys) ReadUninstall(m wininstall.Mode) (wininstall.Entry, bool, error) {
+	if f.readErr != nil {
+		return wininstall.Entry{}, false, f.readErr
+	}
 	e, ok := f.unin[m]
 	return e, ok, nil
 }
@@ -670,6 +674,19 @@ func TestInstallAndUninstall(t *testing.T) {
 	}
 	if _, err := os.Stat(l.ProgramDir); !os.IsNotExist(err) || w.quits != 2 || len(w.sys.waited) != 2 || len(w.sys.unin) != 0 {
 		t.Errorf("uninstall: %v, %d quits, waited %v, entries %v", err, w.quits, w.sys.waited, w.sys.unin)
+	}
+}
+
+// An uninstall entry that can't be read fails the command instead of saying "not installed".
+func TestUninstallUnreadableEntry(t *testing.T) {
+	w := fakeWindows(t)
+	if _, err := runOut("install", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	w.sys.readErr = errors.New("access denied")
+	out, err := runOut("uninstall")
+	if err == nil || strings.Contains(out, "not installed") {
+		t.Errorf("%v:\n%s", err, out)
 	}
 }
 

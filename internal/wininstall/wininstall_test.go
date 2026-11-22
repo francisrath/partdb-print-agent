@@ -401,13 +401,22 @@ func TestWithin(t *testing.T) {
 	}
 }
 
+// An entry that can't be read is an error, not "not installed".
+func TestInstalledReadError(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	sys.readErr = errors.New("access denied")
+	if _, ok, err := Installed(sys, e); err == nil || ok {
+		t.Errorf("ok=%v err=%v; want an error", ok, err)
+	}
+}
+
 func TestInstalled(t *testing.T) {
 	sys, e := newFake(), testEnv(t)
-	if _, ok := Installed(sys, e); ok {
+	if _, ok, _ := Installed(sys, e); ok {
 		t.Error("nothing installed yet")
 	}
 	l, _ := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
-	got, ok := Installed(sys, e)
+	got, ok, _ := Installed(sys, e)
 	if !ok || got.Mode != PerUser || got.ProgramDir != l.ProgramDir || got.Exe != l.Exe {
 		t.Errorf("got %+v, %v", got, ok)
 	}

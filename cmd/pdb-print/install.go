@@ -67,7 +67,11 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 	}
 	stopped := false
 	if sys.Listening(agentAddr) {
-		if _, ok := wininstall.Installed(sys, env); !ok {
+		_, ok, err := wininstall.Installed(sys, env)
+		if err != nil {
+			return err
+		}
+		if !ok {
 			return errors.New("port 8631 is in use: another pdb-print (or another program) is running; stop it and run install again")
 		}
 		if err := stopAgent(ctx, sys); err != nil {
@@ -134,7 +138,10 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 		return errors.New("pdb-print uninstall works only on Windows")
 	}
 	sys, env := newSystem(), envFromOS()
-	l, ok := wininstall.Installed(sys, env)
+	l, ok, err := wininstall.Installed(sys, env)
+	if err != nil {
+		return err
+	}
 	if !ok { // a copy running from a zip is not ours to stop
 		fmt.Fprintln(out, "pdb-print is not installed.")
 		return nil
