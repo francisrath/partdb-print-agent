@@ -677,7 +677,7 @@ func TestInstallAgentWontStop(t *testing.T) {
 	}
 	w.sys.waitErr = errors.New("timeout")
 	for _, cmd := range []string{"install", "uninstall"} {
-		if _, err := runOut(cmd); err == nil || !strings.Contains(err.Error(), "didn't stop") {
+		if _, err := runOut(cmd); err == nil || !strings.Contains(err.Error(), "was asked to stop but is still running") {
 			t.Errorf("%s: %v", cmd, err)
 		}
 	}
@@ -769,5 +769,65 @@ func TestNoSelfUpdateWritesConfig(t *testing.T) {
 	cfg, err := config.Load(wininstall.LayoutFor(wininstall.PerUser, w.env).Config, true)
 	if err != nil || cfg.SelfUpdate == nil || *cfg.SelfUpdate {
 		t.Errorf("load: %v %v", cfg, err)
+	}
+}
+
+func TestPostQuit(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		pid    int
+		ok     bool
+	}{
+		{http.StatusAccepted, `{"pid":7}`, 7, true},
+		{http.StatusAccepted, `{}`, 0, true}, // asked to quit all the same
+		{http.StatusAccepted, ``, 0, true},
+		{http.StatusForbidden, `forbidden`, 0, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.Header.Get("X-PDB-Print") != "1" {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(tc.status)
+			io.WriteString(w, tc.body)
+		}))
+		stub(t, &quitURL, srv.URL+"/v1/quit")
+		pid, err := postQuit(context.Background())
+		if pid != tc.pid || (err == nil) != tc.ok {
+			t.Errorf("%d %q: pid %d, err %v", tc.status, tc.body, pid, err)
+		}
+		srv.Close()
+	}
+}
+
+// freesAfter frees the port after n more PortInUse calls.
+type freesAfter struct {
+	*fakeSys
+	n *int
+}
+
+func (f freesAfter) PortInUse(string) bool {
+	if *f.n--; *f.n <= 0 {
+		f.portBusy = false
+	}
+	return f.portBusy
+}
+
+func TestStopAgentWithoutPID(t *testing.T) {
+	w := fakeWindows(t)
+	quitAgent = func(context.Context) (int, error) { return 0, nil }
+	stub(t, &startWait, 0) // the fallback must use the long limit, not this one
+	n := 50
+	sys := freesAfter{w.sys, &n}
+	w.sys.portBusy = true
+	if err := stopAgent(context.Background(), sys); err != nil || len(w.sys.waited) != 0 {
+		t.Errorf("err %v, WaitExit %v", err, w.sys.waited)
+	}
+	stub(t, &exitWait, 5*time.Millisecond)
+	w.sys.portBusy, n = true, 1<<30
+	err := stopAgent(context.Background(), sys)
+	if err == nil || !strings.Contains(err.Error(), "was asked to stop but is still running; end it in Task Manager (pdb-printw.exe)") {
+		t.Errorf("never frees: %v", err)
 	}
 }

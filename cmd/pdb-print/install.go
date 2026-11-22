@@ -36,6 +36,7 @@ var (
 	exitWait  = 2*time.Minute + 10*time.Second
 	portPoll  = 250 * time.Millisecond
 	startWait = 10 * time.Second // for the new agent to listen before the browser opens
+	quitURL   = "http://" + agentAddr + "/v1/quit"
 )
 
 func installCmd(ctx context.Context, args []string, out io.Writer) error {
@@ -140,11 +141,15 @@ func stopAgent(ctx context.Context, sys wininstall.System) error {
 	if err != nil {
 		return fmt.Errorf("port 8631 is in use and pdb-print couldn't stop it: %w (end it in Task Manager, then try again)", err)
 	}
-	if err := sys.WaitExit(pid, exitWait); err != nil {
-		return fmt.Errorf("the pdb-print running on port 8631 didn't stop: %w (end it in Task Manager, then try again)", err)
+	const still = "the pdb-print on port 8631 was asked to stop but is still running; end it in Task Manager (pdb-printw.exe) and try again"
+	portLimit := startWait
+	if pid == 0 { // no pid in the reply: the port going free is all we can wait for
+		portLimit = exitWait
+	} else if err := sys.WaitExit(pid, exitWait); err != nil {
+		return fmt.Errorf("%s (%w)", still, err)
 	}
-	if !waitPort(sys, false, startWait) {
-		return errors.New("the pdb-print on port 8631 has exited, but the port is still in use")
+	if !waitPort(sys, false, portLimit) {
+		return errors.New(still)
 	}
 	return nil
 }
@@ -161,10 +166,10 @@ func waitPort(sys wininstall.System, busy bool, timeout time.Duration) bool {
 	return true
 }
 
-// postQuit is POST /v1/quit and returns the agent's pid. The header makes it a request no
+// postQuit is POST /v1/quit and returns the agent's pid (0 when the reply has none). The header makes it a request no
 // web page can send without a preflight.
 func postQuit(ctx context.Context) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+agentAddr+"/v1/quit", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, quitURL, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -178,8 +183,8 @@ func postQuit(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("/v1/quit: %s", resp.Status)
 	}
 	var res struct{ PID int }
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil || res.PID <= 0 {
-		return 0, fmt.Errorf("/v1/quit: no pid in the reply (%v)", err)
+	if json.NewDecoder(resp.Body).Decode(&res) != nil || res.PID < 0 {
+		return 0, nil // it was told to quit all the same; 0 = unknown pid
 	}
 	return res.PID, nil
 }
