@@ -11,7 +11,8 @@ ID. Until SignPath Foundation has accepted the project, Windows releases are uns
 
 Only files built from this repository's source by the release workflow
 ([`.github/workflows/release.yml`](../.github/workflows/release.yml)) on GitHub Actions, from a version
-tag on `main`. Nothing built on a personal machine is signed, and no third-party programs are signed.
+tag on `main`, are signed; the workflow refuses a tag that isn't on `main`, and each signing request is
+approved by hand. Nothing built on a personal machine is signed, and no third-party programs are signed.
 
 ## Team and roles
 
@@ -33,8 +34,8 @@ pdb-print only connects to systems you set up, plus two optional services. In de
 
 - **Your Part-DB server**, at the URL you enter, to fetch labels and agent jobs.
 - **Your printers**, over the network, USB, serial or Bluetooth, as configured.
-- **GitHub**, once a day, to see whether a newer release exists (`update_check: false` turns this off;
-  nothing about your setup is sent).
+- **GitHub**, when `pdb-print serve` starts and then once a day while it runs, to see whether a newer
+  release exists (`update_check: false` turns this off; nothing about your setup is sent).
 - **Anonymous usage statistics** to `pdb-print-stats.cloudline.no`, run by the maintainer, at most once a
   week. Nothing is sent until you have made a choice in the setup wizard or the web UI, where it can be
   switched off; [docs/telemetry.md](telemetry.md) lists every field and every way to turn it off.

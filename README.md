@@ -101,7 +101,7 @@ token is kept in the config file (0600). The container has no Bluetooth.
 [releases page](https://github.com/francisrath/pdb-print/releases).
 
 **Code signing policy:** how Windows releases are signed, by whom, and what pdb-print sends where:
-[docs/code-signing.md](docs/code-signing.md).
+[docs/code-signing.md](https://github.com/francisrath/pdb-print/blob/main/docs/code-signing.md).
 
 **Raspberry Pi without the package:** use the `linux_armv6` archive on 32-bit Raspberry Pi OS (Pi 1, Zero,
 Pi 2 v1.1) or `linux_arm64` on 64-bit, install it as `/usr/local/bin/pdb-print`, and run `pdb-print serve`

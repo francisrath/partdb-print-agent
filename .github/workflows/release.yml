@@ -26,6 +26,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job publishes: don't restore a cache another run wrote
+      # docs/code-signing.md: only tags on main are released (and signed)
+      - name: tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main; releases are built only from main"
+            exit 1
+          fi
       - run: go test ./...
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -157,6 +165,14 @@ jobs:
               exit 1
             fi
           done
+          # SignPath Foundation's terms want the code signing policy on every release page; a body
+          # replaced by hand may have lost GoReleaser's footer, so add it back (keeping the notes)
+          policy='https://github.com/francisrath/pdb-print/blob/main/docs/code-signing.md'
+          body=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .body)
+          if ! grep -qF "$policy" <<<"$body"; then
+            printf '%s\n\n[Code signing policy](%s)\n' "$body" "$policy" >"$RUNNER_TEMP/notes.md"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

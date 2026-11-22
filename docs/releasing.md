@@ -3,7 +3,8 @@
 Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in two jobs.
 
 Release notes end with the [Code signing policy](code-signing.md) link (GoReleaser adds it as the footer;
-keep it when replacing the notes by hand): SignPath Foundation's terms require it on every release page.
+the publish step adds it back if notes replaced by hand lost it): SignPath Foundation's terms require it on every
+release page. Only tags on `main` are released; the workflow stops on any other tag.
 
 1. **`release`** (ubuntu, `.goreleaser.yaml`): runs the tests, builds Linux and Windows archives, the `.deb`
    packages, the Docker images (including `:latest`) and `checksums.txt`, and creates a **draft** GitHub release.
