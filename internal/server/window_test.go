@@ -508,3 +508,39 @@ func TestFinishClosesItsOwnWindow(t *testing.T) {
 		t.Error("Finish closed a window it wasn't paired in")
 	}
 }
+
+func TestQuitLoopbackWithHeaderOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name, remote, header string
+		want                 int
+	}{
+		{"ok", "127.0.0.1:50000", "1", http.StatusAccepted},
+		{"header missing", "127.0.0.1:50000", "", http.StatusForbidden},
+		{"from the LAN", "192.168.1.40:50000", "1", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			quit := 0
+			h.srv.Quit = func() { quit++ }
+			w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+				r.RemoteAddr = tc.remote
+				if tc.header != "" {
+					r.Header.Set("X-PDB-Print", tc.header)
+				}
+			})
+			if w.Code != tc.want {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if wantQuit := btoi(tc.want == http.StatusAccepted); quit != wantQuit {
+				t.Errorf("Quit called %d times, want %d", quit, wantQuit)
+			}
+		})
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

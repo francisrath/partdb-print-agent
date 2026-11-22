@@ -341,7 +341,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	ctx, quit := context.WithCancel(ctx) // POST /v1/quit: the same graceful shutdown as SIGTERM
+	defer quit()
 	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
+	srv.Quit = quit
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	if a.cfg.UpdateCheckOn() {

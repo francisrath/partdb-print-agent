@@ -77,6 +77,8 @@ type Server struct {
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
+	// Quit stops serve like SIGTERM (POST /v1/quit from `pdb-print install`/`uninstall`); nil = not offered.
+	Quit func()
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
@@ -147,6 +149,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /telemetry", s.saveTelemetry)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
 	mux.HandleFunc("POST /v1/pair", s.pairAPI)
+	mux.HandleFunc("POST /v1/quit", func(w http.ResponseWriter, r *http.Request) {
+		if s.Quit == nil {
+			http.Error(w, "quit not available", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		s.Quit() // the graceful shutdown waits for this response and in-flight prints
+	})
 	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
 		d := s.local.Draft // a fresh start
 		d.mu.Lock()
@@ -182,6 +192,13 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
 			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
 			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if r.Method == http.MethodPost && r.URL.Path == "/v1/quit" {
+			// `pdb-print install`/`uninstall` on this machine: the custom header forces a CORS
+			// preflight, which we never answer, so no web page can send it
+			if r.Header.Get("X-PDB-Print") != "1" || !loopbackRemote(r) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
