@@ -1017,3 +1017,18 @@ func TestPairLoopbackPairCommand(t *testing.T) {
 		t.Errorf("pair page mentions Docker: %s", body)
 	}
 }
+
+// The code sent twice (a double click, an old tab): a paired browser goes on to the wizard instead of a CSRF error.
+func TestPairLoopbackPairedPairAgain(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	cookie := pairLoopback(t, h)
+	withCookie := func(r *http.Request) { r.AddCookie(cookie); fromLoopback(r) }
+	w := h.do("POST", "/setup/pair", url.Values{"code": {"123456"}}, withCookie)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/setup/partdb" {
+		t.Fatalf("paired browser posting the code again: %d %q %s", w.Code, w.Header().Get("Location"), w.Body)
+	}
+	cross := func(r *http.Request) { withCookie(r); r.Header.Set("Origin", "http://evil.example") }
+	if w := h.do("POST", "/setup/pair", url.Values{"code": {"123456"}}, cross); w.Code != http.StatusForbidden {
+		t.Errorf("cross-origin pair POST: %d", w.Code)
+	}
+}

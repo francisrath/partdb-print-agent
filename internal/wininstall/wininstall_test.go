@@ -535,6 +535,11 @@ func TestInstallServicePortAndStart(t *testing.T) {
 		{"impostor on the port", false, true, "something else listens on 127.0.0.1:8631"},
 	} {
 		sys.dead, sys.stopped = tt.dead, tt.stopped
+		wait := 30 * time.Millisecond
+		if tt.dead && tt.stopped { // long, so returning early is told apart from a slow runner
+			wait = 10 * time.Second
+		}
+		serveWait = wait
 		start := time.Now()
 		_, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
 		switch {
@@ -542,7 +547,7 @@ func TestInstallServicePortAndStart(t *testing.T) {
 			t.Errorf("%s: %v", tt.name, err)
 		case tt.want != "" && (!errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), tt.want)):
 			t.Errorf("%s: %v", tt.name, err)
-		case tt.dead && tt.stopped && time.Since(start) >= 30*time.Millisecond:
+		case tt.dead && tt.stopped && time.Since(start) >= wait:
 			t.Errorf("%s: waited the whole time", tt.name)
 		}
 	}
