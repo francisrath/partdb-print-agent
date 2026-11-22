@@ -319,6 +319,11 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		in = &config.Instance{ID: env.ID, BaseURL: env.BaseURL}
 		data["FromEnv"] = true
 	}
+	if in == nil && len(cfg.Printers) == 0 && !r.URL.Query().Has("manual") {
+		// a fresh install: the step-by-step wizard, not the settings page ("?manual" still shows it)
+		http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+		return
+	}
 	if in != nil {
 		data["Instance"] = in
 		if in.PairingKey != "" {

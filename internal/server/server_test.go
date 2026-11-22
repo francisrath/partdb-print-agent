@@ -660,3 +660,21 @@ func TestJobsAreCounted(t *testing.T) {
 		t.Errorf("%+v", r)
 	}
 }
+
+// A fresh install (no Part-DB, no printer) opens the step-by-step wizard instead of the settings
+// page; "?manual" still shows the page, and the wizard links to it.
+func TestIndexFreshInstallOpensWizard(t *testing.T) {
+	h := newHarness(t)
+	h.srv.mu.Lock()
+	h.srv.cfg.Printers = nil
+	h.srv.mu.Unlock()
+	if rec := h.do("GET", "/", nil); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup/" {
+		t.Fatalf("GET / on a fresh install: %d %q, want 303 to /setup/", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := h.do("GET", "/?manual", nil); rec.Code != http.StatusOK {
+		t.Fatalf("GET /?manual: %d, want the settings page", rec.Code)
+	}
+	if body := h.do("GET", "/setup/partdb", nil).Body.String(); !strings.Contains(body, `href="/?manual"`) {
+		t.Error("the wizard's first step has no way to the settings page")
+	}
+}
