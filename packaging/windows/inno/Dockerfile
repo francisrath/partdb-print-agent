@@ -5,10 +5,9 @@
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive WINEDEBUG=-all WINEPREFIX=/opt/wine
-# wine32 too: Wine's prefix and Inno's setup loader need the 32-bit side (syswow64)
-RUN dpkg --add-architecture i386 \
- && apt-get update \
- && apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb xauth ca-certificates curl \
+# 64-bit Wine only: GitHub's runners don't run 32-bit programs ("socket: Function not implemented")
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends wine wine64 xvfb xauth ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 # The official installer, pinned by version and SHA-256 (from the GitHub release's asset digest)
