@@ -9,6 +9,9 @@ import (
 
 func TestWriteAdminOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pair-code.txt")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil { // a wider file is replaced, not reused
+		t.Fatal(err)
+	}
 	for _, data := range []string{"123456", "654321"} { // the second replaces the first
 		if err := WriteAdminOnly(path, []byte(data)); err != nil {
 			t.Fatal(err)

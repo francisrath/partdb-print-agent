@@ -5,6 +5,7 @@ package wininstall
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -33,10 +34,22 @@ func (osSystem) WaitExit(int, time.Duration) error       { return ErrNotWindows 
 
 func isAddrInUse(err error) bool { return errors.Is(err, syscall.EADDRINUSE) }
 
-// WriteAdminOnly writes data to path readable only by its owner (here: mode 0600).
+// WriteAdminOnly writes data to path readable only by its owner: a new 0600 temp file in the same
+// folder, renamed over path, so a wider existing file never holds the data and the write is atomic.
 func WriteAdminOnly(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp") // mode 0600
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600) // an existing file keeps its mode in WriteFile
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+	}
+	return err
 }

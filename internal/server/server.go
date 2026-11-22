@@ -104,12 +104,13 @@ type Server struct {
 	// Discover finds printers for the wizard (ip "" = USB, the LAN and Bluetooth); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
-	mu    sync.Mutex // guards cfg, flash, jobs, seen
-	cfg   *config.Config
-	csrf  string
-	flash *flash
-	jobs  []Job
-	seen  map[string]time.Time // used handoff signatures
+	mu          sync.Mutex // guards cfg, flash, jobs, seen
+	cfg         *config.Config
+	csrf        string
+	handoffCSRF string // the handoff page's own token: that page is open to unpaired browsers
+	flash       *flash
+	jobs        []Job
+	seen        map[string]time.Time // used handoff signatures
 }
 
 type flash struct {
@@ -128,7 +129,7 @@ type Job struct {
 
 func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Logger, addr, version string) *Server {
 	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
-		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
+		csrf: randomHex(32), handoffCSRF: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
 	s.Window.OnClose = s.kickSetup
 	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	s.finishGrace = 10 * time.Second
@@ -210,12 +211,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		securityHeaders(w)
 		paired := false // PairLoopback: the browser has a long-lived session
 		if pairLoopback {
+			get := r.Method == http.MethodGet || r.Method == http.MethodHead
 			switch {
+			case get && isAsset(r.URL.Path): // no key-file read for every stylesheet and icon
 			case s.longSession(r, time.Now()):
 				paired = true
 				r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, s.local))
 			case pairFree(r):
-			case r.Method == http.MethodGet || r.Method == http.MethodHead:
+			case get:
 				http.Redirect(w, r, "/setup/", http.StatusSeeOther)
 				return
 			default:
@@ -240,7 +243,11 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
-			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) == 1 ||
+			want := s.csrf
+			if r.URL.Path == "/v1/handoff" {
+				want = s.handoffCSRF // its page is shown without pairing: never the settings token
+			}
+			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(want)) == 1 ||
 				pairLoopback && !paired && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
 			if !originOK || !tokenOK {
 				s.Log.Warn("rejected POST", "path", r.URL.Path, "origin", origin, "origin_ok", originOK, "csrf_ok", tokenOK)
@@ -263,8 +270,13 @@ func pairFree(r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
+	return p == "/setup/" || p == "/v1/info" || p == "/v1/handoff" || isAsset(p)
+}
+
+// isAsset reports whether p is a static file or icon.
+func isAsset(p string) bool {
 	switch p {
-	case "/setup/", "/v1/info", "/v1/handoff", "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png":
+	case "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png":
 		return true
 	}
 	return strings.HasPrefix(p, "/static/")
@@ -889,7 +901,7 @@ type handoffView struct {
 }
 
 func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
-	v := handoffView{CSRF: s.csrf}
+	v := handoffView{CSRF: s.handoffCSRF}
 	defer func() {
 		if err := pages.ExecuteTemplate(w, "handoff.html", v); err != nil {
 			s.Log.Error("render handoff", "err", err)

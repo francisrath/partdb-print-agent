@@ -73,7 +73,7 @@ func (w *Window) OpenOrCurrent(now time.Time) (code string, expires time.Time, e
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch {
-	case open && w.open:
+	case open && w.open && !w.used: // a used code pairs nothing: a new window, as below
 		return w.code, w.expires, nil
 	case !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
 		return "", time.Time{}, errTooSoon
@@ -567,6 +567,11 @@ func (s *Server) checkCode(w http.ResponseWriter, r *http.Request) (*Session, bo
 // pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it
 // (or gets the one that is open).
 func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
+	if s.PairLoopback && s.PairCodeFile == "" { // the code would go to any local user
+		s.Log.Error("setup window: no code file configured; not opening")
+		http.Error(w, "no code file configured", http.StatusInternalServerError)
+		return
+	}
 	code, expires, err := s.Window.OpenOrCurrent(time.Now())
 	if errors.Is(err, errTooSoon) {
 		http.Error(w, err.Error(), http.StatusTooManyRequests)

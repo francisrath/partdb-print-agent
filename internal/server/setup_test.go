@@ -778,6 +778,15 @@ func TestPairAPIReusesOpenWindow(t *testing.T) {
 			if tries != 1 {
 				t.Errorf("tries %d after a reuse, want 1", tries)
 			}
+			if _, ok := h.srv.Window.Check(code, time.Now()); !ok { // a browser pairs: the code is used up
+				t.Fatal("code didn't pair")
+			}
+			h.srv.Window.mu.Lock()
+			h.srv.Window.opened = h.srv.Window.opened.Add(-windowEvery)
+			h.srv.Window.mu.Unlock()
+			if fresh, _ := pairCode(t, h); fresh == code {
+				t.Errorf("/v1/pair after the code was used: the same code %q", fresh)
+			}
 		})
 	}
 }
@@ -837,5 +846,40 @@ func TestDefaultLoopbackUnchanged(t *testing.T) {
 	var res map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res["code"] == nil || res["code_file"] != nil {
 		t.Errorf("pair reply %s: %v", w.Body, err)
+	}
+}
+
+func TestPairLoopbackNeedsCodeFile(t *testing.T) {
+	h := pairLoopbackHarness(t) // no PairCodeFile: the code must not go to any local user
+	w := h.do("POST", "/v1/pair", url.Values{}, fromLoopback)
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "no code file") || strings.Contains(w.Body.String(), `"code"`) {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+	if h.srv.Window.IsOpen(time.Now()) {
+		t.Error("window opened without a code file")
+	}
+}
+
+func TestHandoffOwnToken(t *testing.T) {
+	h := newHarness(t)
+	h.post("/instance", url.Values{"base_url": {h.partdb.URL}, "token": {"tcp_test"}})
+	h.post("/routes", url.Values{"profile": {"2"}, "printer": {"ql"}})
+	h.srv.PairLoopback, h.srv.SessionKeyFile = true, filepath.Join(t.TempDir(), "session.key")
+	h.h = h.srv.Handler()
+	w := h.do("GET", "/v1/handoff?src="+url.QueryEscape(h.partdb.URL)+"&type=part&ids=32&profile=2", nil) // unpaired
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Print this label?") ||
+		strings.Contains(w.Body.String(), h.srv.csrf) || !strings.Contains(w.Body.String(), h.srv.handoffCSRF) {
+		t.Fatalf("handoff page: %d, settings token shown or own token missing: %s", w.Code, w.Body)
+	}
+	if w := h.do("POST", "/v1/handoff", url.Values{"csrf": {h.srv.handoffCSRF}}); w.Code != http.StatusOK {
+		t.Errorf("handoff POST with its own token: %d %s", w.Code, w.Body)
+	}
+	if w := h.do("POST", "/v1/handoff", url.Values{"csrf": {h.srv.csrf}}); w.Code != http.StatusForbidden {
+		t.Errorf("handoff POST with the settings token: %d", w.Code)
+	}
+	cookie := pairLoopback(t, h)
+	if w := h.do("POST", "/routes", url.Values{"csrf": {h.srv.handoffCSRF}, "profile": {"2"}, "printer": {"ql"}},
+		func(r *http.Request) { r.AddCookie(cookie) }); w.Code != http.StatusForbidden {
+		t.Errorf("settings POST with the handoff token: %d", w.Code)
 	}
 }

@@ -248,7 +248,7 @@ func TestSetupRouteAndHandoff(t *testing.T) {
 	}
 
 	// the confirm button posts back with the CSRF token and prints
-	if body := h.post("/v1/handoff", url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {"32"}, "profile": {"2"}}).Body.String(); !strings.Contains(body, "Printed ✓") {
+	if body := h.do("POST", "/v1/handoff", url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {"32"}, "profile": {"2"}, "csrf": {h.srv.handoffCSRF}}).Body.String(); !strings.Contains(body, "Printed ✓") {
 		t.Fatalf("confirmed handoff:\n%s", body)
 	}
 	<-h.jobs

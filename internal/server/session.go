@@ -83,6 +83,8 @@ func (s *Server) pairLocal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "can't start the session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Cookies ignore ports: this one also goes to every other server on 127.0.0.1 (inherent to
+	// loopback). Deleting the key file revokes every session.
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: v, Path: "/", MaxAge: int(sessionLife / time.Second),
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
 	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
