@@ -58,3 +58,23 @@ document.querySelectorAll('[data-updating]').forEach((el) => {
   };
   setTimeout(poll, 2000);
 });
+
+// Copy buttons next to commands: the clipboard API needs a secure context (127.0.0.1 is one, a LAN
+// address over http isn't); without it, select the command so Ctrl+C copies it.
+document.querySelectorAll('[data-copy]').forEach((b) => {
+  b.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      b.textContent = 'Copied';
+      setTimeout(() => { b.textContent = 'Copy'; }, 2000);
+    } catch (e) {
+      const code = b.previousElementSibling;
+      const r = document.createRange();
+      r.selectNodeContents(code);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      b.textContent = 'Press Ctrl+C';
+    }
+  });
+});
