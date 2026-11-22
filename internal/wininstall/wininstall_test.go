@@ -19,16 +19,25 @@ type fakeSystem struct {
 	service bool
 	spawns  [][]string
 	uninErr error // DeleteUninstall fails with it
+	readErr error // ReadUninstall fails with it
+	writeOK int   // WriteUninstall calls that succeed before it fails (-1 = always)
 }
 
 func newFake() *fakeSystem {
-	return &fakeSystem{run: map[string]string{}, unin: map[Mode]Entry{}}
+	return &fakeSystem{run: map[string]string{}, unin: map[Mode]Entry{}, writeOK: -1}
 }
 
-func (f *fakeSystem) IsAdmin() bool                        { return true }
-func (f *fakeSystem) SetRun(n, c string) error             { f.run[n] = c; return nil }
-func (f *fakeSystem) DeleteRun(n string) error             { delete(f.run, n); return nil }
-func (f *fakeSystem) WriteUninstall(m Mode, e Entry) error { f.unin[m] = e; return nil }
+func (f *fakeSystem) IsAdmin() bool            { return true }
+func (f *fakeSystem) SetRun(n, c string) error { f.run[n] = c; return nil }
+func (f *fakeSystem) DeleteRun(n string) error { delete(f.run, n); return nil }
+func (f *fakeSystem) WriteUninstall(m Mode, e Entry) error {
+	if f.writeOK == 0 {
+		return errors.New("registry full")
+	}
+	f.writeOK--
+	f.unin[m] = e
+	return nil
+}
 func (f *fakeSystem) DeleteUninstall(m Mode) error {
 	if f.uninErr != nil {
 		return f.uninErr
@@ -50,6 +59,9 @@ func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	return nil
 }
 func (f *fakeSystem) ReadUninstall(m Mode) (Entry, bool, error) {
+	if f.readErr != nil {
+		return Entry{}, false, f.readErr
+	}
 	e, ok := f.unin[m]
 	return e, ok, nil
 }
@@ -295,6 +307,43 @@ func TestUninstallRestoresEntryWhenFilesStay(t *testing.T) {
 	}
 	if got, ok := sys.unin[PerUser]; !ok || got.UninstallString == "" || !exists(l.Exe) {
 		t.Errorf("entry restored=%v, exe kept=%v; want both", ok, exists(l.Exe))
+	}
+}
+
+// The entry can't be read: nothing is removed (it couldn't be restored later).
+func TestUninstallUnreadableEntryRemovesNothing(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.readErr = errors.New("access denied")
+	if err := Uninstall(sys, PerUser, false, e); err == nil || !strings.Contains(err.Error(), "read uninstall entry") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := sys.unin[PerUser]; !ok || !exists(l.Exe) {
+		t.Error("something was removed")
+	}
+}
+
+// Files stay and the entry can't be written back: the error says what to delete by hand.
+func TestUninstallReportsFailedRestore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory doesn't stop deletion on Windows")
+	}
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(l.ProgramDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(l.ProgramDir, 0o755) })
+	sys.writeOK = 0
+	err = Uninstall(sys, PerUser, false, e)
+	if err == nil || !strings.Contains(err.Error(), "couldn't be restored") || !strings.Contains(err.Error(), l.ProgramDir) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

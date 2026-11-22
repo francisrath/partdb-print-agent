@@ -295,7 +295,10 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	// The uninstall entry runs the exe in the program dir, so it goes before the files do: an entry
 	// must never point at a removed exe. If removing the files fails and the exe is still there, the
 	// entry comes back, so Settings → Apps can run the uninstall again.
-	entry, hadEntry, _ := sys.ReadUninstall(m)
+	entry, hadEntry, err := sys.ReadUninstall(m)
+	if err != nil {
+		return fmt.Errorf("read uninstall entry: %w", err)
+	}
 	if err := sys.DeleteUninstall(m); err != nil {
 		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
@@ -304,17 +307,33 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 		_ = os.Chdir(filepath.Dir(l.ProgramDir))
 	}
 	aside, err := removeDir(l.ProgramDir)
+	var leftover []string // files moved aside that nothing will delete
 	for _, p := range aside {
-		_ = sys.DeleteAfterExit(p) // best effort: cleanupOld on a later install is the fallback
+		if sys.DeleteAfterExit(p) != nil {
+			leftover = append(leftover, p)
+		}
 	}
 	if err != nil {
 		if _, statErr := os.Stat(l.Exe); hadEntry && statErr == nil {
-			_ = sys.WriteUninstall(m, entry)
-			return fmt.Errorf("remove program dir (run the uninstall again): %w", err)
+			if werr := sys.WriteUninstall(m, entry); werr != nil {
+				return fmt.Errorf("remove program dir: %w; and the uninstall entry couldn't be restored (%v): delete %s by hand%s", err, werr, l.ProgramDir, byHand(leftover))
+			}
+			return fmt.Errorf("remove program dir (run the uninstall again%s): %w", byHand(leftover), err)
 		}
-		return fmt.Errorf("remove program dir (delete %s by hand): %w", l.ProgramDir, err)
+		return fmt.Errorf("remove program dir (delete %s by hand%s): %w", l.ProgramDir, byHand(leftover), err)
+	}
+	if len(leftover) > 0 {
+		return fmt.Errorf("pdb-print is uninstalled, but %s could not be scheduled for deletion: delete it by hand", strings.Join(leftover, ", "))
 	}
 	return nil
+}
+
+// byHand names files the user has to delete, for an error message ("" when there are none).
+func byHand(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	return "; also delete " + strings.Join(files, ", ")
 }
 
 // removeDir deletes dir. A running exe cannot be deleted on Windows but can be

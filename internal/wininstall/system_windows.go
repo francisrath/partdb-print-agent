@@ -194,8 +194,8 @@ func (osSystem) Spawn(exe string, args ...string) error {
 }
 
 func (osSystem) DeleteAfterExit(path string) error {
-	if strings.Contains(path, "%") { // cmd would expand it; cleanupOld removes the file on a later install
-		return nil
+	if strings.Contains(path, "%") { // cmd would expand it
+		return errors.New("its path has a % in it")
 	}
 	comspec := os.Getenv("ComSpec")
 	if comspec == "" {
