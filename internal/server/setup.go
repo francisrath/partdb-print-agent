@@ -104,6 +104,7 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request, page string, 
 	}
 	data["Step"], data["CSRF"], data["D"], data["Version"] = step, sess.CSRF, sess.Draft, s.Version
 	data["Local"] = sess == s.local
+	data["Cmd"], data["Service"] = s.pairCommand(), s.PairLoopback
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pages.ExecuteTemplate(w, page, data); err != nil {
 		s.Log.Error("setup page", "page", page, "err", err)

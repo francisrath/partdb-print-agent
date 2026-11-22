@@ -164,8 +164,8 @@ print server; if it can, the printer shows up there by itself.</p>
 
 {{define "setup-finished"}}{{template "setup-top" .}}
 <h2>All set</h2>
-<p>Setup is closed. You can close this tab. To change something later, run <code>pdb-print pair</code>
-on the print server.</p>
+<p>Setup is closed. You can close this tab. To change something later, run <code>{{.Cmd}}</code>
+{{if .Service}}as administrator on this PC{{else}}on the print server{{end}}.</p>
 {{template "setup-bottom" .}}{{end}}
 
 {{define "setup-report"}}{{template "setup-top" .}}

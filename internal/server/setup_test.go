@@ -1001,3 +1001,19 @@ func TestNewCodeKeepsPairedBrowser(t *testing.T) {
 		t.Errorf("browser A after B paired: %d", w.Code)
 	}
 }
+
+// The Windows service's pair page tells an admin how to run pair there: the full path (it isn't on
+// PATH), in an administrator prompt, and no Docker hint.
+func TestPairLoopbackPairCommand(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	h.srv.PairCommand = `"C:\Program Files\pdb-print\pdb-print.exe" pair`
+	body := h.do("GET", "/setup/", nil, fromLoopback).Body.String()
+	for _, want := range []string{`&#34;C:\Program Files\pdb-print\pdb-print.exe&#34; pair`, "as administrator"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pair page lacks %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "docker") {
+		t.Errorf("pair page mentions Docker: %s", body)
+	}
+}

@@ -469,6 +469,9 @@ func (a *app) newServer(addr string, quit func()) *server.Server {
 		srv.PairCodeFile = filepath.Join(dir, "pair-code.txt")
 		srv.SessionKeyFile = filepath.Join(dir, "session.key")
 		srv.PairRequestFile = filepath.Join(dir, "pair-request")
+		if exe, err := os.Executable(); err == nil { // %ProgramFiles% isn't on PATH
+			srv.PairCommand = `"` + exe + `" pair`
+		}
 	case goos == "windows": // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
 		srv.Quit = quit
 	}

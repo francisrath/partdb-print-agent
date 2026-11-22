@@ -85,6 +85,8 @@ type Server struct {
 	// answering it. Both are set before Handler.
 	PairLoopback bool
 	PairCodeFile string
+	// PairCommand is how the pages tell people to open setup again; "" = `pdb-print pair`.
+	PairCommand string
 	// PairRequestFile (PairLoopback): /v1/pair opens a window only for a request that carries, in
 	// the PairRequestHeader, the nonce `pdb-print pair` wrote there (admin-only): proof of admin.
 	PairRequestFile string
@@ -1060,4 +1062,12 @@ func formMedia() []formMediaOption {
 		}
 	}
 	return out
+}
+
+// pairCommand is the command the pages show for opening setup again.
+func (s *Server) pairCommand() string {
+	if s.PairCommand != "" {
+		return s.PairCommand
+	}
+	return "pdb-print pair"
 }

@@ -535,7 +535,8 @@ func (s *Server) pairPage(w http.ResponseWriter, msg string, status int) {
 	mins := int(time.Until(s.Window.Expires()).Round(time.Minute) / time.Minute)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = pages.ExecuteTemplate(w, "pair.html", map[string]any{"Open": open, "Minutes": max(mins, 1), "Err": msg, "Version": s.Version})
+	_ = pages.ExecuteTemplate(w, "pair.html", map[string]any{"Open": open, "Minutes": max(mins, 1), "Err": msg, "Version": s.Version,
+		"Cmd": s.pairCommand(), "Service": s.PairLoopback})
 }
 
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
