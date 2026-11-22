@@ -5,8 +5,10 @@
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive WINEDEBUG=-all WINEPREFIX=/opt/wine
-RUN apt-get update \
- && apt-get install -y --no-install-recommends wine wine64 xvfb xauth ca-certificates curl \
+# wine32 too: Wine's prefix and Inno's setup loader need the 32-bit side (syswow64)
+RUN dpkg --add-architecture i386 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb xauth ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 # The official installer, pinned by version and SHA-256 (from the GitHub release's asset digest)
@@ -15,10 +17,10 @@ ARG INNO_TAG=is-7_1_1
 ARG INNO_SHA256=8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
 RUN curl -fsSLo /tmp/is.exe "https://github.com/jrsoftware/issrc/releases/download/${INNO_TAG}/innosetup-${INNO_VERSION}-x64.exe" \
  && echo "${INNO_SHA256}  /tmp/is.exe" | sha256sum -c - \
- && xvfb-run -a wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER "/DIR=C:\\inno" \
- && wineserver -w \
- && rm /tmp/is.exe \
- && test -f "$WINEPREFIX/drive_c/inno/ISCC.exe"
+ && xvfb-run -a wineboot --init && wineserver -w \
+ && { xvfb-run -a wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER "/DIR=C:\\inno" "/LOG=C:\\is.log"; rc=$?; wineserver -w; \
+      if [ ! -f "$WINEPREFIX/drive_c/inno/ISCC.exe" ]; then echo "Inno Setup install failed (wine exit $rc):"; cat "$WINEPREFIX/drive_c/is.log" 2>/dev/null; exit 1; fi; } \
+ && rm -f /tmp/is.exe "$WINEPREFIX/drive_c/is.log"
 
 WORKDIR /work
 ENTRYPOINT ["xvfb-run", "-a", "wine", "C:\\inno\\ISCC.exe"]
