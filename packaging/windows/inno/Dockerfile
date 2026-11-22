@@ -10,13 +10,15 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends wine wine64 xvfb xauth ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# The official installer, pinned by version and SHA-256 (from the GitHub release's asset digest)
+# The official installer, pinned by version and SHA-256 (from the GitHub release's asset digest).
+# Inno Setup 7 refuses Wine's default Windows 10 21H1, so the prefix reports Windows 11.
 ARG INNO_VERSION=7.1.1
 ARG INNO_TAG=is-7_1_1
 ARG INNO_SHA256=8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
 RUN curl -fsSLo /tmp/is.exe "https://github.com/jrsoftware/issrc/releases/download/${INNO_TAG}/innosetup-${INNO_VERSION}-x64.exe" \
  && echo "${INNO_SHA256}  /tmp/is.exe" | sha256sum -c - \
  && xvfb-run -a wineboot --init && wineserver -w \
+ && wine winecfg /v win11 && wineserver -w \
  && { xvfb-run -a wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=C:\\inno" "/LOG=C:\\is.log"; rc=$?; wineserver -w; \
       if [ ! -f "$WINEPREFIX/drive_c/inno/ISCC.exe" ]; then echo "Inno Setup install failed (wine exit $rc):"; cat "$WINEPREFIX/drive_c/is.log" 2>/dev/null; exit 1; fi; } \
  && rm -f /tmp/is.exe "$WINEPREFIX/drive_c/is.log"
