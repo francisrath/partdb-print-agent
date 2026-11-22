@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -588,6 +589,8 @@ func TestWhere(t *testing.T) {
 type fakeSys struct {
 	admin, service, portBusy bool
 	spawns                   int
+	spawned                  []string // the last Spawn's exe and args
+	spawnErr                 error
 	unin                     map[wininstall.Mode]wininstall.Entry
 	waitErr                  error // WaitExit's result; nil = the process exits and frees the port
 	waited                   []int // WaitExit's pids
@@ -612,7 +615,15 @@ func (f *fakeSys) ServiceStopped() (bool, error)      { return false, nil }
 func (f *fakeSys) Listening(string) bool              { return f.portBusy }
 func (f *fakeSys) DeleteAfterExit(string) error       { return nil }
 func (f *fakeSys) OwnedByAdmins(string) (bool, error) { return true, nil }
-func (f *fakeSys) Spawn(string, ...string) error      { f.spawns++; f.portBusy = true; return nil }
+func (f *fakeSys) Spawn(exe string, args ...string) error {
+	f.spawns++
+	f.spawned = append([]string{exe}, args...)
+	if f.spawnErr != nil {
+		return f.spawnErr
+	}
+	f.portBusy = true
+	return nil
+}
 func (f *fakeSys) WaitExit(pid int, timeout time.Duration) error {
 	f.waited, f.waitTimeout = append(f.waited, pid), timeout
 	if f.waitErr == nil {
@@ -1160,5 +1171,34 @@ func TestStopAgentWithoutPID(t *testing.T) {
 	err := stopAgent(context.Background(), sys)
 	if err == nil || !strings.Contains(err.Error(), "was asked to stop but is still running; end it in Task Manager (pdb-printw.exe or pdb-print.exe)") {
 		t.Errorf("never frees: %v", err)
+	}
+}
+
+// After an update the service exits with an error (its recovery settings start the new exe); a
+// per-user agent starts the new pdb-printw.exe, which waits for this process to exit.
+func TestSelfUpdateRestart(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pdb-print")
+	pid := strconv.Itoa(os.Getpid())
+	for _, c := range []struct {
+		name     string
+		service  bool
+		spawnErr error
+		code     int // -1 = no exit
+		spawned  string
+	}{
+		{"service", true, nil, 3, ""},
+		{"per-user", false, nil, 0, filepath.Join(dir, "pdb-printw.exe") + " --config cfg.yaml serve --wait-pid " + pid},
+		{"spawn fails", false, errors.New("denied"), -1, filepath.Join(dir, "pdb-printw.exe") + " --config cfg.yaml serve --wait-pid " + pid},
+	} {
+		sys := &fakeSys{spawnErr: c.spawnErr}
+		code := -1
+		stub(t, &exit, func(n int) { code = n })
+		err := restartInto(sys, dir, "cfg.yaml", c.service)()
+		if code != c.code || strings.Join(sys.spawned, " ") != c.spawned || (err != nil) != (c.spawnErr != nil) {
+			t.Errorf("%s: exit %d, spawned %q, err %v", c.name, code, sys.spawned, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "next start") {
+			t.Errorf("%s: %v doesn't say when the new version runs", c.name, err)
+		}
 	}
 }

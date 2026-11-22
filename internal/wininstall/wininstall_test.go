@@ -956,3 +956,23 @@ func TestInstallNoSelfUpdate(t *testing.T) {
 		t.Errorf("agent saw self_update off: %v; config %+v, %v", off, c, err)
 	}
 }
+
+func TestSyncVersion(t *testing.T) {
+	sys := newFake()
+	e := Entry{DisplayName: name, DisplayVersion: "0.2.0", Publisher: name, InstallLocation: `C:\p`, UninstallString: "u", DisplayIcon: "i"}
+	sys.unin[PerUser] = e
+	if err := SyncVersion(sys, PerUser, "0.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	want := e
+	want.DisplayVersion = "0.3.0"
+	if got := sys.unin[PerUser]; got != want {
+		t.Errorf("entry %+v, want %+v", got, want)
+	}
+	if err := SyncVersion(sys, Service, "0.3.0"); err != nil { // no entry: nothing written
+		t.Fatal(err)
+	}
+	if _, ok := sys.unin[Service]; ok {
+		t.Error("an entry was created")
+	}
+}

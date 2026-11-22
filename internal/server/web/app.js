@@ -46,3 +46,15 @@ document.querySelectorAll('[data-token-page]').forEach((b) => {
 const busy = (el) => { el.textContent = el.dataset.busy; el.classList.add('busy'); el.setAttribute('aria-busy', 'true'); };
 document.querySelectorAll('a[data-busy]').forEach((a) => a.addEventListener('click', () => busy(a)));
 document.addEventListener('submit', (e) => { if (!e.defaultPrevented && e.submitter && e.submitter.dataset.busy) busy(e.submitter); });
+
+// Update now: poll until the restarted agent reports another version, or the update has stopped (failed).
+document.querySelectorAll('[data-updating]').forEach((el) => {
+  const poll = async () => {
+    try {
+      const info = await (await fetch('/v1/info', { cache: 'no-store' })).json();
+      if (info.version !== el.dataset.updating || !info.updating) { location.replace('/?manual'); return; }
+    } catch (e) { /* restarting */ }
+    setTimeout(poll, 2000);
+  };
+  setTimeout(poll, 2000);
+});

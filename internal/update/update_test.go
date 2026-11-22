@@ -96,19 +96,19 @@ func TestRunSkipsDevBuilds(t *testing.T) {
 
 func TestInstall(t *testing.T) {
 	for _, c := range []struct {
-		goos, exe string
-		docker    bool
-		want      string
+		goos, exe         string
+		docker, installed bool
+		want              string
 	}{
-		{"darwin", "/opt/homebrew/Caskroom/pdb-print/0.2.0/pdb-print", false, "brew"},
-		{"darwin", "/usr/local/Caskroom/pdb-print/0.2.0/pdb-print", false, "brew"}, // Intel Homebrew
-		{"darwin", "/Users/me/bin/pdb-print", false, "archive"},
-		{"windows", `C:\pdb\pdb-print.exe`, false, "zip"},
-		{"linux", "/usr/bin/pdb-print", true, "docker"},
-		{"linux", "/usr/bin/pdb-print", false, "deb"},
-		{"linux", "/usr/local/bin/pdb-print", false, "archive"},
+		{"darwin", "/opt/homebrew/Caskroom/pdb-print/0.2.0/pdb-print", false, false, "brew"},
+		{"darwin", "/usr/local/Caskroom/pdb-print/0.2.0/pdb-print", false, false, "brew"}, // Intel Homebrew
+		{"darwin", "/Users/me/bin/pdb-print", false, false, "archive"},
+		{"windows", `C:\pdb\pdb-print.exe`, false, false, "zip"},
+		{"linux", "/usr/bin/pdb-print", true, false, "docker"},
+		{"linux", "/usr/bin/pdb-print", false, false, "deb"},
+		{"linux", "/usr/local/bin/pdb-print", false, false, "archive"},
 	} {
-		if got := install(c.goos, c.exe, c.docker); got != c.want {
+		if got := install(c.goos, c.exe, c.docker, c.installed); got != c.want {
 			t.Errorf("%s %s docker=%v: %s, want %s", c.goos, c.exe, c.docker, got, c.want)
 		}
 	}
@@ -116,8 +116,25 @@ func TestInstall(t *testing.T) {
 
 // Only Homebrew copies get the brew command.
 func TestHintFollowsInstall(t *testing.T) {
-	h := hint("9.9.9")
+	h := hint(Install(), "9.9.9", false)
 	if (Install() == "brew") != strings.Contains(h, "brew upgrade") {
 		t.Errorf("install %s, hint %q", Install(), h)
+	}
+}
+
+// A copy in a wininstall program dir is "windows"; it says to click the button only when it updates itself.
+func TestInstallWindows(t *testing.T) {
+	for _, c := range []struct {
+		installed, selfUpdate bool
+		install, hint         string
+	}{
+		{false, true, "zip", "extract it and double-click pdb-print.exe"},
+		{true, true, "windows", "click Update now in the web UI"},
+		{true, false, "windows", "pdb-print_0.3.0_windows_amd64_setup.exe"},
+	} {
+		got := install("windows", `C:\Users\me\AppData\Local\Programs\pdb-print\pdb-print.exe`, false, c.installed)
+		if h := hint(got, "0.3.0", c.selfUpdate); got != c.install || !strings.Contains(h, c.hint) {
+			t.Errorf("installed=%v self_update=%v: %s, %q; want %s, %q", c.installed, c.selfUpdate, got, h, c.install, c.hint)
+		}
 	}
 }

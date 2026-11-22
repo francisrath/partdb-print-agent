@@ -1,5 +1,6 @@
 // Package update tells whether a newer pdb-print release is out. It only asks GitHub for the latest
-// release's tag (no data about this agent is sent); updating stays with the user's package manager.
+// release's tag (no data about this agent is sent). An installed Windows copy updates itself from the
+// web UI (internal/selfupdate); elsewhere updating stays with the user's package manager.
 package update
 
 import (
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 const (
@@ -36,6 +39,8 @@ type Checker struct {
 	URL     string       // "" = GitHub's latest-release endpoint
 	Client  *http.Client // nil = 15 s timeout
 	Log     *slog.Logger // nil = no logging
+	// SelfUpdate: this Windows install updates itself (the web UI's Update now button).
+	SelfUpdate bool
 
 	mu     sync.Mutex
 	latest *Release
@@ -95,7 +100,7 @@ func (c *Checker) Check(ctx context.Context) (*Release, error) {
 	var rel *Release
 	if newer(r.Tag, c.Current) {
 		v := strings.TrimPrefix(r.Tag, "v")
-		rel = &Release{Version: v, URL: r.URL, Hint: hint(v)}
+		rel = &Release{Version: v, URL: r.URL, Hint: hint(Install(), v, c.SelfUpdate)}
 	}
 	c.mu.Lock()
 	c.latest = rel
@@ -137,19 +142,23 @@ func (c *Checker) Run(ctx context.Context) {
 	}
 }
 
-// Install is how this copy was installed: deb, brew, docker, zip (Windows) or archive.
+// Install is how this copy was installed: deb, brew, docker, windows (in a `pdb-print install`
+// program dir), zip (other Windows copies) or archive.
 func Install() string {
 	exe, _ := os.Executable()
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real // brew links /opt/homebrew/bin/pdb-print into its Caskroom
 	}
-	return install(runtime.GOOS, exe, fileExists("/.dockerenv"))
+	_, installed := wininstall.ModeOf(exe, wininstall.EnvFromOS())
+	return install(runtime.GOOS, exe, fileExists("/.dockerenv"), installed)
 }
 
-func install(goos, exe string, docker bool) string {
+func install(goos, exe string, docker, winInstalled bool) string {
 	switch {
 	case goos == "darwin" && strings.Contains(exe, "/Caskroom/"):
 		return "brew"
+	case goos == "windows" && winInstalled:
+		return "windows"
 	case goos == "windows":
 		return "zip"
 	case docker:
@@ -160,9 +169,14 @@ func install(goos, exe string, docker bool) string {
 	return "archive"
 }
 
-// hint says how to update this install.
-func hint(v string) string {
-	switch Install() {
+// hint says how to update an install of kind how to version v.
+func hint(how, v string, selfUpdate bool) string {
+	switch how {
+	case "windows":
+		if selfUpdate {
+			return "click Update now in the web UI"
+		}
+		return "download pdb-print_" + v + "_windows_amd64_setup.exe from the release page and run it"
 	case "brew":
 		return "brew upgrade --cask pdb-print"
 	case "zip":

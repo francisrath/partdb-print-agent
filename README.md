@@ -148,8 +148,12 @@ runs in a WebAssembly sandbox.
 **Updates:** `pdb-print serve` asks GitHub once a day for the latest release (that request only; nothing
 about your setup is sent). When a newer one is out, the web UI shows a notice with the release notes and
 how to update this install (Homebrew, the `.deb`, the Windows zip or the Docker image), and the log says
-so once. Development builds never ask; `update_check: false` in the config turns it off. pdb-print
-doesn't update itself.
+so once. Development builds never ask; `update_check: false` in the config turns it off. A Windows
+install (setup.exe or `pdb-print install`) updates itself: the notice has an **Update now** button that
+downloads the release's zip, checks it against `checksums-windows.txt`, swaps the exes once no label is
+printing and restarts; the page reloads on the new version. `self_update: false` in the config (or
+`PDB_PRINT_SELF_UPDATE=off`, or setup.exe `/NOSELFUPDATE`) turns that off and shows how to update by
+hand. Other installs don't update themselves.
 
 **Usage statistics:** `pdb-print serve` can send an anonymous usage report once a week: version, OS,
 printer models and connection types, and that week's job and label counts. No addresses, names, serial

@@ -65,7 +65,7 @@ const maxCount = 1_000_000
 var (
 	oses       = set("linux", "darwin", "windows", "freebsd", "netbsd", "openbsd")
 	arches     = set("amd64", "arm64", "arm", "386", "riscv64", "ppc64le", "s390x", "loong64")
-	installs   = set("deb", "brew", "docker", "zip", "archive")
+	installs   = set("deb", "brew", "docker", "windows", "zip", "archive")
 	renderers  = set("pdfium", "pdftoppm", "unknown")
 	transports = set("tcp", "usb", "ble", "bt", "serial")
 	jobSources = set("bookmarklet", "part-db", "hot-folder", "web-ui", "setup", "other")

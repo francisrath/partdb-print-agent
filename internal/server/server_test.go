@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/driver"
 	"github.com/francisrath/pdb-print/internal/partdb"
 	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/selfupdate"
 	"github.com/francisrath/pdb-print/internal/telemetry"
 	"github.com/francisrath/pdb-print/internal/update"
 	"github.com/zalando/go-keyring"
@@ -692,5 +694,93 @@ func TestFreshInstallFormKeepsSettingsPage(t *testing.T) {
 	}
 	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "flash") {
 		t.Error("the form's message is not on the settings page")
+	}
+}
+
+// withRelease gives h a release check that found 9.0.0 and an Updater whose downloads go to dl.
+func withRelease(t *testing.T, h *harness, dl http.HandlerFunc) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.0.0","html_url":"https://example.test/notes"}`))
+	}))
+	t.Cleanup(gh.Close)
+	h.srv.Updates = &update.Checker{Current: "0.2.0", URL: gh.URL}
+	if _, err := h.srv.Updates.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(dl)
+	t.Cleanup(srv.Close)
+	h.srv.Updater = &selfupdate.Updater{Base: srv.URL, Dir: t.TempDir(), Quiesce: h.srv.Svc.Quiesce,
+		Restart: func() error { t.Error("restarted"); return nil }}
+}
+
+func TestUpdateButtonShown(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	body := h.do("GET", "/", nil).Body.String()
+	if !strings.Contains(body, `action="/update"`) || !strings.Contains(body, "Update now") || strings.Contains(body, "To update:") {
+		t.Errorf("no Update now button: %s", body)
+	}
+}
+
+func TestUpdateButtonHiddenWhenOff(t *testing.T) {
+	off := false
+	for name, set := range map[string]func(h *harness){
+		"self_update: false": func(h *harness) { h.srv.cfg.SelfUpdate = &off },
+		"no updater":         func(h *harness) { h.srv.Updater = nil },
+	} {
+		h := newHarness(t)
+		withRelease(t, h, http.NotFound)
+		set(h)
+		body := h.do("GET", "/", nil).Body.String()
+		if strings.Contains(body, `action="/update"`) || !strings.Contains(body, "To update:") {
+			t.Errorf("%s: button shown or hint missing: %s", name, body)
+		}
+		if w := h.post("/update", nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s: POST /update: %d", name, w.Code)
+		}
+	}
+}
+
+// Review Focus 3: "Update now" in two tabs. The second request is refused and nothing is fetched twice.
+func TestUpdateTwice409(t *testing.T) {
+	h := newHarness(t)
+	unblock := make(chan struct{})
+	var mu sync.Mutex
+	gets := 0
+	withRelease(t, h, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gets++
+		mu.Unlock()
+		<-unblock
+		http.NotFound(w, r)
+	})
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("first POST: %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(h.do("GET", "/?manual", nil).Body.String(), "Updating to 9.0.0") {
+		t.Error("no running notice")
+	}
+	if w := h.post("/update", nil); w.Code != http.StatusConflict {
+		t.Errorf("second POST: %d, want 409", w.Code)
+	}
+	if w := h.do("POST", "/update", url.Values{}); w.Code != http.StatusForbidden {
+		t.Errorf("POST without CSRF token: %d", w.Code)
+	}
+	close(unblock)
+	for end := time.Now().Add(5 * time.Second); h.srv.updating.Load(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("update still running")
+		}
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "Update failed: ") {
+		t.Errorf("no failure shown: %s", body)
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") {
+		t.Error("failure shown twice")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 1 {
+		t.Errorf("%d downloads, want 1", gets)
 	}
 }

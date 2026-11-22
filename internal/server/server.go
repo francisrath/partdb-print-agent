@@ -40,6 +40,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/partdb"
 	"github.com/francisrath/pdb-print/internal/printing"
 	"github.com/francisrath/pdb-print/internal/render"
+	"github.com/francisrath/pdb-print/internal/selfupdate"
 	"github.com/francisrath/pdb-print/internal/telemetry"
 	"github.com/francisrath/pdb-print/internal/update"
 	"github.com/zalando/go-keyring"
@@ -73,7 +74,9 @@ type Server struct {
 	Log     *slog.Logger
 	Addr    string // host:port the listener is bound to (loopback)
 	Version string
-	Updates *update.Checker  // the release check; nil = none
+	Updates *update.Checker // the release check; nil = none
+	// Updater installs the release Updates found (POST /update, the Update now button); nil = not offered.
+	Updater *selfupdate.Updater
 	Stats   *telemetry.Store // usage report counters; nil = not counted
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
@@ -117,6 +120,10 @@ type Server struct {
 	flash       *flash
 	jobs        []Job
 	seen        map[string]time.Time // used handoff signatures
+	updating    atomic.Bool          // an Updater.Apply runs
+	updateWG    sync.WaitGroup       // the Apply goroutine
+	updateCtx   context.Context      // Apply's; cancelled by StopUpdate
+	updateStop  context.CancelFunc
 }
 
 type flash struct {
@@ -139,7 +146,15 @@ func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Lo
 	s.Window.OnClose = s.kickSetup
 	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	s.finishGrace = 10 * time.Second
+	s.updateCtx, s.updateStop = context.WithCancel(context.Background())
 	return s
+}
+
+// StopUpdate cancels a running update's download and waits for it, so serve never exits while
+// the exes are half swapped.
+func (s *Server) StopUpdate() {
+	s.updateStop()
+	s.updateWG.Wait()
 }
 
 func randomHex(n int) string {
@@ -154,8 +169,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]string{"name": "pdb-print", "version": s.Version})
+		// updating: the page polls this while an update runs (app.js)
+		writeJSON(w, map[string]any{"name": "pdb-print", "version": s.Version, "updating": s.updating.Load()})
 	})
+	mux.HandleFunc("POST /update", s.selfUpdate)
 	mux.HandleFunc("POST /instance", s.saveInstance)
 	mux.HandleFunc("POST /instance/rotate-key", s.rotateKey)
 	mux.HandleFunc("POST /printers", s.savePrinter)
@@ -372,6 +389,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Version": s.Version, "Addr": s.Addr, "CSRF": s.csrf, "FromEnv": false,
 		"Printers": cfg.Printers, "Models": formModels(), "Update": s.Updates.Latest(),
+		"SelfUpdate": s.selfUpdater(cfg) != nil, "Updating": s.updating.Load(),
 		// undecided installs get the box ticked: saving without touching it means yes
 		"TelemetryDecided": cfg.Telemetry != nil, "TelemetryOn": cfg.Telemetry == nil || *cfg.Telemetry,
 		"TelemetryOff": telemetryOffReason(cfg),
@@ -436,6 +454,45 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if err := pages.ExecuteTemplate(w, "index.html", data); err != nil {
 		s.Log.Error("render page", "err", err)
 	}
+}
+
+// selfUpdater is the Updater when self-update is on, else nil.
+func (s *Server) selfUpdater(cfg *config.Config) *selfupdate.Updater {
+	if !cfg.SelfUpdateOn() {
+		return nil
+	}
+	return s.Updater
+}
+
+// selfUpdate installs the newer release in the background; on success the process restarts into it,
+// and the page (app.js) reloads once /v1/info reports a new version or no update running.
+func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
+	u, rel := s.selfUpdater(s.config()), s.Updates.Latest()
+	if u == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if rel == nil {
+		s.redirect(w, r, "No newer release to update to", nil)
+		return
+	}
+	if !s.updating.CompareAndSwap(false, true) { // a second tab: never two swaps at once
+		http.Error(w, "an update is already running", http.StatusConflict)
+		return
+	}
+	s.updateWG.Add(1)
+	go func() {
+		defer s.updateWG.Done()
+		defer s.updating.Store(false)
+		s.Log.Info("updating", "to", rel.Version, "running", s.Version)
+		if err := u.Apply(s.updateCtx, rel.Version); err != nil { // returns only when it failed
+			s.Log.Error("update failed", "to", rel.Version, "err", err)
+			s.mu.Lock()
+			s.flash = &flash{Text: "Update failed: " + err.Error(), Err: true}
+			s.mu.Unlock()
+		}
+	}()
+	s.redirect(w, r, "Updating to "+rel.Version+": this page reloads when pdb-print has restarted", nil)
 }
 
 func (s *Server) saveInstance(w http.ResponseWriter, r *http.Request) {
