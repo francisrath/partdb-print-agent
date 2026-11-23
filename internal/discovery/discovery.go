@@ -342,10 +342,14 @@ func LocalSubnets() []netip.Prefix {
 	return capTo24(ps)
 }
 
-// capTo24 narrows each prefix to at most the /24 around its address (no host-wide /16 scans).
+// capTo24 narrows each prefix to at most the /24 around its address (no host-wide /16 scans) and
+// drops link-local ones (169.254/16: an adapter without DHCP, where no printer is set up).
 func capTo24(ps []netip.Prefix) []netip.Prefix {
 	var out []netip.Prefix
 	for _, p := range ps {
+		if p.Addr().IsLinkLocalUnicast() {
+			continue
+		}
 		bits := max(p.Bits(), 24)
 		q, _ := p.Addr().Prefix(bits)
 		if !slices.Contains(out, q) {

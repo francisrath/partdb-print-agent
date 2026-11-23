@@ -81,6 +81,46 @@ brew install --cask pdb-print
 ```
 The macOS binaries are signed with a Developer ID and notarised by Apple.
 
+**Windows:** download `pdb-print_…_windows_amd64_setup.exe` from the
+[releases page](https://github.com/francisrath/pdb-print/releases) and run it; choose "Install for me
+only" (no admin needed) or "for all users" (the Windows service below). Or download the
+`windows_amd64` zip, unzip it and double-click `pdb-print.exe`, then answer the question with Enter;
+or run `pdb-print install` in a terminal (`--quiet` skips opening the web UI). Silently:
+`setup.exe /VERYSILENT` for your user, `setup.exe /VERYSILENT /ALLUSERS` (as administrator) for the
+service, `/NOSELFUPDATE` to turn self-update off. It installs for your user only (no admin needed) into
+`%LOCALAPPDATA%\Programs\pdb-print`, starts at login without a window and adds the web UI to the
+Start menu. Its log is in `%LOCALAPPDATA%\pdb-print\pdb-print.log`. To remove it: Settings → Apps →
+pdb-print, or `pdb-print uninstall` (`--purge` also deletes the config in `%AppData%\pdb-print`).
+Until releases are signed, SmartScreen warns about the download and the first start: "More info" →
+"Run anyway".
+
+**Windows service:** for labels printed while nobody is logged in, or a PC several people share, run
+setup.exe "for all users", or `pdb-print install --service` in a terminal opened as administrator. It installs into
+`%ProgramFiles%\pdb-print` and runs as the Windows service `pdb-print`, started with Windows. Config
+and log are in `%ProgramData%\pdb-print` (`config.yaml`, `pdb-print.log`), readable by administrators
+only. It replaces your per-user install and copies its config; a Part-DB token kept in your keychain
+doesn't move, so enter it again in the web UI. Only the per-user install of the account you run it as
+is replaced: other accounts remove theirs from their own Settings → Apps. A folder in
+`%ProgramData%\pdb-print` that an administrator didn't make is moved aside
+(`pdb-print.untrusted.<time>`) and a new one created. The service runs as SYSTEM: `~` in
+`hot_folder.dir` is the system profile, so give an absolute path, and use a folder other users can't
+write to (the service deletes and moves the files in it). What the installer and the service write
+there is owned by Administrators; a file you put there yourself relies on Windows' default owner for
+objects administrators create ("Administrators group"): with the policy "System objects: Default owner
+for objects created by members of the Administrators group" set to "Object creator", the service
+refuses its folder. If the service doesn't start, the reason is in its log or in Event Viewer →
+Windows Logs → Application (source `pdb-print`); after a failure it restarts after 5 s, then 1 min,
+then every 5 min. The web UI asks every browser for a code: in Terminal (Admin) or PowerShell as
+administrator, run `& "C:\Program Files\pdb-print\pdb-print.exe" pair` (in Command Prompt without the
+`&`) and type the code it shows. A paired browser stays signed in for 30 days; "Sign out all browsers"
+in the web UI signs every browser out, and so does every `pdb-print install --service` (an upgrade
+too). Pairing keeps other users of the PC from casually changing the settings; it doesn't stop a
+determined local user who can run programs (one could, for example, catch the sign-in cookie while
+the service restarts). If in doubt, sign out all browsers. Any local user can still print from
+Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
+work from a service: use the per-user install for them. To remove it: Settings → Apps → pdb-print
+(it asks for administrator rights), or `pdb-print uninstall` as administrator.
+
 **Docker** (Linux amd64/arm64):
 ```sh
 docker run --rm --network host --stop-timeout 130 \
@@ -97,7 +137,7 @@ open to the network for a while: the code is in `docker logs`, and
 `docker exec <container> pdb-print pair` opens it again. In a container there is no OS keychain: the
 token is kept in the config file (0600). The container has no Bluetooth.
 
-**Anything else:** archives for macOS (universal), Linux and Windows are on the
+**Anything else:** archives for macOS (universal) and Linux are on the
 [releases page](https://github.com/francisrath/pdb-print/releases).
 
 **Code signing policy:** how Windows releases are signed, by whom, and what pdb-print sends where:

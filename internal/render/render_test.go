@@ -324,3 +324,20 @@ func TestCompilationCache(t *testing.T) {
 	}
 	renderWith(false)
 }
+
+// A Windows service (and pdb-printw.exe) has no stdout or stderr: PDFium must not need them.
+func TestNewWithoutStdio(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "stdio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close() // an unusable handle, like a service's
+	out, errOut := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = f, f
+	defer func() { os.Stdout, os.Stderr = out, errOut }()
+	r, err := newRenderer(t.TempDir())
+	if err != nil {
+		t.Fatalf("renderer without stdio: %v", err)
+	}
+	r.Close()
+}

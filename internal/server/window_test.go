@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -506,5 +507,96 @@ func TestFinishClosesItsOwnWindow(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if !h.srv.Window.IsOpen(time.Now()) {
 		t.Error("Finish closed a window it wasn't paired in")
+	}
+}
+
+func TestQuitLoopbackWithHeaderOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name, remote, header string
+		want                 int
+	}{
+		{"ok", "127.0.0.1:50000", "1", http.StatusAccepted},
+		{"header missing", "127.0.0.1:50000", "", http.StatusForbidden},
+		{"from the LAN", "192.168.1.40:50000", "1", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			quit := 0
+			h.srv.Quit = func() { quit++ }
+			w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+				r.RemoteAddr = tc.remote
+				if tc.header != "" {
+					r.Header.Set("X-PDB-Print", tc.header)
+				}
+			})
+			if w.Code != tc.want {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if wantQuit := btoi(tc.want == http.StatusAccepted); quit != wantQuit {
+				t.Errorf("Quit called %d times, want %d", quit, wantQuit)
+			}
+			if tc.want == http.StatusAccepted && strings.TrimSpace(w.Body.String()) != fmt.Sprintf(`{"pid":%d}`, os.Getpid()) {
+				t.Errorf("body %q, want our pid", w.Body)
+			}
+		})
+	}
+}
+
+func TestQuitNotOfferedWithoutQuit(t *testing.T) {
+	h := newHarness(t) // Quit unset, as serve leaves it outside Windows
+	w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+		r.RemoteAddr = "127.0.0.1:50000"
+		r.Header.Set("X-PDB-Print", "1")
+	})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// A window whose code paired a browser doesn't count toward the one-per-minute limit (only wrong
+// codes and expiry do): "code already used, run pdb-print pair" works at once.
+func TestOpenOrCurrentAfterPairing(t *testing.T) {
+	var w Window
+	code, _ := w.Open(t0)
+	if _, ok := w.Check(code, t0); !ok {
+		t.Fatal("code didn't pair")
+	}
+	if c2, _, err := w.OpenOrCurrent(t0.Add(time.Second)); err != nil || c2 == code {
+		t.Fatalf("used, still open: %q %v", c2, err)
+	}
+	c3, _, _ := w.OpenOrCurrent(t0.Add(2 * time.Second)) // the open, unused one
+	if _, ok := w.Check(c3, t0.Add(3*time.Second)); !ok {
+		t.Fatal("code didn't pair")
+	}
+	w.Close() // e.g. Finish
+	if _, _, err := w.OpenOrCurrent(t0.Add(4 * time.Second)); err != nil {
+		t.Fatalf("closed after pairing: %v", err)
+	}
+	w.Close() // unused: closed as by wrong codes
+	if _, _, err := w.OpenOrCurrent(t0.Add(5 * time.Second)); !errors.Is(err, errTooSoon) {
+		t.Fatalf("closed unused: %v", err)
+	}
+}
+
+// Asking again for an open, unused window gives it a full window from now.
+func TestOpenOrCurrentExtends(t *testing.T) {
+	var w Window
+	code, _ := w.Open(t0)
+	later := t0.Add(25 * time.Minute)
+	w.Touch(t0.Add(12 * time.Minute)) // in use: open until 17 min
+	again, expires, err := w.OpenOrCurrent(t0.Add(16 * time.Minute))
+	if err != nil || again != code || !expires.Equal(t0.Add(31*time.Minute)) {
+		t.Fatalf("%q %v %v, want %q until %v", again, expires, err, code, t0.Add(31*time.Minute))
+	}
+	w.Touch(later) // the 30-minute cap counts from the request
+	if !w.IsOpen(t0.Add(31 * time.Minute)) {
+		t.Error("Touch shortened the window")
 	}
 }

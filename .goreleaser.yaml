@@ -1,13 +1,10 @@
-# GoReleaser v2 config for Linux, Windows, .debs and Docker. Release: push a tag vX.Y.Z (see
-# .github/workflows/release.yml); macOS is .goreleaser-darwin.yaml on a macOS runner, which
-# adds its assets to this config's draft release; release.yml then publishes it.
+# GoReleaser v2 config for Linux, .debs and Docker. Release: push a tag vX.Y.Z (see
+# .github/workflows/release.yml); Windows is .goreleaser-windows.yaml (plus setup.exe) and macOS
+# .goreleaser-darwin.yaml on a macOS runner, which add their assets to this config's draft release;
+# release.yml then publishes it.
 # Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean
 version: 2
 project_name: pdb-print
-
-# ponytail: the committed Windows resource (cmd/pdb-print/rsrc_*.syso) keeps file version
-# 0.0.0.0; `pdb-print version` reports the real one. Stamping it at release time would
-# rewrite tracked files on every run.
 
 builds:
   - id: pdb-print
@@ -16,16 +13,6 @@ builds:
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
-    flags: [-trimpath]
-    ldflags: ["-s -w -X main.version={{ .Version }}"]
-    mod_timestamp: "{{ .CommitTimestamp }}"
-  # its own build id so the Windows zip can carry the printer-test files (archives below)
-  - id: pdb-print-windows
-    main: ./cmd/pdb-print
-    binary: pdb-print
-    env: [CGO_ENABLED=0]
-    goos: [windows]
-    goarch: [amd64]
     flags: [-trimpath]
     ldflags: ["-s -w -X main.version={{ .Version }}"]
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -55,22 +42,9 @@ archives:
   - id: default
     ids: [pdb-print, pdb-print-arm]
     formats: [tar.gz]
-    name_template: &archive_name >-
+    name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}
     files: [LICENSE, README.md, config.example.yaml]
-  # Windows: a zip with the guided printer test (double-click try-printer.cmd, see TRY.md)
-  - id: windows
-    ids: [pdb-print-windows]
-    formats: [zip]
-    name_template: *archive_name
-    files:
-      - LICENSE
-      - README.md
-      - config.example.yaml
-      - src: packaging/windows/try-printer.cmd
-        strip_parent: true
-      - src: packaging/windows/TRY.md
-        strip_parent: true
 
 checksum:
   name_template: checksums.txt
@@ -104,7 +78,8 @@ nfpms:
     dependencies: [init-system-helpers, poppler-utils]
 
 release:
-  draft: true # release-darwin adds the macOS assets, then publishes it
+  prerelease: auto # a vX.Y.Z-rc.N tag is a pre-release: never "latest", so the update check skips it
+  draft: true # release-windows and release-darwin add their assets, then release-darwin publishes it
   use_existing_draft: true # a re-run reuses this draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # … and overwrites what the first run uploaded
   extra_files:

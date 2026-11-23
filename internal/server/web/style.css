@@ -29,6 +29,7 @@ input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); 
 button { font: inherit; padding: 6px 14px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
 button.link { background: none; color: var(--accent); padding: 0; text-decoration: underline; }
+p.hint { font-size: .85rem; margin: -6px 0 12px; }
 summary { cursor: pointer; margin-bottom: 10px; }
 a.bookmarklet { display: inline-block; padding: 4px 10px; border: 1px dashed var(--accent); border-radius: 6px; color: var(--accent); text-decoration: none; }
 body.handoff { max-width: 420px; text-align: center; padding-top: 32px; }
@@ -56,4 +57,10 @@ form.pictures button:hover, form.pictures button:focus-visible { border-color: v
 .card.cut-off { clip-path: inset(0 0 45% 0); }
 .card.faint { opacity: .3; }
 .card.nothing { border-style: dashed; color: var(--muted); }
-label.check { flex-direction: row; color: var(--fg); }
+label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); }
+.busy { pointer-events: none; opacity: .8; }
+.busy::before { content: ""; display: inline-block; width: .8em; height: .8em; margin-right: 8px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy::before { animation-duration: 3s; } }
+.cmd { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }

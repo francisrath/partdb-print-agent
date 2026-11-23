@@ -55,6 +55,7 @@ checksum:
 # The release stays a draft: release.yml publishes it once it carries every archive (should GoReleaser's
 # draft lookup fail, a release it creates is a draft too, never a published macOS-only one)
 release:
+  prerelease: auto # a vX.Y.Z-rc.N tag is a pre-release: never "latest", so the update check skips it
   draft: true
   use_existing_draft: true # the Linux job's draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # a re-run of this job overwrites its own partial uploads

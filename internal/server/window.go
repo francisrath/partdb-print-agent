@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/francisrath/pdb-print/assets"
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 // The setup window: for a while after install (or `pdb-print pair`) the wizard is reachable from
@@ -29,6 +30,7 @@ const (
 	windowIdle  = 5 * time.Minute  // left at least this long after each wizard request
 	windowMax   = 30 * time.Minute // never longer than this after opening
 	windowTries = 5                // wrong codes before it closes
+	windowEvery = time.Minute      // /v1/pair opens at most one new window this often
 	cookieName  = "pdb_setup"
 )
 
@@ -56,12 +58,46 @@ type Session struct {
 
 // Open starts a new window with a new code; earlier sessions end.
 func (w *Window) Open(now time.Time) (code string, expires time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.openLocked(now)
+}
+
+// errTooSoon: OpenOrCurrent was asked for a new window within windowEvery of the last one.
+var errTooSoon = errors.New("a setup window was opened less than a minute ago: wait a minute, then try again")
+
+// OpenOrCurrent returns the open window's code (tries not reset) with a full window from now, or
+// opens a new window, at most one per windowEvery after one whose code paired nothing (closed by
+// wrong codes or expiry): that limits guessing to windowTries codes a minute. After a pairing a
+// new window opens at once: the used code can't be guessed any more.
+func (w *Window) OpenOrCurrent(now time.Time) (code string, expires time.Time, err error) {
+	open := w.IsOpen(now) // closes an expired window
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case open && w.open && !w.used: // a used code pairs nothing: a new window, as below
+		// asked for again: as if just opened (windowMax counts from here too)
+		w.opened = now
+		if e := now.Add(windowOpen); e.After(w.expires) {
+			w.expires = e
+		}
+		return w.code, w.expires, nil
+	case !w.used && !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
+		return "", time.Time{}, errTooSoon
+	}
+	kept := w.sessions // open with its code used: browsers already paired stay paired
+	code, expires = w.openLocked(now)
+	if open && kept != nil {
+		w.sessions = kept
+	}
+	return code, expires, nil
+}
+
+func (w *Window) openLocked(now time.Time) (code string, expires time.Time) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 	if err != nil {
 		panic(err)
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.open, w.code, w.used, w.tries, w.gen = true, fmt.Sprintf("%06d", n.Int64()), false, 0, w.gen+1
 	w.opened, w.expires = now, now.Add(windowOpen)
 	w.sessions = map[string]*Session{}
@@ -191,6 +227,11 @@ func (w *Window) notifyClose() {
 // OpenWindow opens the setup window and returns the code and the URLs to type it at.
 func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires time.Time) {
 	code, expires = s.Window.Open(now)
+	return code, s.windowURLs(), expires
+}
+
+// windowURLs waits for SetupLoop to listen and returns the URLs to type the code at.
+func (s *Server) windowURLs() (urls []string) {
 	select { // forget an older scan, then wait for SetupLoop to listen
 	case <-s.scanned:
 	default:
@@ -212,7 +253,7 @@ func (s *Server) OpenWindow(now time.Time) (code string, urls []string, expires 
 	for _, a := range addrs {
 		urls = append(urls, "http://"+net.JoinHostPort(a.String(), port)+"/setup/")
 	}
-	return code, urls, expires
+	return urls
 }
 
 // boundAddrs are the LAN addresses the setup server listens on right now.
@@ -489,7 +530,15 @@ func session(r *http.Request) *Session {
 
 // setupStart shows the pairing page, or sends a paired browser into the wizard.
 func (s *Server) setupStart(w http.ResponseWriter, r *http.Request) {
-	if session(r) != nil {
+	if sess := session(r); sess != nil {
+		if sess == s.local { // service mode: every paired browser shares it
+			d := sess.Draft
+			d.mu.Lock()
+			if len(d.Saved) > 0 || time.Since(d.used) > draftStale { // finished, or abandoned: a fresh start
+				d.reset()
+			}
+			d.mu.Unlock()
+		}
 		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 		return
 	}
@@ -501,23 +550,15 @@ func (s *Server) pairPage(w http.ResponseWriter, msg string, status int) {
 	mins := int(time.Until(s.Window.Expires()).Round(time.Minute) / time.Minute)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = pages.ExecuteTemplate(w, "pair.html", map[string]any{"Open": open, "Minutes": max(mins, 1), "Err": msg, "Version": s.Version})
+	_ = pages.ExecuteTemplate(w, "pair.html", map[string]any{"Open": open, "Minutes": max(mins, 1), "Err": msg, "Version": s.Version,
+		"Cmd": s.pairCommand(), "Service": s.PairLoopback})
 }
 
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.Window.Check(r.FormValue("code"), time.Now())
-	if !ok && s.Window.CodeUsed() && s.Window.IsOpen(time.Now()) {
-		s.Log.Warn("setup window: pairing code already used", "from", r.RemoteAddr)
-		s.pairPage(w, "This code has already been used: it pairs one browser. For another browser, run "+
-			"\"pdb-print pair\" on the print server; it opens the window with a new code.", http.StatusForbidden)
-		return
-	}
+	sess, ok := s.checkCode(w, r)
 	if !ok {
-		s.Log.Warn("setup window: wrong pairing code", "from", r.RemoteAddr)
-		s.pairPage(w, "That code didn't match. Check the code and try again.", http.StatusForbidden)
 		return
 	}
-	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
 	// Secure only over TLS: the setup window is plain HTTP on the LAN, where a Secure cookie would
 	// never come back and pairing would fail. SameSite=Strict and HttpOnly hold either way.
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: sess.ID, Path: "/setup", HttpOnly: true,
@@ -525,11 +566,76 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 }
 
-// pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it.
+// checkCode checks the posted pairing code; when it doesn't pair, it has answered with the pair page.
+func (s *Server) checkCode(w http.ResponseWriter, r *http.Request) (*Session, bool) {
+	sess, ok := s.Window.Check(r.FormValue("code"), time.Now())
+	if !ok && s.Window.CodeUsed() && s.Window.IsOpen(time.Now()) {
+		s.Log.Warn("setup window: pairing code already used", "from", r.RemoteAddr)
+		s.pairPage(w, "This code has already been used: it pairs one browser. For another browser, run "+
+			"\"pdb-print pair\" on the print server; it opens the window with a new code.", http.StatusForbidden)
+		return nil, false
+	}
+	if !ok {
+		s.Log.Warn("setup window: wrong pairing code", "from", r.RemoteAddr)
+		s.pairPage(w, "That code didn't match. Check the code and try again.", http.StatusForbidden)
+		return nil, false
+	}
+	s.Log.Info("setup window: browser paired", "from", r.RemoteAddr)
+	return sess, true
+}
+
+// pairAPI is POST /v1/pair on the loopback server: `pdb-print pair` opens the window with it
+// (or gets the one that is open).
 func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
-	code, urls, expires := s.OpenWindow(time.Now())
+	if s.PairLoopback && s.PairCodeFile == "" { // the code would go to any local user
+		s.Log.Error("setup window: no code file configured; not opening")
+		http.Error(w, "no code file configured", http.StatusInternalServerError)
+		return
+	}
+	if s.PairLoopback && !s.pairRequested(r) { // or any local user could open windows and guess codes
+		http.Error(w, "run pdb-print pair as administrator", http.StatusForbidden)
+		return
+	}
+	code, expires, err := s.Window.OpenOrCurrent(time.Now())
+	if errors.Is(err, errTooSoon) {
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		return
+	}
+	urls := s.windowURLs()
+	if s.PairCodeFile != "" { // the service: only administrators may see the code
+		if err := wininstall.WriteAdminOnly(s.PairCodeFile, []byte(code)); err != nil {
+			s.Window.Close()
+			s.Log.Error("setup window: can't write the pairing code", "file", s.PairCodeFile, "err", err)
+			http.Error(w, "can't write the pairing code: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.Log.Info("setup window opened", "code_file", s.PairCodeFile, "urls", urls, "until", expires.Format("15:04"))
+		writeJSON(w, map[string]any{"urls": urls, "expires": expires}) // pair reads the code from the file it knows
+		return
+	}
 	s.Log.Info("setup window opened", "code", code, "urls", urls, "until", expires.Format("15:04"))
 	writeJSON(w, map[string]any{"code": code, "urls": urls, "expires": expires})
+}
+
+// PairRequestHeader carries the nonce from PairRequestFile with POST /v1/pair.
+const PairRequestHeader = "X-PDB-Pair-Request"
+
+// pairRequested reports whether r carries the nonce in PairRequestFile, which only an administrator
+// can write. The file is removed on a match, so each nonce opens (or shows) one window.
+func (s *Server) pairRequested(r *http.Request) bool {
+	want, err := os.ReadFile(s.PairRequestFile)
+	if err != nil || len(want) == 0 {
+		return false
+	}
+	if keyOwnerOK != nil { // Windows: only a file an administrator wrote (not one planted)
+		if ok, _ := keyOwnerOK(s.PairRequestFile); !ok {
+			s.Log.Warn("pairing request not owned by Administrators or SYSTEM: ignored", "file", s.PairRequestFile)
+			return false
+		}
+	}
+	got := r.Header.Get(PairRequestHeader)
+	// whoever removes the file wins: a nonce can't be used twice, even by requests at the same time
+	return subtle.ConstantTimeCompare([]byte(got), want) == 1 && os.Remove(s.PairRequestFile) == nil
 }
 
 // loopbackRemote reports whether a request came from this machine.
