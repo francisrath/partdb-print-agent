@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
@@ -161,9 +162,19 @@ func (osSystem) InstallService(exe string, args []string) error {
 	if err := windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_PRESHUTDOWN_INFO, (*byte)(unsafe.Pointer(&pre))); err != nil {
 		return err
 	}
-	r := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: 5 * time.Second}
-	if err := s.SetRecoveryActions([]mgr.RecoveryAction{r, r, r}, 86400); err != nil {
+	// after a failure: again in 5 s (the self-update's restart relies on it), then 1 min, then every
+	// 5 min; the count starts over after a day without one
+	var restarts []mgr.RecoveryAction
+	for _, d := range []time.Duration{5 * time.Second, time.Minute, 5 * time.Minute} {
+		restarts = append(restarts, mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: d})
+	}
+	if err := s.SetRecoveryActions(restarts, 86400); err != nil {
 		return err
+	}
+	// an event source for why the service refused to start (before its log is open); the key may be left from an earlier install
+	_ = eventlog.Remove(name)
+	if err := eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
+		return fmt.Errorf("register the event source: %w", err)
 	}
 	return s.SetRecoveryActionsOnNonCrashFailures(true) // also when serve fails (exit code 1), e.g. port busy at boot
 }
@@ -216,7 +227,11 @@ func withService(f func(*mgr.Service) error) error {
 }
 
 func (osSystem) RemoveService() error {
-	return withService(func(s *mgr.Service) error { return s.Delete() })
+	if err := withService(func(s *mgr.Service) error { return s.Delete() }); err != nil {
+		return err
+	}
+	_ = eventlog.Remove(name) // best effort: a leftover source only names us in Event Viewer
+	return nil
 }
 
 func (osSystem) StartService() error {
@@ -418,11 +433,12 @@ func MkdirAdminOnly(dir string) error {
 	return err
 }
 
-// WriteAdminOnly writes data to path readable only by Administrators and SYSTEM. The file is
-// created under a temporary name with that ACL already set (and no sharing), so no other user can
-// open it at any point, then renamed over path (a rename keeps the ACL).
+// WriteAdminOnly writes data to path readable only by Administrators and SYSTEM, owned by
+// Administrators (not the account that writes it, which OwnedByAdmins wouldn't trust). The file is
+// created under a temporary name with that owner and ACL already set (and no sharing), so no other
+// user can open it at any point, then renamed over path (a rename keeps both).
 func WriteAdminOnly(path string, data []byte) error {
-	sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;BA)(A;;FA;;;SY)")
+	sd, err := windows.SecurityDescriptorFromString("O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)")
 	if err != nil {
 		return err
 	}

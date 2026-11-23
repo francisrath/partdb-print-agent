@@ -133,7 +133,17 @@
   {{else}}<p class="muted">No jobs since the agent started.</p>{{end}}
 </section>
 
-<section id="usage-stats">
+{{if .Service}}<section>
+  <h2>Browsers</h2>
+  <p>Browsers that typed a pairing code stay signed in for 30 days. Sign them all out (this one too) if
+  someone you don't trust may have used one; each needs a new code from <code>pdb-print pair</code> then.</p>
+  <form method="post" action="/sessions/sign-out" data-confirm="Sign out every browser, this one included?">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="secondary">Sign out all browsers</button>
+  </form>
+</section>
+
+{{end}}<section id="usage-stats">
   <h2>Usage statistics</h2>
   <p>Once a week pdb-print can send an anonymous report: its version, the operating system, the printer
   models and connection types you use, and how many jobs and labels each printed. No addresses, names,

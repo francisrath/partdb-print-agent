@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,7 +12,9 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 
+	"github.com/francisrath/pdb-print/internal/logfile"
 	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
@@ -27,7 +30,8 @@ func runService(ctx context.Context, cfgPath string) error {
 	// before the log: an admin may have deleted the dir, and the log would recreate it with the
 	// inherited ACL (every user could write to it); one an ordinary user made isn't used at all
 	if err := wininstall.ReadyServiceDir(wininstall.NewSystem(), cfgPath); err != nil {
-		return err // main logs it; no log file: Event Viewer → System shows the service failing
+		refuse(cfgPath, err)
+		return err // main logs it to stderr, which nobody sees
 	}
 	logOut = fileLog(filepath.Join(filepath.Dir(cfgPath), "pdb-print.log"))
 	serviceMode = true
@@ -36,6 +40,20 @@ func runService(ctx context.Context, cfgPath string) error {
 		return err
 	}
 	return h.err // main logs it
+}
+
+// refuse records why the service doesn't start: in the Event Log (Windows Logs → Application, source
+// pdb-print) and in the log file, but never into a folder that isn't trusted (or is gone): SYSTEM
+// writing a file in a folder another user controls could be sent through a link to any file.
+func refuse(cfgPath string, err error) {
+	if l, lerr := eventlog.Open("pdb-print"); lerr == nil {
+		_ = l.Error(1, "The pdb-print service didn't start: "+err.Error())
+		l.Close()
+	}
+	dir := filepath.Dir(cfgPath)
+	if fi, serr := os.Lstat(dir); serr == nil && fi.IsDir() && !errors.Is(err, wininstall.ErrUntrustedDir) {
+		fmt.Fprintln(&logfile.Writer{Path: filepath.Join(dir, "pdb-print.log"), Max: 10 << 20}, "error: the service didn't start:", err)
+	}
 }
 
 type service struct {

@@ -84,7 +84,7 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		mode = wininstall.Service
 	}
 	l, err := install(sys, env, mode, *quiet, *noSelfUpdate, out)
-	if err != nil && stopped && *service { // the per-user install may be gone already
+	if err != nil && stopped && *service && !errors.Is(err, wininstall.ErrPerUserStarted) { // the per-user install may be gone already
 		return fmt.Errorf("%w (the per-user pdb-print was stopped; run the install again)", err)
 	}
 	if err != nil && stopped {
@@ -224,7 +224,7 @@ func uninstall(ctx context.Context, args []string, out io.Writer) error {
 	if *purge {
 		fmt.Fprintln(out, "pdb-print is uninstalled, its config deleted.")
 	} else {
-		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s (for a reinstall; pdb-print uninstall --purge also removes it).\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
+		fmt.Fprintf(out, "pdb-print is uninstalled. Its config stays in %s for a reinstall; delete that folder if you don't need it.\n", filepath.Dir(wininstall.LayoutFor(mode, env).Config))
 	}
 	return nil
 }

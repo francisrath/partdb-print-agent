@@ -559,3 +559,44 @@ func btoi(b bool) int {
 	}
 	return 0
 }
+
+// A window whose code paired a browser doesn't count toward the one-per-minute limit (only wrong
+// codes and expiry do): "code already used, run pdb-print pair" works at once.
+func TestOpenOrCurrentAfterPairing(t *testing.T) {
+	var w Window
+	code, _ := w.Open(t0)
+	if _, ok := w.Check(code, t0); !ok {
+		t.Fatal("code didn't pair")
+	}
+	if c2, _, err := w.OpenOrCurrent(t0.Add(time.Second)); err != nil || c2 == code {
+		t.Fatalf("used, still open: %q %v", c2, err)
+	}
+	c3, _, _ := w.OpenOrCurrent(t0.Add(2 * time.Second)) // the open, unused one
+	if _, ok := w.Check(c3, t0.Add(3*time.Second)); !ok {
+		t.Fatal("code didn't pair")
+	}
+	w.Close() // e.g. Finish
+	if _, _, err := w.OpenOrCurrent(t0.Add(4 * time.Second)); err != nil {
+		t.Fatalf("closed after pairing: %v", err)
+	}
+	w.Close() // unused: closed as by wrong codes
+	if _, _, err := w.OpenOrCurrent(t0.Add(5 * time.Second)); !errors.Is(err, errTooSoon) {
+		t.Fatalf("closed unused: %v", err)
+	}
+}
+
+// Asking again for an open, unused window gives it a full window from now.
+func TestOpenOrCurrentExtends(t *testing.T) {
+	var w Window
+	code, _ := w.Open(t0)
+	later := t0.Add(25 * time.Minute)
+	w.Touch(t0.Add(12 * time.Minute)) // in use: open until 17 min
+	again, expires, err := w.OpenOrCurrent(t0.Add(16 * time.Minute))
+	if err != nil || again != code || !expires.Equal(t0.Add(31*time.Minute)) {
+		t.Fatalf("%q %v %v, want %q until %v", again, expires, err, code, t0.Add(31*time.Minute))
+	}
+	w.Touch(later) // the 30-minute cap counts from the request
+	if !w.IsOpen(t0.Add(31 * time.Minute)) {
+		t.Error("Touch shortened the window")
+	}
+}
