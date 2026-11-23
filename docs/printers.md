@@ -103,12 +103,12 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
 | 🟡 | B1 | Bluetooth LE | niimbot/b1 |  |
+| ✅ maintainer | B21S | Bluetooth LE | niimbot/b1 | Bluetooth LE on a Raspberry Pi, 2026-11 (firmware 40.27) |
 | 🟡 | D101 | Bluetooth LE | niimbot/b1 |  |
 | 🟡 | B21 | Bluetooth LE | niimbot/b21 |  |
 | 🟡 | D11 | Bluetooth LE | niimbot/d11 |  |
 | 🟡 | D11S | Bluetooth LE | niimbot/d11 |  |
 | 🟡 | B18 | Bluetooth LE | niimbot/d110 |  |
-| 🟡 | B21S | Bluetooth LE | niimbot/d110 |  |
 | 🟡 | D110 | Bluetooth LE | niimbot/d110 |  |
 | 🟡 | B1-PRO | Bluetooth LE | niimbot/v4 |  |
 | 🟡 | B21-PRO | Bluetooth LE | niimbot/v4 |  |

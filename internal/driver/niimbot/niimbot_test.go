@@ -198,10 +198,10 @@ func TestHeartbeat(t *testing.T) {
 
 func TestLabelsLeft(t *testing.T) {
 	tag := cat(make([]byte, 8), []byte{3, 'A', 'B', 'C'}, []byte{2, '1', '2'}, []byte{0, 200, 0, 50, 1})
-	if n, ok := labelsLeft(tag); !ok || n != 150 {
-		t.Errorf("%d %v", n, ok)
+	if n, kind, ok := rfid(tag); !ok || n != 150 || kind != 1 {
+		t.Errorf("%d %d %v", n, kind, ok)
 	}
-	if _, ok := labelsLeft([]byte{0}); ok {
+	if _, _, ok := rfid([]byte{0}); ok {
 		t.Error("no tag read as a tag")
 	}
 }
@@ -543,4 +543,75 @@ func TestModels(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The roll's RFID tag says what kind of label it is; the print uses that label type (a transparent roll
+// printed blank as "with gaps" on a B21S) and falls back to the media kind without a tag.
+func TestLabelTypeFromRFID(t *testing.T) {
+	fast(t)
+	tag := cat(make([]byte, 8), []byte{1, 'A'}, []byte{1, '1'}, []byte{0, 180, 0, 37, 5})
+	f := &printer{protocol: 3, answer: func(p reply) ([]byte, bool) {
+		return packet(0x1B, tag...), p.cmd == cmdRFID
+	}}
+	d := newDriver(t, "B21S", "")
+	st, err := d.Status(context.Background(), f)
+	if err != nil || st.MediaType != "transparent" || st.Detail != "143 labels left on the roll" {
+		t.Fatalf("%+v %v", st, err)
+	}
+	for _, tc := range []struct {
+		status *driver.Status
+		media  devicedb.MediaKind
+		want   byte
+	}{
+		{st, devicedb.DieCut, 5},
+		{&driver.Status{Code: driver.OK}, devicedb.DieCut, 1},
+		{&driver.Status{Code: driver.OK}, devicedb.Continuous, 3},
+		{&driver.Status{Code: driver.OK, MediaType: "brother-only"}, devicedb.DieCut, 1},
+	} {
+		f := &printer{}
+		j := job(1, &devicedb.Media{ID: "m", Kind: tc.media})
+		j.Status = tc.status
+		if _, err := d.Print(context.Background(), f, j); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range f.written {
+			if p.cmd == cmdLabelType && p.data[0] != tc.want {
+				t.Errorf("%q %v: label type %d, want %d", tc.status.MediaType, tc.media, p.data[0], tc.want)
+			}
+		}
+	}
+}
+
+// A B21S (firmware 40.27) prints a blank label for the first D110-style job on a connection; the B1
+// print task prints at once. It also took up to 3.5 s to answer the page end.
+func TestB21SPrintsB1Style(t *testing.T) {
+	fast(t)
+	setDur(t, &pageEndWait, 300*time.Millisecond)
+	f := &printer{}
+	f.answer = func(p reply) ([]byte, bool) {
+		if p.cmd != cmdPageEnd {
+			return nil, false
+		}
+		f.page++
+		go func() { // answers after replyWait (50 ms here), within pageEndWait
+			time.Sleep(120 * time.Millisecond)
+			f.mu.Lock()
+			f.in = append(f.in, packet(0xE4, 1)...)
+			f.mu.Unlock()
+		}()
+		return nil, true
+	}
+	res, err := newDriver(t, "B21S", "").Print(context.Background(), f, job(1, nil))
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if got, want := f.cmds(), []byte{0x21, 0x23, 0x01, 0x03, 0x13, 0xE3, 0xA3, 0xF3}; !bytes.Equal(got, want) {
+		t.Errorf("sent % X, want % X (the B1 sequence)", got, want)
+	}
+}
+
+func setDur(t *testing.T, p *time.Duration, v time.Duration) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
 }

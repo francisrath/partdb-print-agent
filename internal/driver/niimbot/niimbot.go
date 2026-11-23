@@ -36,6 +36,7 @@ func init() {
 // Timings; tests shorten them.
 var (
 	replyWait      = 2 * time.Second       // for an answer to a request
+	pageEndWait    = 10 * time.Second      // for the page end's answer: a B21S took up to 3.5 s (niimbluelib allows 10)
 	packetGap      = 10 * time.Millisecond // between packets: a B1 prints nothing without it (niimblue #5)
 	pollEvery      = 300 * time.Millisecond
 	confirmBase    = 30 * time.Second // then "sent (not confirmed)"
@@ -63,9 +64,22 @@ var answers = map[byte]byte{
 
 func ask(cmd byte, data ...byte) step { return step{packet(cmd, data...), []byte{answers[cmd]}} }
 
-// labelType: 1 = with gaps, 3 = continuous.
-func labelType(m *devicedb.Media) byte {
-	if m != nil && m.Kind == devicedb.Continuous {
+// labelTypes are the label kinds a roll's RFID tag reports (niimbluelib's LabelType), by the name the
+// status carries; the print sends the byte as its label type.
+var labelTypes = map[byte]string{1: "with-gaps", 2: "black", 3: "continuous", 4: "perforated", 5: "transparent",
+	6: "pvc-tag", 10: "black-mark-gap", 11: "heat-shrink-tube"}
+
+// labelType is the roll's own kind where its tag reported one (a transparent roll prints blank as
+// "with gaps"), else 1 = with gaps or 3 = continuous from the media.
+func labelType(job *driver.Job) byte {
+	if job.Status != nil {
+		for b, name := range labelTypes {
+			if name == job.Status.MediaType {
+				return b
+			}
+		}
+	}
+	if job.Media != nil && job.Media.Kind == devicedb.Continuous {
 		return 3
 	}
 	return 1
@@ -75,7 +89,7 @@ func labelType(m *devicedb.Media) byte {
 func (n *niimbot) steps(job *driver.Job) []step {
 	head := n.model.HeadPins
 	pages := len(job.Pages)
-	density, label := ask(cmdDensity, n.density), ask(cmdLabelType, labelType(job.Media))
+	density, label := ask(cmdDensity, n.density), ask(cmdLabelType, labelType(job))
 	var s []step
 	switch n.model.Dialect {
 	case "b1":
@@ -190,7 +204,11 @@ func (r *reader) do(s step) (reply, error) {
 	if s.want == nil {
 		return reply{}, nil
 	}
-	return r.await(replyWait, s.want)
+	wait := replyWait
+	if s.p[2] == cmdPageEnd {
+		wait = pageEndWait
+	}
+	return r.await(wait, s.want)
 }
 
 // printerError maps an error code (0xDB, or the last field of a long print status) to a status code.
@@ -239,8 +257,11 @@ func (n *niimbot) Status(ctx context.Context, t driver.Transport) (*driver.Statu
 	st.Via, st.Raw = t.Kind(), fmt.Sprintf("% x", packet(hb.cmd, hb.data...))
 	if st.Code == driver.OK {
 		if tag, err := r.do(ask(cmdRFID, 1)); err == nil {
-			if left, ok := labelsLeft(tag.data); ok && st.Detail == "" {
-				st.Detail = fmt.Sprintf("%d labels left on the roll", left)
+			if left, kind, ok := rfid(tag.data); ok {
+				if st.Detail == "" {
+					st.Detail = fmt.Sprintf("%d labels left on the roll", left)
+				}
+				st.MediaType = labelTypes[kind]
 			}
 		}
 	}
@@ -286,21 +307,24 @@ func (n *niimbot) heartbeat(p reply) *driver.Status {
 	return st
 }
 
-// labelsLeft reads total and used from an RFID answer: uuid(8), barcode and serial (length-prefixed),
-// total u16, used u16, type. One byte means no tag.
-func labelsLeft(d []byte) (int, bool) {
+// rfid reads labels left (total − used) and the label kind from an RFID answer: uuid(8), barcode and serial
+// (length-prefixed), total, used (u16 each), kind.
+func rfid(d []byte) (left int, kind byte, ok bool) {
 	i := 8
 	for range 2 {
 		if i >= len(d) {
-			return 0, false
+			return 0, 0, false
 		}
 		i += 1 + int(d[i])
 	}
 	if i+4 > len(d) {
-		return 0, false
+		return 0, 0, false
 	}
 	total, used := int(d[i])<<8|int(d[i+1]), int(d[i+2])<<8|int(d[i+3])
-	return max(total-used, 0), total > 0
+	if i+4 < len(d) {
+		kind = d[i+4]
+	}
+	return max(total-used, 0), kind, total > 0
 }
 
 // Print needs a good status first, sends the job packet by packet (waiting for each answer), waits for the
