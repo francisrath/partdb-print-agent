@@ -424,7 +424,10 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
   refuse rolls without Niimbot's RFID tag; the status shows how many labels the tag says are left and
   the kind of label (`type=transparent`, `with-gaps`, …), which the print sends to the printer. A B21S also
   prints over its USB-C cable, a USB serial port: `transport: {kind: serial, device: /dev/cu.usbmodem…}`
-  on macOS (`/dev/ttyACM0` on Linux, `COM3` on Windows).
+  on macOS (`/dev/ttyACM0` on Linux, `COM3` on Windows). That's the setup we recommend for a B21S that
+  stays at a desk: about 4 s a label instead of 12 over Bluetooth, nothing to pair, and with the printer's
+  auto shutdown at its highest setting (in niim.blue or the Niimbot app) it was still on after 70 minutes
+  idle on USB, so it doesn't need waking for each job.
 - **Phomemo** (`driver: phomemo`): M02, M02S, M02-PRO, T02 (pocket printers, continuous paper), M110,
   M120, M200, M220, M221 (label printers; `darkness` sets the density), Q30 and D30, D35 (12 mm label
   makers, labels lengthwise: `phomemo-12x40`). The M200 and M220 advertise names we don't know yet:
