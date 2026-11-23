@@ -47,6 +47,30 @@ const busy = (el) => { el.textContent = el.dataset.busy; el.classList.add('busy'
 document.querySelectorAll('a[data-busy]').forEach((a) => a.addEventListener('click', () => busy(a)));
 document.addEventListener('submit', (e) => { if (!e.defaultPrevented && e.submitter && e.submitter.dataset.busy) busy(e.submitter); });
 
+// Update now: poll until the restarted agent reports another version, or the update has stopped (failed).
+// Unreachable for 2 minutes in a row (a download may take longer, but then the agent answers): it
+// didn't come back, so say how to start it.
+document.querySelectorAll('[data-updating]').forEach((el) => {
+  let downSince = 0;
+  const poll = async () => {
+    try {
+      const info = await (await fetch('/v1/info', { cache: 'no-store' })).json();
+      if (info.version !== el.dataset.updating || !info.updating) { location.replace('/?manual'); return; }
+      downSince = 0;
+    } catch (e) { // restarting
+      downSince = downSince || Date.now();
+      if (Date.now() - downSince > 120000) {
+        el.textContent = "pdb-print didn't come back after the update: sign out of Windows and in again " +
+          '(the service: Restart-Service pdb-print in an administrator PowerShell), then reload this page.';
+        el.classList.add('err');
+        return;
+      }
+    }
+    setTimeout(poll, 2000);
+  };
+  setTimeout(poll, 2000);
+});
+
 // Copy buttons next to commands: the clipboard API needs a secure context (127.0.0.1 is one, a LAN
 // address over http isn't); without it, select the command so Ctrl+C copies it.
 document.querySelectorAll('[data-copy]').forEach((b) => {

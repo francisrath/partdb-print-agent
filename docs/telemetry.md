@@ -39,7 +39,7 @@ One JSON document to `https://pdb-print-stats.cloudline.no/v1/report`:
 | `arch` | `"arm"` | CPU architecture |
 | `os_version` | `"debian 13"` | distribution and major version from a fixed list (others are just `"linux"`), `"macos 15"`, `"windows 11 build 26100"`; in Docker, the container's |
 | `board` | `"Raspberry Pi 2 Model B"` | Raspberry Pi model (Linux device tree), else empty |
-| `install` | `"deb"` | how pdb-print was installed: `deb`, `brew`, `docker`, `zip` or `archive` |
+| `install` | `"deb"` | how pdb-print was installed: `deb`, `brew`, `docker`, `windows` (setup.exe or `pdb-print install`), `zip` or `archive` |
 | `renderer` | `"pdftoppm"` | PDF renderer in use: `pdfium` or `pdftoppm` |
 | `agent_api` | `true` | the connected Part-DB has the print agent API (print jobs from Part-DB) |
 | `models` | `{"QL-810W": 1}` | configured printers per model, by device database id |

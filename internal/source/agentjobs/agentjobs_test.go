@@ -389,3 +389,24 @@ func TestFlushReportsToOwnPartDB(t *testing.T) {
 		t.Errorf("sent %v, left %+v", got, l.unreported)
 	}
 }
+
+// While pdb-print updates itself, jobs stay pending (not claimed and failed); they print afterwards.
+func TestPausedLeavesJobsPending(t *testing.T) {
+	f := &fakePartDB{jobs: jobs(j(7, "print"))}
+	var printed []int
+	l := newLoop(t, f, func(_ context.Context, jb partdb.Job) (string, error) {
+		printed = append(printed, jb.ID)
+		return "ok", nil
+	})
+	paused := true
+	l.Paused = func() bool { return paused }
+	l.tick(context.Background())
+	if len(printed) != 0 || len(f.results) != 0 {
+		t.Fatalf("while paused: printed %v, results %v", printed, f.results)
+	}
+	paused = false
+	l.tick(context.Background())
+	if len(printed) != 1 || len(f.results) != 1 {
+		t.Errorf("after the pause: printed %v, results %v", printed, f.results)
+	}
+}

@@ -298,3 +298,20 @@ func TestUpdateCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfUpdateEnvOff(t *testing.T) {
+	off, on := false, true
+	for _, c := range []struct {
+		self *bool
+		env  string
+		want bool
+	}{
+		{nil, "", true}, {&on, "", true}, {&off, "", false},
+		{nil, "off", false}, {&on, "off", false}, {nil, "on", true},
+	} {
+		t.Setenv("PDB_PRINT_SELF_UPDATE", c.env)
+		if got := (&Config{SelfUpdate: c.self}).SelfUpdateOn(); got != c.want {
+			t.Errorf("self_update %v, env %q: %v", c.self, c.env, got)
+		}
+	}
+}

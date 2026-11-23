@@ -17,7 +17,12 @@
   <span class="muted">{{.Version}} · {{.Addr}}</span>
 </header>
 
-{{with .Update}}<p class="flash" role="status">pdb-print {{.Version}} is out (this is {{$.Version}}): <a href="{{.URL}}">release notes</a>. To update: <code>{{.Hint}}</code></p>{{end}}
+{{with .UpdateErr}}<p class="flash err" role="status">{{.}}</p>{{end}}
+{{with .Update}}<div class="flash" role="status">pdb-print {{.Version}} is out (this is {{$.Version}}): <a href="{{.URL}}">release notes</a>.
+  {{if $.Updating}}<br><span class="busy" data-updating="{{$.Version}}">Updating to {{.Version}}: this page reloads when pdb-print has restarted.</span>
+  {{else if eq $.Installed .Version}}<br>pdb-print {{.Version}} is installed; restart pdb-print (log off and on, or Restart-Service) to run it.
+  {{else if $.SelfUpdate}}<form method="post" action="/update" class="inline"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Update now</button></form>
+  {{else}}To update: <code>{{$.Hint}}</code>{{end}}</div>{{end}}
 {{if not .TelemetryDecided}}<p class="flash" role="status">pdb-print can send an anonymous usage report once a week. Nothing is sent until you choose: see <a href="#usage-stats">Usage statistics</a> below.</p>{{end}}
 {{with .Flash}}<p class="flash {{if .Err}}err{{end}}" role="status">{{.Text}}</p>{{end}}
 

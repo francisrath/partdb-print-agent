@@ -40,6 +40,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/partdb"
 	"github.com/francisrath/pdb-print/internal/printing"
 	"github.com/francisrath/pdb-print/internal/render"
+	"github.com/francisrath/pdb-print/internal/selfupdate"
 	"github.com/francisrath/pdb-print/internal/server"
 	"github.com/francisrath/pdb-print/internal/source/agentjobs"
 	"github.com/francisrath/pdb-print/internal/source/hotfolder"
@@ -379,6 +380,10 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8631", "listen address (loopback only)")
 	setupWindow := fs.Bool("setup-window", false, "open the setup wizard to the LAN at start when no Part-DB is set up")
+	waitPid, args, err := takeWaitPid(args) // kept out of the usage: only the restart after Update now passes it
+	if err != nil {
+		return err
+	}
 	if _, err := parse(fs, args); err != nil {
 		return err
 	}
@@ -389,6 +394,11 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 		// ponytail: LAN bind needs the admin password from architecture §10; not built yet.
 		return fmt.Errorf("refusing to listen on %s: only loopback addresses are supported", host)
+	}
+	if waitPid > 0 { // the agent we updated: it frees the port when it exits
+		if err := newSystem().WaitExit(waitPid, exitWait); err != nil {
+			a.log.Warn("waiting for the old pdb-print to exit", "pid", waitPid, "err", err)
+		}
 	}
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -409,8 +419,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
+	a.setupSelfUpdate(ctx, srv)
 	if a.cfg.UpdateCheckOn() {
-		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log}
+		srv.Updates = &update.Checker{Current: appVersion(), Log: a.log, URL: latestURL(), SelfUpdate: srv.Updater != nil}
 		go srv.Updates.Run(ctx)
 	}
 	var folderDone chan struct{} // closed when the hot folder has stopped
@@ -420,7 +431,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 			return err
 		}
 		// ponytail: read once at startup; changing hot_folder needs a restart
-		folder := &hotfolder.Folder{Dir: dir, Pattern: hf.Pattern, Log: a.log,
+		folder := &hotfolder.Folder{Dir: dir, Pattern: hf.Pattern, Log: a.log, Paused: a.svc.Updating,
 			Print: func(ctx context.Context, path string) error {
 				return srv.PrintFile(ctx, "hot folder", hf.Printer, path)
 			}}
@@ -467,6 +478,8 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	<-stopped // Serve returns as soon as Shutdown starts; wait for it to finish
+	// an update in progress stops before its swap, or finishes it: never exit with half-swapped exes
+	srv.StopUpdate()
 	if folderDone != nil {
 		<-folderDone // a hot-folder print in progress finishes (or fails) before we exit
 	}
@@ -493,6 +506,92 @@ func (a *app) newServer(addr string, quit func()) *server.Server {
 		srv.Quit = quit
 	}
 	return srv
+}
+
+// setupSelfUpdate: in a Windows install's program dir (update.Install() == "windows"), it tidies up
+// after an update (the .old exes, the version in Settings → Apps) and, unless self_update is off,
+// offers the next one (srv.Updater). Once ctx ends (shutdown), an update no longer restarts.
+func (a *app) setupSelfUpdate(ctx context.Context, srv *server.Server) {
+	if goos != "windows" {
+		return
+	}
+	exe, err := selfExe()
+	if err != nil {
+		a.log.Warn("self-update off", "err", err)
+		return
+	}
+	m, ok := wininstall.ModeOf(exe, envFromOS())
+	if !ok {
+		return
+	}
+	dir := filepath.Dir(exe)
+	selfupdate.CleanupOld(dir)
+	sys := newSystem()
+	if err := wininstall.SyncVersion(sys, m, appVersion()); err != nil {
+		a.log.Warn("updating the version in Settings → Apps", "err", err)
+	}
+	if !a.cfg.SelfUpdateOn() {
+		return
+	}
+	stopping := func() bool { return ctx.Err() != nil }
+	srv.Updater = &selfupdate.Updater{Base: updateBase, Dir: dir, Quiesce: a.svc.Quiesce, Restart: restartInto(sys, dir, a.cfgPath, serviceMode, stopping)}
+}
+
+// takeWaitPid removes serve's hidden --wait-pid N (or -wait-pid, =N) from args.
+func takeWaitPid(args []string) (pid int, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		name, val, eq := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		if name != "wait-pid" || !strings.HasPrefix(args[i], "-") {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !eq {
+			if i++; i == len(args) {
+				return 0, nil, errors.New("--wait-pid needs a process id")
+			}
+			val = args[i]
+		}
+		if pid, err = strconv.Atoi(val); err != nil {
+			return 0, nil, fmt.Errorf("--wait-pid: %w", err)
+		}
+	}
+	return pid, rest, nil
+}
+
+// updateBase is for testing the updater against a fake release server (-ldflags "-X main.updateBase=http://host:port"); releases leave it empty.
+var updateBase string
+
+// latestURL is the release check's URL: "" (GitHub) unless updateBase is set.
+func latestURL() string {
+	if updateBase == "" {
+		return ""
+	}
+	return updateBase + "/latest"
+}
+
+// exit is os.Exit; tests swap it.
+var exit = os.Exit
+
+// restartInto is the Updater's Restart (called with jobs held back, so exiting loses none). The
+// service exits with an error: its recovery settings start the new exe. A per-user agent starts the
+// new pdb-printw.exe from dir, which waits for this process to exit before it takes the port.
+// During a shutdown (stopping) it does neither: the shutdown finishes and the next start runs the new exes.
+func restartInto(sys wininstall.System, dir, cfgPath string, service bool, stopping func() bool) func() error {
+	return func() error {
+		if stopping() {
+			return nil
+		}
+		if service {
+			exit(3)
+			return nil
+		}
+		err := sys.Spawn(filepath.Join(dir, "pdb-printw.exe"), "--config", cfgPath, "serve", "--wait-pid", strconv.Itoa(os.Getpid()))
+		if err != nil {
+			return fmt.Errorf("the new version is installed but couldn't be started (%w); it runs from the next start of pdb-print (sign out and in, or restart Windows)", err)
+		}
+		exit(0)
+		return nil
+	}
 }
 
 // needsSetup: no Part-DB configured yet (in the config or the environment).
@@ -664,7 +763,8 @@ func (j *agentJobs) start(in config.Instance) {
 	l := &jobLoop{stop: stop, done: make(chan struct{}), url: in.BaseURL, loop: &agentjobs.Loop{
 		Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
 		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
-		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}}
+		Print:  func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) },
+		Paused: j.srv.Svc.Updating}}
 	j.loops[in.ID] = l
 	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
 	j.wg.Add(1)
