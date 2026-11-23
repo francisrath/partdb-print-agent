@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -44,6 +46,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/telemetry"
 	"github.com/francisrath/pdb-print/internal/transport/serial"
 	"github.com/francisrath/pdb-print/internal/update"
+	"github.com/francisrath/pdb-print/internal/wininstall"
 )
 
 // version is set by the release build (-ldflags "-X main.version=…").
@@ -53,10 +56,11 @@ const usage = `usage: pdb-print [--config FILE] [--log-level LEVEL] <command> [a
 
 commands:
   version                          print the version
-  install [--quiet] [--no-self-update]
+  install [--service] [--quiet] [--no-self-update]
                                    Windows: install for this user and start it at login (no window);
+                                   --service: as a Windows service for all users (as administrator);
                                    --quiet: don't open the web UI; --no-self-update: never update itself
-  uninstall [--purge]              Windows: remove the install; --purge also deletes the config
+  uninstall [--purge] [--service]  Windows: remove the install; --purge also deletes the config
   serve [--addr 127.0.0.1:8631] [--setup-window]
                                    run the local web UI and bookmarklet endpoint; --setup-window
                                    opens the setup wizard to the LAN when no Part-DB is set up yet
@@ -85,6 +89,9 @@ commands:
 // gui is "1" in pdb-printw.exe (set by the release build), the windowless exe the login autostart runs.
 var gui string
 
+// serviceMode: serve runs as the Windows service (pdb-print service run).
+var serviceMode bool
+
 // logOut takes the log and the final error: stderr, or a file for pdb-printw.exe (see logWriter).
 var logOut io.Writer = os.Stderr
 
@@ -95,6 +102,10 @@ func main() {
 	logOut = logWriter()
 	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(logOut, "error:", err)
+		var ec exitCode
+		if errors.As(err, &ec) {
+			os.Exit(int(ec))
+		}
 		os.Exit(1)
 	}
 }
@@ -107,7 +118,12 @@ func logWriter() io.Writer {
 	if goos != "windows" || gui != "1" || dir == "" {
 		return os.Stderr
 	}
-	w := &logfile.Writer{Path: filepath.Join(dir, "pdb-print", "pdb-print.log"), Max: 10 << 20}
+	return fileLog(filepath.Join(dir, "pdb-print", "pdb-print.log"))
+}
+
+// fileLog is the log file at path, kept to 10 MB plus one old file, panics included.
+func fileLog(path string) *logfile.Writer {
+	w := &logfile.Writer{Path: path, Max: 10 << 20}
 	_ = w.KeepCrashes() // panics too; a log that can't be opened fails the first log write instead
 	return w
 }
@@ -153,6 +169,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	if cmd == "uninstall" {
 		return uninstallCmd(ctx, rest, stdout)
+	}
+	if cmd == "service" { // started by the Windows service manager; runs serve
+		return serviceCmd(ctx, rest)
 	}
 	if cmd == "pair" { // talks to the running service, not the config
 		return pairCmd(ctx, rest, os.Stdout)
@@ -377,9 +396,16 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	ctx, quit := context.WithCancel(ctx) // POST /v1/quit: the same graceful shutdown as SIGTERM
 	defer quit()
-	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, ln.Addr().String(), appVersion())
-	if goos == "windows" { // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
-		srv.Quit = quit
+	srv := a.newServer(ln.Addr().String(), quit)
+	lns := []net.Listener{ln}
+	if serviceMode { // browsers try localhost on [::1] first: that must be us, not another user's program
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		if ln6, err := net.Listen("tcp", net.JoinHostPort("::1", port)); err != nil {
+			srv.IPv4Only = true // a program on [::1] can't share our origin: localhost and [::1] are refused
+			a.log.Error("can't listen on [::1]: the web UI is only at http://127.0.0.1:"+port+" (http://localhost doesn't work)", "err", err)
+		} else {
+			lns = append(lns, ln6)
+		}
 	}
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
@@ -430,6 +456,13 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		_ = hs.Shutdown(sctx)
 	}()
 	a.log.Info("web UI ready", "url", "http://"+ln.Addr().String(), "config", a.cfgPath, "renderer", a.renderer())
+	for _, l := range lns[1:] {
+		go func() {
+			if err := hs.Serve(l); !errors.Is(err, http.ErrServerClosed) {
+				a.log.Error("web UI stopped listening", "addr", l.Addr().String(), "err", err)
+			}
+		}()
+	}
 	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -441,6 +474,25 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	<-setupDone
 	srv.WaitSetupPrints() // a test label being printed from the wizard finishes too
 	return nil
+}
+
+// newServer is serve's server on addr; quit stops serve.
+func (a *app) newServer(addr string, quit func()) *server.Server {
+	srv := server.New(a.cfg, a.cfgPath, a.svc, a.log, addr, appVersion())
+	switch {
+	case serviceMode: // a shared PC: loopback browsers pair too; the service manager stops us
+		dir := filepath.Dir(a.cfgPath) // %ProgramData%\pdb-print, admin-only
+		srv.PairLoopback = true
+		srv.PairCodeFile = filepath.Join(dir, "pair-code.txt")
+		srv.SessionKeyFile = filepath.Join(dir, "session.key")
+		srv.PairRequestFile = filepath.Join(dir, "pair-request")
+		if exe, err := os.Executable(); err == nil { // %ProgramFiles% isn't on PATH; & runs a quoted path in PowerShell
+			srv.PairCommand = `& "` + exe + `" pair`
+		}
+	case goos == "windows": // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
+		srv.Quit = quit
+	}
+	return srv
 }
 
 // needsSetup: no Part-DB configured yet (in the config or the environment).
@@ -459,22 +511,62 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var nonceErr error     // why no nonce was sent (Windows); a per-user agent needs none
+	var codeFile string    // where the service writes the code (admin-only)
+	if goos == "windows" { // the service opens a window only for the nonce in its admin-only folder
+		if pd := envFromOS().ProgramData; pd == "" {
+			nonceErr = errors.New("ProgramData is not set")
+		} else {
+			codeFile = filepath.Join(pd, "pdb-print", "pair-code.txt")
+			b := make([]byte, 32)
+			rand.Read(b)
+			nonce := hex.EncodeToString(b)
+			// fails without admin rights (or with no service)
+			if nonceErr = wininstall.WriteAdminOnly(filepath.Join(pd, "pdb-print", "pair-request"), []byte(nonce)); nonceErr == nil {
+				req.Header.Set(server.PairRequestHeader, nonce)
+			}
+		}
+	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return fmt.Errorf("is pdb-print serve running on %s? %w", *addr, err)
 	}
 	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusForbidden && goos == "windows" && nonceErr != nil:
+		return fmt.Errorf("run pdb-print pair as administrator (can't write the pairing request: %w)", nonceErr)
+	case resp.StatusCode == http.StatusForbidden && goos == "windows":
+		return errors.New("the service refused the pairing request: another pdb-print pair may be running; try again")
+	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))
 	}
 	var res struct {
-		Code    string    `json:"code"`
+		Code    string    `json:"code"` // "" from the service: the code is only in codeFile
 		URLs    []string  `json:"urls"`
 		Expires time.Time `json:"expires"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return err
+	}
+	if res.Code == "" {
+		if codeFile == "" {
+			return fmt.Errorf("pdb-print serve on %s sent no code", *addr)
+		}
+		b, err := os.ReadFile(codeFile)
+		if errors.Is(err, os.ErrPermission) {
+			return errors.New("run pdb-print pair as administrator to see the code")
+		} else if err != nil {
+			return err
+		}
+		res.Code = strings.TrimSpace(string(b))
+		fmt.Fprintf(out, "Setup is open until %s. On this computer or another one, open one of:\n\n", res.Expires.Local().Format("15:04"))
+		for _, u := range append([]string{"http://" + *addr + "/setup/"}, res.URLs...) {
+			fmt.Fprintf(out, "    %s\n", u)
+		}
+		fmt.Fprintf(out, "\nand type the code:  %s\n", res.Code)
+		return nil
 	}
 	if len(res.URLs) == 0 {
 		return errors.New("setup couldn't listen on the local network (no network address yet, or port 8631 in use): see the service log")

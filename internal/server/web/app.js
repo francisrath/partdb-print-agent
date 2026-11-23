@@ -41,3 +41,28 @@ document.querySelectorAll('[data-token-page]').forEach((b) => {
     window.open(base + b.dataset.tokenPage, '_blank', 'noopener');
   });
 });
+
+// Steps that search for printers take up to 30 s: show it on the button that started one.
+const busy = (el) => { el.textContent = el.dataset.busy; el.classList.add('busy'); el.setAttribute('aria-busy', 'true'); };
+document.querySelectorAll('a[data-busy]').forEach((a) => a.addEventListener('click', () => busy(a)));
+document.addEventListener('submit', (e) => { if (!e.defaultPrevented && e.submitter && e.submitter.dataset.busy) busy(e.submitter); });
+
+// Copy buttons next to commands: the clipboard API needs a secure context (127.0.0.1 is one, a LAN
+// address over http isn't); without it, select the command so Ctrl+C copies it.
+document.querySelectorAll('[data-copy]').forEach((b) => {
+  b.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      b.textContent = 'Copied';
+      setTimeout(() => { b.textContent = 'Copy'; }, 2000);
+    } catch (e) {
+      const code = b.previousElementSibling;
+      const r = document.createRange();
+      r.selectNodeContents(code);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      b.textContent = 'Press Ctrl+C';
+    }
+  });
+});

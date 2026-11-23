@@ -38,12 +38,12 @@ in Part-DB, click your user name (top right) → User settings → API tokens, a
 <form method="post" action="/setup/partdb">
   {{template "csrf" .}}
   <label>Part-DB address <input name="base_url" value="{{.BaseURL}}" placeholder="https://partdb.example.org" required autofocus></label>
-  <p><button type="button" class="secondary" data-token-page="/en/user/api_token/create">Create a token in Part-DB</button>
-  <span class="muted">opens Part-DB in a new tab: choose “Read only”, create it, copy it here</span></p>
   <label>API token <input name="token" type="password" autocomplete="off" required></label>
+  <p class="hint muted">No token yet? <button type="button" class="link" data-token-page="/en/user/api_token/create">Create one in Part-DB</button>
+  (new tab): choose “Read only”, then paste it here.</p>
   <label class="check"><span><input type="checkbox" name="allow_http"{{if .AllowHTTP}} checked{{end}}> Allow plain http
   <span class="muted">(only for a Part-DB without https on your own network)</span></span></label>
-  <div class="nav">{{if .Local}}<a class="button secondary" href="/?manual">Set up by hand</a>{{else}}<span></span>{{end}}<button>Next</button></div>
+  <div class="nav">{{if .Local}}<a class="button secondary" href="/?manual">Set up by hand</a>{{else}}<span></span>{{end}}<button data-busy="Searching for printers…">Next</button></div>
 </form>
 {{template "setup-bottom" .}}{{end}}
 
@@ -65,7 +65,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <strong>{{if eq .Name "?"}}Unknown printer{{else}}{{.Name}}{{end}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>
-  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}">Ask this printer what it is</button>
+  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}" data-busy="Asking…">Ask this printer what it is</button>
   <span class="muted">(a printer that isn't a Zebra may print a page with a few strange characters)</span> · {{end}}<a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
   {{end}}
 </form>
@@ -76,11 +76,11 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
 <form method="post" action="/setup/printer/probe" class="inline-form">
   {{template "csrf" .}}
   <label>Not listed? Printer's IP address <input name="ip" placeholder="192.168.1.50" inputmode="decimal"></label>
-  <button class="secondary">Look there</button>
+  <button class="secondary" data-busy="Looking…">Look there</button>
 </form>
 <div class="nav">
   <a class="button secondary" href="/setup/partdb?edit=1">Back</a>
-  <span><a class="button secondary" href="/setup/printer?rescan=1">Search again</a>
+  <span><a class="button secondary" href="/setup/printer?rescan=1" data-busy="Searching…">Search again</a>
   {{if .Rows}}<button form="pick">Next</button>{{end}}</span>
 </div>
 {{template "setup-bottom" .}}{{end}}
@@ -99,11 +99,11 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <label>Which tape is in the printer?
       <select name="media" required>{{range .Media}}<option value="{{.ID}}" {{if eq .ID $p.Media}}selected{{end}}>{{.Name}} ({{.ID}})</option>{{end}}</select>
     </label>
-    <button>Print the test label</button>
+    <button data-busy="Printing…">Print the test label</button>
   </form>
 {{else if not .D.Printed}}
   <p>Print a test label to check that everything comes out right.</p>
-  <form method="post" action="/setup/test">{{template "csrf" .}}<button name="action" value="print">Print test label</button></form>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button name="action" value="print" data-busy="Printing…">Print test label</button></form>
 {{else}}
   <p>A test label is printing. Which one looks like yours?</p>
   <form method="post" action="/setup/test" class="pictures">
@@ -116,7 +116,7 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <button name="action" value="nothing"><span class="card nothing">nothing<br>came out</span>Nothing printed</button>
   </form>
   <p class="muted">Picking a problem changes a setting and prints the label again.</p>
-  <form method="post" action="/setup/test">{{template "csrf" .}}<button class="secondary" name="action" value="print">Print again</button></form>
+  <form method="post" action="/setup/test">{{template "csrf" .}}<button class="secondary" name="action" value="print" data-busy="Printing…">Print again</button></form>
 {{end}}
 {{if .D.ShowReport}}<form method="get" action="/setup/report"><p>Still not right? <button class="link">Send us a report</button> and we'll look into it.</p></form>{{end}}
 <div class="nav"><a class="button secondary" href="/setup/printer">Back</a><span></span></div>
@@ -164,8 +164,9 @@ print server; if it can, the printer shows up there by itself.</p>
 
 {{define "setup-finished"}}{{template "setup-top" .}}
 <h2>All set</h2>
-<p>Setup is closed. You can close this tab. To change something later, run <code>pdb-print pair</code>
-on the print server.</p>
+<p>Setup is closed. You can close this tab. To change something later,
+{{if .Service}}in Terminal (Admin) or PowerShell as administrator, run this (in Command Prompt leave out the leading &amp;){{else}}run this on the print server{{end}}:</p>
+{{template "cmd" .Cmd}}
 {{template "setup-bottom" .}}{{end}}
 
 {{define "setup-report"}}{{template "setup-top" .}}

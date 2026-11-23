@@ -11,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
@@ -136,19 +138,78 @@ func (osSystem) ServiceExists() (bool, error) {
 	return true, nil
 }
 
+// InstallService creates the service, or brings an existing one's config to what a new one gets.
 func (osSystem) InstallService(exe string, args []string) error {
 	m, err := connect()
 	if err != nil {
 		return err
 	}
 	defer m.Disconnect()
-	s, err := m.CreateService(name, exe, mgr.Config{DisplayName: name, StartType: mgr.StartAutomatic}, args...)
-	if err != nil {
+	c := mgr.Config{DisplayName: name, Description: "Part-DB label print agent", StartType: mgr.StartAutomatic,
+		ErrorControl: mgr.ErrorNormal} // mgr's default is ERROR_IGNORE
+	s, err := m.OpenService(name)
+	if err == nil {
+		if err := resetConfig(s, exe, args, c.Description); err != nil {
+			s.Close()
+			return err
+		}
+	} else if s, err = m.CreateService(name, exe, c, args...); err != nil {
 		return err
 	}
 	defer s.Close()
-	r := mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: 5 * time.Second}
-	return s.SetRecoveryActions([]mgr.RecoveryAction{r, r, r}, 86400)
+	// at system shutdown a print in progress may finish: serve waits up to 2 min (default: 10 s)
+	pre := uint32(serviceStopWait.Milliseconds()) // SERVICE_PRESHUTDOWN_INFO
+	if err := windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_PRESHUTDOWN_INFO, (*byte)(unsafe.Pointer(&pre))); err != nil {
+		return err
+	}
+	// after a failure: again in 5 s (the self-update's restart relies on it), then 1 min, then every
+	// 5 min; the count starts over after a day without one
+	var restarts []mgr.RecoveryAction
+	for _, d := range []time.Duration{5 * time.Second, time.Minute, 5 * time.Minute} {
+		restarts = append(restarts, mgr.RecoveryAction{Type: mgr.ServiceRestart, Delay: d})
+	}
+	if err := s.SetRecoveryActions(restarts, 86400); err != nil {
+		return err
+	}
+	// an event source for why the service refused to start (before its log is open); the key may be left from an earlier install
+	_ = eventlog.Remove(name)
+	if err := eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
+		return fmt.Errorf("register the event source: %w", err)
+	}
+	return s.SetRecoveryActionsOnNonCrashFailures(true) // also when serve fails (exit code 1), e.g. port busy at boot
+}
+
+// resetConfig gives an existing service what CreateService gives a new one: own process, automatic
+// start (not delayed), normal error control, no load-order group, LocalSystem, no dependencies, the
+// command line, names.
+// (mgr's UpdateConfig can't clear dependencies.)
+func resetConfig(s *mgr.Service, exe string, args []string, desc string) error {
+	cmd := syscall.EscapeArg(exe) // as CreateService builds it
+	for _, a := range args {
+		cmd += " " + syscall.EscapeArg(a)
+	}
+	var p [4]*uint16
+	for i, v := range []string{cmd, "LocalSystem", "", name} {
+		var err error
+		if p[i], err = windows.UTF16PtrFromString(v); err != nil {
+			return err
+		}
+	}
+	noDeps := []uint16{0, 0}
+	if err := windows.ChangeServiceConfig(s.Handle, windows.SERVICE_WIN32_OWN_PROCESS, windows.SERVICE_AUTO_START,
+		windows.SERVICE_ERROR_NORMAL, p[0], p[2], nil, &noDeps[0], p[1], p[2], p[3]); err != nil { // "" clears; nil keeps
+		return err
+	}
+	d, err := windows.UTF16PtrFromString(desc)
+	if err != nil {
+		return err
+	}
+	sd := windows.SERVICE_DESCRIPTION{Description: d}
+	if err := windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_DESCRIPTION, (*byte)(unsafe.Pointer(&sd))); err != nil {
+		return err
+	}
+	delayed := windows.SERVICE_DELAYED_AUTO_START_INFO{IsDelayedAutoStartUp: 0}
+	return windows.ChangeServiceConfig2(s.Handle, windows.SERVICE_CONFIG_DELAYED_AUTO_START_INFO, (*byte)(unsafe.Pointer(&delayed)))
 }
 
 func withService(f func(*mgr.Service) error) error {
@@ -166,32 +227,46 @@ func withService(f func(*mgr.Service) error) error {
 }
 
 func (osSystem) RemoveService() error {
-	return withService(func(s *mgr.Service) error { return s.Delete() })
+	if err := withService(func(s *mgr.Service) error { return s.Delete() }); err != nil {
+		return err
+	}
+	_ = eventlog.Remove(name) // best effort: a leftover source only names us in Event Viewer
+	return nil
 }
 
 func (osSystem) StartService() error {
 	return withService(func(s *mgr.Service) error { return s.Start() })
 }
 
+func (osSystem) ServiceStopped() (bool, error) {
+	var stopped bool
+	err := withService(func(s *mgr.Service) error {
+		st, err := s.Query()
+		stopped = st.State == svc.Stopped
+		return err
+	})
+	return stopped, err
+}
+
 func (osSystem) StopService(timeout time.Duration) error {
 	return withService(func(s *mgr.Service) error {
-		st, err := s.Control(svc.Stop)
-		if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
-			return nil // already stopped
-		}
-		if err != nil {
-			return err
-		}
-		for end := time.Now().Add(timeout); st.State != svc.Stopped; {
+		// Stop is sent until the service says it isn't running: one that is starting (or already
+		// stopping) can't take it yet and answers CANNOT_ACCEPT_CTRL.
+		for end := time.Now().Add(timeout); ; {
+			st, err := s.Control(svc.Stop)
+			switch {
+			case errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE):
+				return nil // stopped
+			case err == nil && st.State == svc.Stopped:
+				return nil
+			case err != nil && !errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL):
+				return err
+			}
 			if time.Now().After(end) {
 				return errors.New("timeout waiting for service to stop")
 			}
 			time.Sleep(300 * time.Millisecond)
-			if st, err = s.Query(); err != nil {
-				return err
-			}
 		}
-		return nil
 	})
 }
 
@@ -246,6 +321,8 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return nil // no such process: it has already exited
+	} else if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return ErrCantWatch // another user's or an elevated process
 	} else if err != nil {
 		return err
 	}
@@ -260,6 +337,131 @@ func (osSystem) WaitExit(pid int, timeout time.Duration) error {
 	return nil
 }
 
+func (osSystem) OwnedByAdmins(path string) (bool, error) { return OwnedByAdmins(path) }
+
+// OwnedByAdmins reports whether path (a link followed) is owned by Administrators or SYSTEM.
+func OwnedByAdmins(path string) (bool, error) {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	o, _, err := sd.Owner()
+	if err != nil {
+		return false, err
+	}
+	return o.IsWellKnown(windows.WinBuiltinAdministratorsSid) || o.IsWellKnown(windows.WinLocalSystemSid), nil
+}
+
+// longPath expands 8.3 short names (C:\PROGRA~1); p itself when that fails (e.g. it doesn't exist).
+func longPath(p string) string {
+	in, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, windows.MAX_PATH)
+	for {
+		n, err := windows.GetLongPathName(in, &buf[0], uint32(len(buf)))
+		if err != nil || n == 0 {
+			return p
+		} else if n < uint32(len(buf)) { // else n is the size it needs
+			return windows.UTF16ToString(buf[:n])
+		}
+		buf = make([]uint16, n)
+	}
+}
+
+func isReparse(fi os.FileInfo) bool {
+	a, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	return fi.Mode()&os.ModeSymlink != 0 || ok && a.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
+}
+
+// adminOnlyDir: owned by Administrators; Administrators and SYSTEM, inherited by what is created
+// inside; nothing from the parent.
+const adminOnlyDir = "O:BAD:P(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
+
+// createAdminOnly creates dir (not its parents' ACL) with an ACL of Administrators + SYSTEM only, set
+// at creation, so no other user can get a file into it first. It fails if dir exists (os.ErrExist).
+func createAdminOnly(dir string) error {
+	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	p, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	if err := windows.CreateDirectory(p, sa); err != nil {
+		return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+	}
+	return nil
+}
+
+// MkdirAdminOnly creates dir as createAdminOnly does, or resets an existing dir's owner and ACL to
+// that. Reset only a dir administrators own: its maker may hold a handle to it.
+func MkdirAdminOnly(dir string) error {
+	if err := notLink(dir); err != nil {
+		return err
+	}
+	if err := createAdminOnly(dir); !errors.Is(err, os.ErrExist) {
+		return err // nil: created with the ACL
+	}
+	sd, err := windows.SecurityDescriptorFromString(adminOnlyDir)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	err = windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf(`can't take it over (no access for administrators): as administrator run takeown /f "%[1]s" /r /d y and icacls "%[1]s" /reset /t, then delete it and run the install again`, dir)
+	}
+	return err
+}
+
+// WriteAdminOnly writes data to path readable only by Administrators and SYSTEM, owned by
+// Administrators (not the account that writes it, which OwnedByAdmins wouldn't trust). The file is
+// created under a temporary name with that owner and ACL already set (and no sharing), so no other
+// user can open it at any point, then renamed over path (a rename keeps both).
+func WriteAdminOnly(path string, data []byte) error {
+	sd, err := windows.SecurityDescriptorFromString("O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)")
+	if err != nil {
+		return err
+	}
+	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	p, err := windows.UTF16PtrFromString(tmp)
+	if err != nil {
+		return err
+	}
+	h, err := windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return &os.PathError{Op: "create", Path: tmp, Err: err}
+	}
+	f := os.NewFile(uintptr(h), tmp)
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }

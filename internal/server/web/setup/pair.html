@@ -6,6 +6,7 @@
 <title>Set up pdb-print</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body class="setup">
 <header>
@@ -16,8 +17,10 @@
 <section>
 {{if .Open}}
   <h2>Type the 6-digit code</h2>
-  <p>It is shown where you installed pdb-print: in the install output, in <code>docker logs</code>,
-  or run <code>pdb-print pair</code> on the print server.</p>
+  {{if .Service}}<p>In Terminal (Admin) or PowerShell as administrator, run this (in Command Prompt leave out the leading &amp;): It shows the code.</p>
+  {{else}}<p>It is shown where you installed pdb-print: in the install output or in <code>docker logs</code>.
+  Or run this on the print server:</p>{{end}}
+  {{template "cmd" .Cmd}}
   {{with .Err}}<p class="flash err" role="alert">{{.}}</p>{{end}}
   <form method="post" action="/setup/pair" class="pair">
     <label>Code
@@ -25,14 +28,19 @@
     </label>
     <button>Continue</button>
   </form>
-  <p class="muted">Setup is open for about {{.Minutes}} more minute{{if ne .Minutes 1}}s{{end}}. After that, run
-  <code>pdb-print pair</code> on the print server to open it again. Use this on a network you trust.</p>
+  <p class="muted">Setup is open for about {{.Minutes}} more minute{{if ne .Minutes 1}}s{{end}}. After that, run the
+  command above again to open it. Use this on a network you trust.</p>
 {{else}}
   <h2>Setup is closed</h2>
-  <p>Run <code>pdb-print pair</code> on the print server (in Docker: <code>docker exec &lt;name&gt; pdb-print pair</code>)
-  to open it again, then reload this page.</p>
+  {{if .Service}}<p>To open it again: in Terminal (Admin) or PowerShell as administrator, run this (in Command Prompt leave out the leading &amp;):</p>
+  {{else}}<p>Run this on the print server (in Docker: <code>docker exec &lt;name&gt; pdb-print pair</code>) to open it
+  again, then reload this page:</p>{{end}}
+  {{template "cmd" .Cmd}}
+  {{if .Service}}<p>Then reload this page.</p>{{end}}
 {{end}}
 </section>
 </main>
 </body>
 </html>
+
+{{define "cmd"}}<div class="cmd"><code>{{.}}</code><button type="button" class="secondary" data-copy="{{.}}">Copy</button></div>{{end}}

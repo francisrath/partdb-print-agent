@@ -5,9 +5,11 @@
 package wininstall
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,10 +20,11 @@ import (
 )
 
 const (
-	name     = "pdb-print"
-	exeName  = "pdb-print.exe"
-	exeWName = "pdb-printw.exe"
-	uiURL    = "http://127.0.0.1:8631"
+	name      = "pdb-print"
+	exeName   = "pdb-print.exe"
+	exeWName  = "pdb-printw.exe"
+	agentAddr = "127.0.0.1:8631"
+	uiURL     = "http://" + agentAddr
 )
 
 // ErrNotWindows is returned by the System on non-Windows platforms.
@@ -93,6 +96,7 @@ type System interface {
 	InstallService(exe string, args []string) error
 	RemoveService() error
 	StartService() error
+	ServiceStopped() (bool, error) // the service's state is Stopped
 	StopService(timeout time.Duration) error
 	Spawn(exe string, args ...string) error // detached, no window, cwd = exe's dir
 	// PortInUse reports whether addr can't be bound: use it to see that a port is free.
@@ -104,15 +108,27 @@ type System interface {
 	DeleteAfterExit(path string) error
 	// WaitExit waits until process pid has exited; one that doesn't exist has.
 	WaitExit(pid int, timeout time.Duration) error
+	// OwnedByAdmins reports whether path is owned by Administrators or SYSTEM.
+	OwnedByAdmins(path string) (bool, error)
 }
 
 // Options for Install. NoSelfUpdate writes self_update: false into the config; Quiet is for the caller.
+// Out gets notices for the user (nil = none).
 type Options struct {
 	Mode                Mode
 	Quiet, NoSelfUpdate bool
 	Self, Version       string
 	Env                 Env
+	Out                 io.Writer
 }
+
+// ErrCantWatch is WaitExit's answer for a process it may not open (another user's, or an elevated
+// one): wait for its port to free instead.
+var ErrCantWatch = errors.New("can't watch the process")
+
+// serviceStopWait is how long a stopping service may take: serve's own shutdown (a print in
+// progress finishes, up to 2 min) and a little more.
+const serviceStopWait = 2*time.Minute + 10*time.Second
 
 // Quote quotes one command-line argument (paths only: no embedded quotes).
 // Trailing backslashes are doubled so they do not escape the closing quote.
@@ -124,21 +140,50 @@ func Quote(path string) string {
 // ErrNotStarted marks an Install that completed but could not start the agent.
 var ErrNotStarted = errors.New("installed, but could not start the agent")
 
+// ErrPerUserStarted marks a service Install that failed after which the per-user agent it was to
+// replace was started again.
+var ErrPerUserStarted = errors.New("the per-user pdb-print was started again")
+
 // Install copies the binaries into the mode's program dir, registers autostart
 // and the uninstall entry, writes the Start-menu link and starts the agent.
 // Running it again over an existing install updates it in place.
-func Install(sys System, o Options) (Layout, error) {
-	l := LayoutFor(o.Mode, o.Env)
+func Install(sys System, o Options) (l Layout, err error) {
+	l = LayoutFor(o.Mode, o.Env)
 	if err := o.Env.check(o.Mode); err != nil {
 		return l, err
-	}
-	if o.Mode == Service {
-		return l, errors.New("service install: not implemented yet")
 	}
 	selfW := filepath.Join(filepath.Dir(o.Self), exeWName)
 	if _, err := os.Stat(selfW); err != nil {
 		return l, fmt.Errorf("%s not found next to %s (extract the whole zip first, then run %s from the extracted folder): %w",
 			exeWName, o.Self, exeName, err)
+	}
+	if o.Mode == Service {
+		hadService, qerr := sys.ServiceExists() // not err: the defer below must see the result
+		if qerr != nil {
+			return l, fmt.Errorf("query service: %w", qerr)
+		}
+		if hadService { // waits for a print in progress; its exes can then be swapped
+			if err := sys.StopService(serviceStopWait); err != nil {
+				return l, fmt.Errorf("stop service: %w", err)
+			}
+			defer func() {
+				if err != nil && !errors.Is(err, ErrNotStarted) {
+					err = fmt.Errorf("%w (the pdb-print service is stopped; run the install again)", err)
+				}
+			}()
+		}
+		if sys.PortInUse(agentAddr) { // not our (now stopped) service, nor the per-user agent the caller stopped
+			return l, errors.New("port 8631 is in use by another program: stop it and run the install again")
+		}
+		// before any file goes in it: ProgramData lets every user create files (a planted session.key)
+		if err := readyConfigDir(sys, filepath.Dir(l.Config), hadService, o.Out); err != nil {
+			return l, err
+		}
+		// every install (an upgrade too) signs every browser out: a cookie may have reached another
+		// program on 127.0.0.1 (cookies ignore ports)
+		if err := newSessionKey(filepath.Join(filepath.Dir(l.Config), "session.key")); err != nil {
+			return l, fmt.Errorf("write session key: %w", err)
+		}
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
 		return l, fmt.Errorf("create program dir: %w", err)
@@ -151,7 +196,7 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := copyExe(selfW, l.ExeW); err != nil {
 		return l, fmt.Errorf("copy %s: %w", exeWName, err)
 	}
-	err := sys.WriteUninstall(o.Mode, Entry{
+	err = sys.WriteUninstall(o.Mode, Entry{
 		DisplayName:     name,
 		DisplayVersion:  o.Version,
 		Publisher:       name,
@@ -168,10 +213,48 @@ func Install(sys System, o Options) (Layout, error) {
 	if err := os.WriteFile(l.StartMenuLink, []byte("[InternetShortcut]\r\nURL="+uiURL+"\r\n"), 0o644); err != nil {
 		return l, fmt.Errorf("write Start menu link: %w", err)
 	}
+	var perUser Layout // the per-user install the service replaces (ProgramDir "" = none)
+	copied := false    // its config is the service's now
+	if o.Mode == Service {
+		if perUser, copied, err = copyPerUserConfig(sys, o, l.Config); err != nil {
+			return l, err
+		}
+		if _, err := os.Stat(l.Config); errors.Is(err, os.ErrNotExist) { // service run --config needs one
+			if err := WriteAdminOnly(l.Config, nil); err != nil {
+				return l, fmt.Errorf("write config: %w", err)
+			}
+		}
+	}
 	if o.NoSelfUpdate { // before the agent starts, so it reads the new value
-		if err := disableSelfUpdate(l.Config); err != nil {
+		if err := disableSelfUpdate(l.Config, o.Mode); err != nil {
 			return l, fmt.Errorf("write config: %w", err)
 		}
+	}
+	if o.Mode == Service {
+		// creates it, or refreshes an existing one's config; raw paths: the service manager quotes them
+		if err := sys.InstallService(l.Exe, []string{"service", "run", "--config", l.Config}); err != nil {
+			return l, fmt.Errorf("install service: %w", err)
+		}
+		// Running only means the handler is up: serve may still fail on its config or the port
+		err := sys.StartService()
+		if err == nil {
+			err = waitServing(sys)
+		}
+		if err != nil {
+			err = fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s, or Event Viewer → Windows Logs → Application (source pdb-print) if there is none",
+				ErrNotStarted, err, filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
+			if perUser.ProgramDir != "" { // the caller stopped it; it is still installed
+				if serr := sys.Spawn(perUser.ExeW, "serve"); serr != nil {
+					return l, fmt.Errorf("%w; and the per-user pdb-print couldn't be started again: %v", err, serr)
+				}
+				return l, fmt.Errorf("%w; %w", err, ErrPerUserStarted)
+			}
+			return l, err
+		}
+		if perUser.ProgramDir != "" {
+			return l, removePerUser(sys, o, perUser, copied && keychainTokens(l.Config))
+		}
+		return l, nil
 	}
 	if err := sys.SetRun(name, Quote(l.ExeW)+" serve"); err != nil {
 		return l, fmt.Errorf("set Run value: %w", err)
@@ -182,14 +265,237 @@ func Install(sys System, o Options) (Layout, error) {
 	return l, nil
 }
 
-func disableSelfUpdate(path string) error {
+// Swapped by tests.
+var (
+	serveWait = 15 * time.Second
+	servePoll = 250 * time.Millisecond
+)
+
+// waitServing waits until the started service listens on agentAddr; a service that stops fails at once.
+func waitServing(sys System) error {
+	for end := time.Now().Add(serveWait); !sys.Listening(agentAddr); time.Sleep(servePoll) {
+		if stopped, err := sys.ServiceStopped(); err != nil {
+			return err
+		} else if stopped {
+			return errors.New("it stopped")
+		}
+		if time.Now().After(end) {
+			return fmt.Errorf("not listening on %s after %s", agentAddr, serveWait)
+		}
+	}
+	// something listens: it isn't ours if the service has died meanwhile
+	if stopped, err := sys.ServiceStopped(); err != nil {
+		return err
+	} else if stopped {
+		return fmt.Errorf("it stopped, and something else listens on %s", agentAddr)
+	}
+	return nil
+}
+
+// cleanConfigDir readies a trusted config dir for a first install: an old pairing code goes (someone
+// may know it). The session key is new on every install (newSessionKey).
+func cleanConfigDir(dir string) error {
+	if err := os.Remove(filepath.Join(dir, "pair-code.txt")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// untrusted says why dir can't be trusted as the service's config dir ("" = it can): it, or anything
+// in it, is a link, or is not owned by Administrators or SYSTEM. This is a check, not a lock: a user
+// who can still write somewhere in the tree could swap a file in after it. That fails closed: the
+// service then refuses its folder (or ignores the file), so the most such a user gets is a service
+// that doesn't start, never their file trusted.
+func untrusted(sys System, dir string) (string, error) {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() && !isReparse(fi) {
+		return "it is not a folder", nil
+	}
+	why := ""
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if isReparse(fi) { // before the owner: that check follows links
+			why = p + " is a link"
+			return filepath.SkipAll
+		}
+		owned, err := sys.OwnedByAdmins(p)
+		if err != nil {
+			return fmt.Errorf("owner of %s: %w", p, err)
+		} else if !owned {
+			why = p + " was not made by an administrator"
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return why, err
+}
+
+// readyConfigDir makes dir the service's admin-only config dir. One that isn't trusted (untrusted) is
+// moved aside rather than re-ACL'd in place (its maker may hold a handle to it and swap it later),
+// and a new one is created with the ACL. A first install also cleans a trusted one (cleanConfigDir).
+func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) error {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return createConfigDir(dir)
+	}
+	why, err := untrusted(sys, dir)
+	if err != nil {
+		return err
+	}
+	if why != "" {
+		aside := fmt.Sprintf("%s.untrusted.%d", dir, time.Now().UnixNano())
+		if _, err := os.Lstat(aside); err == nil {
+			return fmt.Errorf("can't move %s aside: %s exists already; run the install again", dir, aside)
+		}
+		if err := os.Rename(dir, aside); err != nil {
+			return fmt.Errorf("can't move %s aside to %s (%s): %w; if another user has it open, sign them out or restart Windows, then run the install again", dir, aside, why, err)
+		}
+		if out != nil {
+			fmt.Fprintf(out, "Moved %s aside to %s: %s.\n", dir, aside, why)
+		}
+		return createConfigDir(dir)
+	}
+	if err := MkdirAdminOnly(dir); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if !hadService {
+		return cleanConfigDir(dir)
+	}
+	return nil
+}
+
+// ErrUntrustedDir: ReadyServiceDir refused the config dir (see untrusted).
+var ErrUntrustedDir = errors.New("not starting: untrusted config folder")
+
+// ReadyServiceDir is what the service does before it opens its log: the config dir must be trusted
+// (see untrusted), else it doesn't start; a missing one (deleted by an admin) is created admin-only.
+// A missing config.yaml is written empty. A trusted dir gets the admin-only ACL again (an admin may
+// have recreated it with ProgramData's, readable by every user); an untrusted one is never re-ACL'd.
+func ReadyServiceDir(sys System, cfgPath string) error {
+	dir := filepath.Dir(cfgPath)
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		if err := createConfigDir(dir); err != nil {
+			return err
+		}
+	} else if why, err := untrusted(sys, dir); err != nil {
+		return err
+	} else if why != "" {
+		return fmt.Errorf("%w %s (%s): delete it and run pdb-print install --service again", ErrUntrustedDir, dir, why)
+	} else if err := MkdirAdminOnly(dir); err != nil { // the whole tree is admins': safe in place
+		return fmt.Errorf("reset %s: %w", dir, err) // e.g. an admin recreated it with the inherited ACL
+	}
+	if _, err := os.Lstat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		return WriteAdminOnly(cfgPath, nil)
+	}
+	return nil
+}
+
+// createConfigDir creates dir admin-only; one that exists already was made by someone else meanwhile.
+func createConfigDir(dir string) error {
+	err := createAdminOnly(dir)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s was created by someone else while the install ran: run the install again", dir)
+	} else if err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	return nil
+}
+
+// notLink refuses a path that is a link (symlink, junction): the admin-only ACL would land elsewhere.
+func notLink(dir string) error {
+	if fi, err := os.Lstat(dir); err == nil && isReparse(fi) {
+		return fmt.Errorf("%s is a link (junction or symlink), not a folder: delete it and run the install again", dir)
+	}
+	return nil
+}
+
+// copyPerUserConfig finds this user's per-user install, which the service replaces, and copies its
+// config to cfg (unless the service has one already; copied says whether it was). The caller has
+// stopped the per-user agent; it is removed (removePerUser) only once the service serves.
+func copyPerUserConfig(sys System, o Options, cfg string) (pu Layout, copied bool, err error) {
+	pu, ok, err := InstalledAs(sys, PerUser, o.Env)
+	if err != nil {
+		return Layout{}, false, fmt.Errorf("per-user install: %w", err)
+	} else if !ok {
+		return Layout{}, false, nil
+	}
+	if _, err := os.Stat(cfg); errors.Is(err, os.ErrNotExist) {
+		b, err := os.ReadFile(pu.Config)
+		if err == nil {
+			if err := WriteAdminOnly(cfg, b); err != nil {
+				return Layout{}, false, fmt.Errorf("copy config: %w", err)
+			}
+			copied = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Layout{}, false, fmt.Errorf("read per-user config: %w", err)
+		}
+	}
+	return pu, copied, nil
+}
+
+// removePerUser removes the per-user install pu (its config stays) once the service serves;
+// keychain: the copied config has a token in that user's keychain.
+func removePerUser(sys System, o Options, pu Layout, keychain bool) error {
+	if err := Uninstall(sys, PerUser, false, o.Env); err != nil {
+		return fmt.Errorf("the service runs, but the per-user install couldn't be removed (remove it in Settings → Apps): %w", err)
+	}
+	if o.Out == nil {
+		return nil
+	}
+	fmt.Fprintf(o.Out, "Replaced the per-user install of pdb-print; its config stays in %s.\n", filepath.Dir(pu.Config))
+	if keychain {
+		// the token is in this user's keychain; the service (LocalSystem) has its own
+		fmt.Fprintln(o.Out, "The service can't read this user's keychain: re-enter the Part-DB token in the web UI (pair with `pdb-print pair`).")
+	}
+	return nil
+}
+
+// keychainTokens reports whether the config has an instance whose token isn't in the file.
+func keychainTokens(path string) bool {
+	cfg, err := config.Load(path, true)
+	if err != nil {
+		return false
+	}
+	for _, in := range cfg.Instances {
+		if in.Token == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func disableSelfUpdate(path string, m Mode) error {
 	cfg, err := config.Load(path, false)
 	if err != nil {
 		return err
 	}
 	off := false
 	cfg.SelfUpdate = &off
-	return cfg.Save(path)
+	if err := cfg.Save(path); err != nil || m != Service {
+		return err
+	}
+	b, err := os.ReadFile(path) // again, owned by Administrators (Save's file is this account's)
+	if err != nil {
+		return err
+	}
+	return WriteAdminOnly(path, b)
+}
+
+// newSessionKey writes a new random key for the service's browser sessions (see server.sessionKey).
+func newSessionKey(path string) error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	return WriteAdminOnly(path, key)
 }
 
 // check rejects an Env that lacks the folders mode m needs.
@@ -280,7 +586,7 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 			return fmt.Errorf("query service: %w", err)
 		}
 		if ok {
-			if err := sys.StopService(30 * time.Second); err != nil {
+			if err := sys.StopService(serviceStopWait); err != nil {
 				return fmt.Errorf("stop service: %w", err)
 			}
 			if err := sys.RemoveService(); err != nil {
@@ -304,10 +610,7 @@ func Uninstall(sys System, m Mode, purge bool, e Env) error {
 	if err := sys.DeleteUninstall(m); err != nil {
 		return fmt.Errorf("delete uninstall entry: %w", err)
 	}
-	// a process can't remove its own working dir on Windows (Settings may start us in it)
-	if wd, err := os.Getwd(); err == nil && within(wd, l.ProgramDir) {
-		_ = os.Chdir(filepath.Dir(l.ProgramDir))
-	}
+	LeaveDir(l.ProgramDir) // Settings may start us in it
 	aside, err := removeDirFn(l.ProgramDir)
 	var leftover []string // files moved aside that nothing will delete
 	for _, p := range aside {
@@ -364,6 +667,14 @@ func removeDir(dir string) (aside []string, err error) {
 	return aside, os.RemoveAll(dir)
 }
 
+// LeaveDir moves this process's working dir out of dir if it is in it: on Windows a dir that is
+// some process's working dir can't be removed.
+func LeaveDir(dir string) {
+	if wd, err := os.Getwd(); err == nil && within(wd, dir) {
+		_ = os.Chdir(filepath.Dir(dir))
+	}
+}
+
 // within reports whether path is dir or inside it, ignoring case as Windows does.
 func within(path, dir string) bool {
 	rel, err := filepath.Rel(strings.ToLower(dir), strings.ToLower(path))
@@ -382,19 +693,39 @@ func DeleteLaterCmdLine(path string) string {
 // dir taken from its uninstall entry.
 func Installed(sys System, e Env) (Layout, bool, error) {
 	for _, m := range []Mode{PerUser, Service} {
-		en, ok, err := sys.ReadUninstall(m)
-		if err != nil { // can't tell: don't report "not installed"
-			return Layout{}, false, fmt.Errorf("read uninstall entry: %w", err)
-		}
-		if ok && en.InstallLocation != "" {
-			l := LayoutFor(m, e)
-			l.ProgramDir = en.InstallLocation
-			l.Exe = filepath.Join(l.ProgramDir, exeName)
-			l.ExeW = filepath.Join(l.ProgramDir, exeWName)
-			return l, true, nil
+		if l, ok, err := InstalledAs(sys, m, e); err != nil || ok {
+			return l, ok, err
 		}
 	}
 	return Layout{}, false, nil
+}
+
+// InstalledAs reports whether mode m is installed, with the program dir taken from its uninstall entry.
+func InstalledAs(sys System, m Mode, e Env) (Layout, bool, error) {
+	en, ok, err := sys.ReadUninstall(m)
+	if err != nil { // can't tell: don't report "not installed"
+		return Layout{}, false, fmt.Errorf("read uninstall entry: %w", err)
+	}
+	if !ok || en.InstallLocation == "" {
+		return Layout{}, false, nil
+	}
+	l := LayoutFor(m, e)
+	l.ProgramDir = en.InstallLocation
+	l.Exe = filepath.Join(l.ProgramDir, exeName)
+	l.ExeW = filepath.Join(l.ProgramDir, exeWName)
+	return l, true, nil
+}
+
+// ModeOf reports which mode's program dir exe is in (false: neither, e.g. a copy run from a zip).
+// Short (8.3) names are expanded first.
+func ModeOf(exe string, e Env) (Mode, bool) {
+	exe = longPath(exe)
+	for _, m := range []Mode{Service, PerUser} {
+		if d := LayoutFor(m, e).ProgramDir; filepath.IsAbs(d) && within(exe, longPath(d)) {
+			return m, true
+		}
+	}
+	return PerUser, false
 }
 
 // listening reports whether something accepts TCP connections on addr.

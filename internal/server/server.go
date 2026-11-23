@@ -80,6 +80,24 @@ type Server struct {
 	OnInstance func(in config.Instance)
 	// Quit stops serve like SIGTERM (POST /v1/quit from `pdb-print install`/`uninstall`); nil = not offered.
 	Quit func()
+	// PairLoopback (the Windows service on a shared PC): loopback browsers pair with a code like the
+	// LAN; no local session. PairCodeFile: /v1/pair writes the code there (admin-only) instead of
+	// answering it. Both are set before Handler.
+	PairLoopback bool
+	PairCodeFile string
+	// IPv4Only: only 127.0.0.1 is ours (the service couldn't listen on [::1]); localhost and [::1]
+	// Host headers are refused, as a program listening there would share our origin. Set before Handler.
+	IPv4Only bool
+	// PairCommand is how the pages tell people to open setup again; "" = `pdb-print pair`.
+	PairCommand string
+	// PairRequestFile (PairLoopback): /v1/pair opens a window only for a request that carries, in
+	// the PairRequestHeader, the nonce `pdb-print pair` wrote there (admin-only): proof of admin.
+	PairRequestFile string
+	// SessionKeyFile holds the secret that signs PairLoopback's long-lived sessions (created on first
+	// pairing, admin-only); deleting it signs every browser out.
+	SessionKeyFile string
+	keyMu          sync.Mutex // creating the session key
+	badKey         string     // the untrusted key file last logged (mtime, size); under keyMu
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
@@ -95,12 +113,13 @@ type Server struct {
 	// Discover finds printers for the wizard (ip "" = USB, the LAN and Bluetooth); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
 
-	mu    sync.Mutex // guards cfg, flash, jobs, seen
-	cfg   *config.Config
-	csrf  string
-	flash *flash
-	jobs  []Job
-	seen  map[string]time.Time // used handoff signatures
+	mu          sync.Mutex // guards cfg, flash, jobs, seen
+	cfg         *config.Config
+	csrf        string
+	handoffCSRF string // the handoff page's own token: that page is open to unpaired browsers
+	flash       *flash
+	jobs        []Job
+	seen        map[string]time.Time // used handoff signatures
 }
 
 type flash struct {
@@ -119,7 +138,7 @@ type Job struct {
 
 func New(cfg *config.Config, cfgPath string, svc *printing.Service, log *slog.Logger, addr, version string) *Server {
 	s := &Server{cfg: cfg, CfgPath: cfgPath, Svc: svc, Log: log, Addr: addr, Version: version,
-		csrf: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
+		csrf: randomHex(32), handoffCSRF: randomHex(32), seen: map[string]time.Time{}, Window: &Window{}, kick: make(chan struct{}, 1), scanned: make(chan struct{}, 1)}
 	s.Window.OnClose = s.kickSetup
 	s.local = &Session{ID: "local", CSRF: s.csrf, Draft: &Draft{}}
 	s.finishGrace = 10 * time.Second
@@ -161,14 +180,19 @@ func (s *Server) Handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]int{"pid": os.Getpid()})
 		s.Quit() // the graceful shutdown waits for this response and in-flight prints
 	})
-	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
-		d := s.local.Draft // a fresh start
-		d.mu.Lock()
-		d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
-		d.resetPrinter(config.Printer{})
-		d.mu.Unlock()
-		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
-	})
+	if s.PairLoopback { // as on the LAN: the pair page, then the wizard
+		mux.HandleFunc("GET /setup/{$}", s.setupStart)
+		mux.HandleFunc("POST /setup/pair", s.pairLocal)
+		mux.HandleFunc("POST /sessions/sign-out", s.signOutAll)
+	} else {
+		mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
+			d := s.local.Draft // a fresh start
+			d.mu.Lock()
+			d.reset()
+			d.mu.Unlock()
+			http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+		})
+	}
 	s.setupRoutes(mux)
 	mux.HandleFunc("GET /v1/handoff", s.handoff)
 	mux.HandleFunc("POST /v1/handoff", s.handoff)
@@ -185,14 +209,34 @@ func (s *Server) Handler() http.Handler {
 // guard enforces the loopback Host allowlist, CSRF on POST and safe headers.
 func (s *Server) guard(next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(s.Addr)
-	allowed := map[string]bool{"127.0.0.1:" + port: true, "localhost:" + port: true, "[::1]:" + port: true,
-		s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
+	allowed := map[string]bool{"127.0.0.1:" + port: true, s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
+	if !s.IPv4Only {
+		allowed["localhost:"+port], allowed["[::1]:"+port] = true, true
+	}
+	pairLoopback := s.PairLoopback
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.Host] {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
 		securityHeaders(w)
+		paired := false // PairLoopback: the browser has a long-lived session
+		if pairLoopback {
+			get := r.Method == http.MethodGet || r.Method == http.MethodHead
+			switch {
+			case get && isAsset(r.URL.Path): // no key-file read for every stylesheet and icon
+			case s.longSession(r, time.Now()):
+				paired = true
+				r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, s.local))
+			case pairFree(r):
+			case get:
+				http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+				return
+			default:
+				http.Error(w, "this browser isn't paired: run \"pdb-print pair\" as administrator for a code, then reload the page", http.StatusForbidden)
+				return
+			}
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
 			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
 			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
@@ -210,7 +254,17 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			origin := r.Header.Get("Origin")
 			originOK := origin == "" || origin == "http://"+r.Host
-			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(s.csrf)) == 1
+			want := s.csrf
+			if r.URL.Path == "/v1/handoff" {
+				want = s.handoffCSRF // its page is shown without pairing: never the settings token
+			}
+			if pairLoopback && paired && originOK && r.URL.Path == "/setup/pair" {
+				// the code sent again (a double click, an old tab): already paired, nothing to change
+				http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+				return
+			}
+			tokenOK := subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(want)) == 1 ||
+				pairLoopback && !paired && r.URL.Path == "/setup/pair" // the code is the check, as on the LAN
 			if !originOK || !tokenOK {
 				s.Log.Warn("rejected POST", "path", r.URL.Path, "origin", origin, "origin_ok", originOK, "csrf_ok", tokenOK)
 				http.Error(w, "invalid or missing CSRF token: reload the page", http.StatusForbidden)
@@ -219,6 +273,29 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// pairFree reports whether a loopback request is served without a paired session under
+// PairLoopback: what pairing needs, the read-only info, and the handoff (it has its own auth,
+// the Part-DB pairing key).
+func pairFree(r *http.Request) bool {
+	p := r.URL.Path
+	if r.Method == http.MethodPost {
+		return p == "/v1/pair" || p == "/setup/pair" || p == "/v1/handoff"
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return p == "/setup/" || p == "/v1/info" || p == "/v1/handoff" || isAsset(p)
+}
+
+// isAsset reports whether p is a static file or icon.
+func isAsset(p string) bool {
+	switch p {
+	case "/favicon.svg", "/favicon.ico", "/apple-touch-icon.png":
+		return true
+	}
+	return strings.HasPrefix(p, "/static/")
 }
 
 func securityHeaders(w http.ResponseWriter) {
@@ -307,7 +384,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		"Printers": cfg.Printers, "Models": formModels(), "Update": s.Updates.Latest(),
 		// undecided installs get the box ticked: saving without touching it means yes
 		"TelemetryDecided": cfg.Telemetry != nil, "TelemetryOn": cfg.Telemetry == nil || *cfg.Telemetry,
-		"TelemetryOff": telemetryOffReason(cfg),
+		"TelemetryOff": telemetryOffReason(cfg), "Service": s.PairLoopback,
 	}
 	data["Media"] = formMedia()
 
@@ -840,7 +917,7 @@ type handoffView struct {
 }
 
 func (s *Server) handoff(w http.ResponseWriter, r *http.Request) {
-	v := handoffView{CSRF: s.csrf}
+	v := handoffView{CSRF: s.handoffCSRF}
 	defer func() {
 		if err := pages.ExecuteTemplate(w, "handoff.html", v); err != nil {
 			s.Log.Error("render handoff", "err", err)
@@ -995,4 +1072,12 @@ func formMedia() []formMediaOption {
 		}
 	}
 	return out
+}
+
+// pairCommand is the command the pages show for opening setup again.
+func (s *Server) pairCommand() string {
+	if s.PairCommand != "" {
+		return s.PairCommand
+	}
+	return "pdb-print pair"
 }

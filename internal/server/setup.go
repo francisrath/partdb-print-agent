@@ -47,6 +47,17 @@ type Draft struct {
 
 	SavedCurrent bool     // this printer is saved (a repeated Save goes to Done)
 	Saved        []string // names saved in this session
+
+	used time.Time // the last wizard request (lockDraft)
+}
+
+// draftStale: a shared draft (service mode) unused this long starts over at /setup/.
+const draftStale = 15 * time.Minute
+
+// reset starts the wizard over (Part-DB step first, its check done again).
+func (d *Draft) reset() {
+	d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
+	d.resetPrinter(config.Printer{})
 }
 
 // resetPrinter starts the printer steps over with p.
@@ -75,8 +86,12 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /setup/report", s.setupReportPost)
 }
 
-// withLocalSession gives loopback wizard requests the one local session (no code needed here).
+// withLocalSession gives loopback wizard requests the one local session (no code needed here);
+// not under PairLoopback, where guard gives it only to paired browsers.
 func (s *Server) withLocalSession(next http.Handler) http.Handler {
+	if s.PairLoopback {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isSetupPath(r.URL.Path) {
 			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, s.local))
@@ -90,6 +105,7 @@ func lockDraft(r *http.Request) (*Session, *Draft, func()) {
 	sess := session(r)
 	d := sess.Draft
 	d.mu.Lock()
+	d.used = time.Now()
 	return sess, d, d.mu.Unlock
 }
 
@@ -100,6 +116,7 @@ func (s *Server) setupPage(w http.ResponseWriter, r *http.Request, page string, 
 	}
 	data["Step"], data["CSRF"], data["D"], data["Version"] = step, sess.CSRF, sess.Draft, s.Version
 	data["Local"] = sess == s.local
+	data["Cmd"], data["Service"] = s.pairCommand(), s.PairLoopback
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pages.ExecuteTemplate(w, page, data); err != nil {
 		s.Log.Error("setup page", "page", page, "err", err)
@@ -193,8 +210,11 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 	var scanErr, bleNote string
 	if !d.Scanned || r.URL.Query().Get("rescan") != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		start := time.Now()
 		cs, note, err := s.discover(ctx, "")
 		cancel()
+		s.Log.Info("setup: printer search", "subnets", fmt.Sprint(discovery.LocalSubnets()), "found", len(cs),
+			"took", time.Since(start).Round(time.Millisecond), "bluetooth", note, "err", err)
 		if err != nil && len(cs) == 0 {
 			scanErr = err.Error()
 		}

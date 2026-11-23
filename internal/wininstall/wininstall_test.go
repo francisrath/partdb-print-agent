@@ -2,6 +2,7 @@ package wininstall
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,14 +15,23 @@ import (
 )
 
 type fakeSystem struct {
-	run     map[string]string
-	unin    map[Mode]Entry
-	service bool
-	spawns  [][]string
-	uninErr error // DeleteUninstall fails with it
-	readErr error // ReadUninstall fails with it
-	delErr  error // DeleteAfterExit fails with it
-	writeOK int   // WriteUninstall calls that succeed before it fails (-1 = always)
+	run      map[string]string
+	unin     map[Mode]Entry
+	service  bool
+	spawns   [][]string
+	uninErr  error           // DeleteUninstall fails with it
+	readErr  error           // ReadUninstall fails with it
+	delErr   error           // DeleteAfterExit fails with it
+	writeOK  int             // WriteUninstall calls that succeed before it fails (-1 = always)
+	calls    []string        // service calls in order
+	startErr error           // StartService fails with it
+	notOwned map[string]bool // base names OwnedByAdmins says an ordinary user owns
+	busy     bool            // PortInUse says yes
+	up       bool            // Listening says yes (a started service serves unless dead)
+	dead     bool            // a started service never listens
+	stopped  bool            // ServiceStopped says yes
+	// perUserAtStart: the per-user install (entry, Run value) was still there when the service started
+	perUserAtStart bool
 }
 
 func newFake() *fakeSystem {
@@ -46,15 +56,39 @@ func (f *fakeSystem) DeleteUninstall(m Mode) error {
 	delete(f.unin, m)
 	return nil
 }
-func (f *fakeSystem) ServiceExists() (bool, error)          { return f.service, nil }
-func (f *fakeSystem) InstallService(string, []string) error { f.service = true; return nil }
-func (f *fakeSystem) RemoveService() error                  { f.service = false; return nil }
-func (f *fakeSystem) StartService() error                   { return nil }
-func (f *fakeSystem) StopService(time.Duration) error       { return nil }
-func (f *fakeSystem) PortInUse(string) bool                 { return false }
-func (f *fakeSystem) Listening(string) bool                 { return false }
-func (f *fakeSystem) DeleteAfterExit(string) error          { return f.delErr }
-func (f *fakeSystem) WaitExit(int, time.Duration) error     { return nil }
+func (f *fakeSystem) ServiceExists() (bool, error) { return f.service, nil }
+func (f *fakeSystem) InstallService(exe string, args []string) error {
+	f.calls = append(f.calls, "install "+strings.Join(append([]string{exe}, args...), "|"))
+	f.service = true
+	return nil
+}
+func (f *fakeSystem) RemoveService() error {
+	f.calls = append(f.calls, "remove")
+	f.service = false
+	return nil
+}
+func (f *fakeSystem) StartService() error {
+	f.calls = append(f.calls, "start")
+	_, entry := f.unin[PerUser]
+	f.perUserAtStart = entry && f.run[name] != ""
+	f.up = f.startErr == nil && !f.dead
+	return f.startErr
+}
+func (f *fakeSystem) ServiceStopped() (bool, error) { return f.stopped, nil }
+func (f *fakeSystem) StopService(d time.Duration) error {
+	f.calls = append(f.calls, "stop "+d.String())
+	return nil
+}
+func (f *fakeSystem) PortInUse(string) bool             { return f.busy }
+func (f *fakeSystem) Listening(string) bool             { return f.up }
+func (f *fakeSystem) DeleteAfterExit(string) error      { return f.delErr }
+func (f *fakeSystem) WaitExit(int, time.Duration) error { return nil }
+func (f *fakeSystem) OwnedByAdmins(p string) (bool, error) {
+	if fi, err := os.Lstat(p); err == nil && fi.Mode()&os.ModeSymlink != 0 { // the real one follows links
+		return false, errors.New("follows the link")
+	}
+	return !f.notOwned[filepath.Base(p)], nil
+}
 func (f *fakeSystem) Spawn(exe string, args ...string) error {
 	f.spawns = append(f.spawns, append([]string{exe}, args...))
 	return nil
@@ -239,9 +273,398 @@ func TestInstallMissingGUIExe(t *testing.T) {
 	}
 }
 
-func TestInstallServiceNotYet(t *testing.T) {
-	if _, err := Install(newFake(), Options{Mode: Service, Self: fakeSelf(t), Env: testEnv(t)}); err == nil {
-		t.Error("want error")
+func TestInstallServiceTakesOverPerUser(t *testing.T) {
+	for _, tt := range []struct {
+		name, perUserCfg, serviceCfg, want string
+		token                              bool // the re-enter-the-token notice
+	}{
+		{"keychain token", "instances:\n  - id: home\n    base_url: https://p.example\n", "", "instances:\n  - id: home\n    base_url: https://p.example\n", true},
+		{"token in config", "instances:\n  - id: home\n    base_url: https://p.example\n    token: t\n", "", "instances:\n  - id: home\n    base_url: https://p.example\n    token: t\n", false},
+		{"service config kept", "instances:\n  - id: home\n    base_url: https://p.example\n", "log_level: debug\n", "log_level: debug\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			pu, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.MkdirAll(filepath.Dir(pu.Config), 0o755)
+			os.WriteFile(pu.Config, []byte(tt.perUserCfg), 0o600)
+			ls := LayoutFor(Service, e)
+			if tt.serviceCfg != "" {
+				os.MkdirAll(filepath.Dir(ls.Config), 0o755)
+				os.WriteFile(ls.Config, []byte(tt.serviceCfg), 0o600)
+			}
+			var out strings.Builder
+			l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Version: "2", Env: e, Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if l != ls {
+				t.Errorf("layout %+v", l)
+			}
+			for _, p := range []string{l.Exe, l.ExeW, l.StartMenuLink} {
+				if !exists(p) {
+					t.Errorf("%s missing", p)
+				}
+			}
+			want := []string{"install " + l.Exe + "|service|run|--config|" + l.Config, "start"}
+			if strings.Join(sys.calls, ";") != strings.Join(want, ";") {
+				t.Errorf("calls %q, want %q", sys.calls, want)
+			}
+			if en := sys.unin[Service]; en.DisplayVersion != "2" || en.InstallLocation != l.ProgramDir || en.DisplayIcon != l.Exe ||
+				en.UninstallString != Quote(l.Exe)+" uninstall" {
+				t.Errorf("service entry %+v", en)
+			}
+			// the per-user install is gone, its config stays
+			if _, ok := sys.unin[PerUser]; ok || len(sys.run) != 0 || exists(pu.ProgramDir) || exists(pu.StartMenuLink) || !exists(pu.Config) {
+				t.Errorf("per-user leftovers: run %v, entries %v", sys.run, sys.unin)
+			}
+			if b, _ := os.ReadFile(l.Config); string(b) != tt.want {
+				t.Errorf("service config %q, want %q", b, tt.want)
+			}
+			if fi, err := os.Stat(filepath.Dir(l.Config)); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+				t.Errorf("config dir %v %v", fi.Mode(), err)
+			}
+			if got := strings.Contains(out.String(), "re-enter the Part-DB token in the web UI (pair with `pdb-print pair`)"); got != tt.token {
+				t.Errorf("token notice %v:\n%s", got, out.String())
+			}
+		})
+	}
+}
+
+// Over an existing service: stopped first (waiting for a print), the exes swapped, started again.
+func TestInstallServiceReinstall(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err != nil {
+		t.Fatal(err)
+	}
+	sys.calls = nil
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, NoSelfUpdate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the service's config is refreshed as on a fresh install
+	if got, want := strings.Join(sys.calls, ";"), "stop 2m10s;install "+l.Exe+"|service|run|--config|"+l.Config+";start"; got != want {
+		t.Errorf("calls %q, want %q", got, want)
+	}
+	if b, _ := os.ReadFile(l.Config); !strings.Contains(string(b), "self_update: false") {
+		t.Errorf("config %q", b)
+	}
+	const stopped = "(the pdb-print service is stopped; run the install again)"
+	sys.startErr = errors.New("boom")
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); !errors.Is(err, ErrNotStarted) || strings.Contains(err.Error(), stopped) {
+		t.Errorf("start failure: %v", err)
+	}
+	sys.startErr = errors.New("access denied")
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "or Event Viewer → Windows Logs → Application (source pdb-print)") {
+		t.Errorf("start error without the hint: %v", err)
+	}
+	sys.startErr, sys.writeOK = nil, 0
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), stopped) {
+		t.Errorf("failure after the stop: %v", err)
+	}
+}
+
+// A fresh service install keeps only what an administrator (or SYSTEM) made in the config dir, and never
+// an old session key or pairing code; a reinstall over the service keeps them.
+func TestInstallServiceCleansConfigDir(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		notOwned   []string
+		hadService bool
+		kept, gone []string
+	}{
+		{"fresh", nil, false, []string{"config.yaml", "pdb-print.log", "planted.txt", "sub"}, []string{"pair-code.txt"}},
+		// anything an ordinary user made: the whole dir is moved aside, a new empty one made
+		{"planted file", []string{"planted.txt"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "planted.txt", "sub"}},
+		{"planted subdir", []string{"sub"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "planted.txt", "sub"}},
+		{"planted config", []string{"config.yaml"}, false, []string{"config.yaml"}, []string{"pdb-print.log"}},
+		{"reinstall", nil, true, []string{"config.yaml", "pair-code.txt", "planted.txt"}, nil},
+		{"reinstall, planted", []string{"planted.txt"}, true, []string{"config.yaml"}, []string{"planted.txt"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			sys.service, sys.notOwned = tt.hadService, map[string]bool{}
+			for _, n := range tt.notOwned {
+				sys.notOwned[n] = true
+			}
+			dir := filepath.Dir(LayoutFor(Service, e).Config)
+			os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+			for _, n := range []string{"config.yaml", "pdb-print.log", "session.key", "pair-code.txt", "planted.txt"} {
+				os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600)
+			}
+			var out strings.Builder
+			if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range tt.kept {
+				if !exists(filepath.Join(dir, n)) {
+					t.Errorf("%s removed", n)
+				}
+			}
+			for _, n := range tt.gone {
+				if exists(filepath.Join(dir, n)) {
+					t.Errorf("%s kept", n)
+				}
+			}
+			// every install signs every browser out: a new session key, never the old one
+			if b, _ := os.ReadFile(filepath.Join(dir, "session.key")); len(b) != 32 {
+				t.Errorf("session key %q, want a new 32-byte key", b)
+			}
+			planted := len(tt.notOwned) > 0
+			if b, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); planted && len(b) != 0 {
+				t.Errorf("config kept: %q", b)
+			}
+			if aside, _ := filepath.Glob(dir + ".untrusted.*"); planted != (len(aside) == 1) || planted && !strings.Contains(out.String(), "was not made by an administrator") {
+				t.Errorf("aside %v:\n%s", aside, out.String())
+			}
+		})
+	}
+}
+
+// A link in the config dir (a dangling one too) makes it untrusted without asking for its owner.
+func TestInstallServiceRemovesLinks(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	dir := filepath.Dir(LayoutFor(Service, e).Config)
+	os.MkdirAll(dir, 0o755)
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), filepath.Join(dir, "session.lnk")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	var out strings.Builder
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "session.lnk")); err == nil || !strings.Contains(out.String(), "session.lnk is a link") {
+		t.Errorf("link kept (%v):\n%s", err, out.String())
+	}
+}
+
+// A fresh service install with no per-user install to take over still leaves a config for `service run --config`.
+func TestInstallServiceWritesEmptyConfig(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(l.Config); err != nil || len(b) != 0 {
+		t.Errorf("config %q %v", b, err)
+	}
+	if _, err := config.Load(l.Config, true); err != nil {
+		t.Errorf("empty config doesn't load: %v", err)
+	}
+}
+
+// A config dir an ordinary user made, a link or a file is moved aside, never re-ACL'd in place; a new
+// one is created. One administrators own stays (and is cleaned on a first install).
+func TestInstallServiceMovesUntrustedDirAside(t *testing.T) {
+	for _, tt := range []struct {
+		name, why string
+		make      func(t *testing.T, dir string)
+	}{
+		{"not owned", "was not made by an administrator", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o777)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o666)
+		}},
+		{"link", "is a link", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Skip("no symlinks here:", err)
+			}
+		}},
+		{"file", "not a folder", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			os.WriteFile(dir, []byte("x"), 0o666)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			sys.notOwned = map[string]bool{"pdb-print": tt.name == "not owned"}
+			dir := filepath.Dir(LayoutFor(Service, e).Config)
+			tt.make(t, dir)
+			var out strings.Builder
+			l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out})
+			if err != nil {
+				t.Fatal(err)
+			}
+			aside, _ := filepath.Glob(dir + ".untrusted.*")
+			if len(aside) != 1 || !strings.Contains(out.String(), "Moved "+dir+" aside to "+aside[0]) || !strings.Contains(out.String(), tt.why) {
+				t.Errorf("aside %v:\n%s", aside, out.String())
+			}
+			fi, err := os.Lstat(dir)
+			if err != nil || !fi.IsDir() || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+				t.Fatalf("new dir %v %v", fi, err)
+			}
+			if b, err := os.ReadFile(l.Config); err != nil || len(b) != 0 { // the planted config stays aside
+				t.Errorf("config %q %v", b, err)
+			}
+		})
+	}
+	t.Run("admin owned", func(t *testing.T) {
+		sys, e := newFake(), testEnv(t)
+		l := LayoutFor(Service, e)
+		os.MkdirAll(filepath.Dir(l.Config), 0o777)
+		os.WriteFile(l.Config, []byte("log_level: debug\n"), 0o600)
+		var out strings.Builder
+		if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e, Out: &out}); err != nil {
+			t.Fatal(err)
+		}
+		if aside, _ := filepath.Glob(filepath.Dir(l.Config) + ".untrusted.*"); len(aside) != 0 || strings.Contains(out.String(), "aside") {
+			t.Errorf("moved aside: %v\n%s", aside, out.String())
+		}
+		if b, _ := os.ReadFile(l.Config); string(b) != "log_level: debug\n" {
+			t.Errorf("config %q", b)
+		}
+	})
+}
+
+// Port 8631 held by another program: refused before anything changes; a service that doesn't come up names the log.
+func TestInstallServicePortAndStart(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	sys.busy = true
+	l := LayoutFor(Service, e)
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "port 8631 is in use") {
+		t.Errorf("busy port: %v", err)
+	}
+	if exists(l.ProgramDir) || exists(filepath.Dir(l.Config)) || len(sys.calls) != 0 {
+		t.Errorf("changed things: %v", sys.calls)
+	}
+	sys.busy = false
+	setVar(t, &serveWait, 30*time.Millisecond)
+	setVar(t, &servePoll, time.Millisecond)
+	log := filepath.Join(filepath.Dir(l.Config), "pdb-print.log")
+	for _, tt := range []struct {
+		name          string
+		dead, stopped bool
+		want          string // "" = no error
+	}{
+		{"serving", false, false, ""},
+		{"never listens", true, false, "didn't start (not listening on 127.0.0.1:8631 after 30ms); see " + log + ", or Event Viewer"},
+		{"stops", true, true, "didn't start (it stopped); see " + log},
+		{"impostor on the port", false, true, "something else listens on 127.0.0.1:8631"},
+	} {
+		sys.dead, sys.stopped = tt.dead, tt.stopped
+		wait := 30 * time.Millisecond
+		if tt.dead && tt.stopped { // long, so returning early is told apart from a slow runner
+			wait = 10 * time.Second
+		}
+		serveWait = wait
+		start := time.Now()
+		_, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%s: %v", tt.name, err)
+		case tt.want != "" && (!errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), tt.want)):
+			t.Errorf("%s: %v", tt.name, err)
+		case tt.dead && tt.stopped && time.Since(start) >= wait:
+			t.Errorf("%s: waited the whole time", tt.name)
+		}
+	}
+}
+
+func setVar[T any](t *testing.T, p *T, v T) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}
+
+// At start the service never re-ACLs its dir: an untrusted one stops it; a missing one is made
+// admin-only with an empty config.
+func TestReadyServiceDir(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		make     func(t *testing.T, dir string)
+		notOwned string
+		want     string // in the error; "" = starts
+	}{
+		{"missing", func(*testing.T, string) {}, "", ""},
+		{"trusted, no config", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o700) }, "", ""},
+		{"trusted, recreated wide open", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o777); os.Chmod(dir, 0o777) }, "", ""},
+		{"trusted", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o700)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("log_level: debug\n"), 0o600)
+		}, "", ""},
+		{"dir not owned", func(t *testing.T, dir string) { os.MkdirAll(dir, 0o777) }, "pdb-print", "was not made by an administrator"},
+		{"planted config", func(t *testing.T, dir string) {
+			os.MkdirAll(dir, 0o700)
+			os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("x"), 0o666)
+		}, "config.yaml", "config.yaml was not made by an administrator"},
+		{"link", func(t *testing.T, dir string) {
+			os.MkdirAll(filepath.Dir(dir), 0o755)
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Skip("no symlinks here:", err)
+			}
+		}, "", "is a link"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sys := newFake()
+			sys.notOwned = map[string]bool{tt.notOwned: true}
+			cfg := filepath.Join(t.TempDir(), "pdb-print", "config.yaml")
+			tt.make(t, filepath.Dir(cfg))
+			before, _ := os.ReadFile(cfg)
+			err := ReadyServiceDir(sys, cfg)
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) || !errors.Is(err, ErrUntrustedDir) {
+					t.Errorf("err = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Stat(filepath.Dir(cfg))
+			if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 { // MkdirAdminOnly's ACL, also on an existing dir
+				t.Errorf("dir %v %v", fi, err)
+			}
+			if b, err := os.ReadFile(cfg); err != nil || string(b) != string(before) {
+				t.Errorf("config %q %v, want %q", b, err, before)
+			}
+		})
+	}
+}
+
+func TestMkdirAdminOnlyRefusesLink(t *testing.T) {
+	r := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(r, "pdb-print")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if err := MkdirAdminOnly(filepath.Join(r, "pdb-print")); err == nil || !strings.Contains(err.Error(), "is a link") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestUninstallServiceStopsFirst(t *testing.T) {
+	sys, e := newFake(), testEnv(t)
+	l, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.calls = nil
+	if err := Uninstall(sys, Service, false, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(sys.calls, ";"); got != "stop 2m10s;remove" {
+		t.Errorf("calls %q", got)
+	}
+	if exists(l.ProgramDir) || exists(l.StartMenuLink) || len(sys.unin) != 0 {
+		t.Error("leftovers")
+	}
+}
+
+func TestMkdirAdminOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "pd", "pdb-print")
+	if err := os.MkdirAll(dir, 0o777); err != nil { // existing and wide open: reset
+		t.Fatal(err)
+	}
+	os.Chmod(dir, 0o777)
+	for range 2 {
+		if err := MkdirAdminOnly(dir); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(dir); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
+			t.Errorf("mode %v %v", fi.Mode(), err)
+		}
+		os.RemoveAll(dir) // the second round creates it
 	}
 }
 
@@ -422,6 +845,28 @@ func TestInstalled(t *testing.T) {
 	}
 }
 
+func TestModeOf(t *testing.T) {
+	e := testEnv(t)
+	for _, tt := range []struct {
+		exe string
+		m   Mode
+		ok  bool
+	}{
+		{LayoutFor(Service, e).Exe, Service, true},
+		{strings.ToUpper(LayoutFor(Service, e).Exe), Service, true},
+		{LayoutFor(PerUser, e).ExeW, PerUser, true},
+		{filepath.Join(e.LocalAppData, "Downloads", "pdb-print.exe"), PerUser, false},
+		{LayoutFor(Service, e).ProgramDir + "-old" + string(filepath.Separator) + "pdb-print.exe", PerUser, false},
+	} {
+		if m, ok := ModeOf(tt.exe, e); m != tt.m || ok != tt.ok {
+			t.Errorf("%s: %v %v, want %v %v", tt.exe, m, ok, tt.m, tt.ok)
+		}
+	}
+	if _, ok := ModeOf(`pdb-print.exe`, Env{}); ok { // no folders known: never a match
+		t.Error("empty env matched")
+	}
+}
+
 func TestQuote(t *testing.T) {
 	for in, want := range map[string]string{
 		`C:\Users\Jöhn Doe\x.exe`: `"C:\Users\Jöhn Doe\x.exe"`,
@@ -523,5 +968,47 @@ func TestInstallNoSelfUpdate(t *testing.T) {
 	c, err := config.Load(path, true)
 	if err != nil || !off || c.LogLevel != "debug" {
 		t.Errorf("agent saw self_update off: %v; config %+v, %v", off, c, err)
+	}
+}
+
+// The per-user install goes only once the service serves; if the service doesn't start, the per-user
+// agent (stopped by the caller, not removed) is started again.
+func TestInstallServiceTakeOverOrder(t *testing.T) {
+	setVar(t, &serveWait, 30*time.Millisecond)
+	setVar(t, &servePoll, time.Millisecond)
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint("service fails ", fail), func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			pu, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.MkdirAll(filepath.Dir(pu.Config), 0o755)
+			os.WriteFile(pu.Config, []byte("log_level: debug\n"), 0o600)
+			sys.spawns, sys.dead = nil, fail
+			_, err = Install(sys, Options{Mode: Service, Self: fakeSelf(t), Version: "2", Env: e})
+			if !sys.perUserAtStart {
+				t.Error("per-user install removed before the service started")
+			}
+			if b, _ := os.ReadFile(LayoutFor(Service, e).Config); string(b) != "log_level: debug\n" {
+				t.Errorf("service config %q: not copied before the start", b)
+			}
+			_, entry := sys.unin[PerUser]
+			if !fail {
+				if err != nil || entry || len(sys.run) != 0 || exists(pu.ProgramDir) || len(sys.spawns) != 0 {
+					t.Errorf("err %v, per-user entry %v, run %v, spawns %v", err, entry, sys.run, sys.spawns)
+				}
+				return
+			}
+			if !errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "the per-user pdb-print was started again") {
+				t.Errorf("err %v", err)
+			}
+			if !entry || sys.run[name] == "" || !exists(pu.ExeW) {
+				t.Errorf("per-user install removed: entry %v, run %v", entry, sys.run)
+			}
+			if want := [][]string{{pu.ExeW, "serve"}}; fmt.Sprint(sys.spawns) != fmt.Sprint(want) {
+				t.Errorf("spawns %v, want %v", sys.spawns, want)
+			}
+		})
 	}
 }

@@ -117,7 +117,7 @@ func TestNetwork(t *testing.T) {
 }
 
 func TestSubnetsCapped(t *testing.T) {
-	got := capTo24([]netip.Prefix{netip.MustParsePrefix("172.16.5.20/16"), netip.MustParsePrefix("192.168.1.7/24"), netip.MustParsePrefix("10.0.0.9/30")})
+	got := capTo24([]netip.Prefix{netip.MustParsePrefix("172.16.5.20/16"), netip.MustParsePrefix("192.168.1.7/24"), netip.MustParsePrefix("10.0.0.9/30"), netip.MustParsePrefix("169.254.83.7/16")})
 	want := []netip.Prefix{netip.MustParsePrefix("172.16.5.0/24"), netip.MustParsePrefix("192.168.1.0/24"), netip.MustParsePrefix("10.0.0.8/30")}
 	if !slices.Equal(got, want) {
 		t.Errorf("%v", got)

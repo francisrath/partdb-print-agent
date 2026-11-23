@@ -91,6 +91,33 @@ pdb-print, or `pdb-print uninstall` (`--purge` also deletes the config in `%AppD
 Until releases are signed, SmartScreen warns about the download and the first start: "More info" →
 "Run anyway".
 
+**Windows service:** for labels printed while nobody is logged in, or a PC several people share, run
+`pdb-print install --service` in a terminal opened as administrator. It installs into
+`%ProgramFiles%\pdb-print` and runs as the Windows service `pdb-print`, started with Windows. Config
+and log are in `%ProgramData%\pdb-print` (`config.yaml`, `pdb-print.log`), readable by administrators
+only. It replaces your per-user install and copies its config; a Part-DB token kept in your keychain
+doesn't move, so enter it again in the web UI. Only the per-user install of the account you run it as
+is replaced: other accounts remove theirs from their own Settings → Apps. A folder in
+`%ProgramData%\pdb-print` that an administrator didn't make is moved aside
+(`pdb-print.untrusted.<time>`) and a new one created. The service runs as SYSTEM: `~` in
+`hot_folder.dir` is the system profile, so give an absolute path, and use a folder other users can't
+write to (the service deletes and moves the files in it). What the installer and the service write
+there is owned by Administrators; a file you put there yourself relies on Windows' default owner for
+objects administrators create ("Administrators group"): with the policy "System objects: Default owner
+for objects created by members of the Administrators group" set to "Object creator", the service
+refuses its folder. If the service doesn't start, the reason is in its log or in Event Viewer →
+Windows Logs → Application (source `pdb-print`); after a failure it restarts after 5 s, then 1 min,
+then every 5 min. The web UI asks every browser for a code: in Terminal (Admin) or PowerShell as
+administrator, run `& "C:\Program Files\pdb-print\pdb-print.exe" pair` (in Command Prompt without the
+`&`) and type the code it shows. A paired browser stays signed in for 30 days; "Sign out all browsers"
+in the web UI signs every browser out, and so does every `pdb-print install --service` (an upgrade
+too). Pairing keeps other users of the PC from casually changing the settings; it doesn't stop a
+determined local user who can run programs (one could, for example, catch the sign-in cookie while
+the service restarts). If in doubt, sign out all browsers. Any local user can still print from
+Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
+work from a service: use the per-user install for them. To remove it: Settings → Apps → pdb-print
+(it asks for administrator rights), or `pdb-print uninstall` as administrator.
+
 **Docker** (Linux amd64/arm64):
 ```sh
 docker run --rm --network host --stop-timeout 130 \

@@ -248,7 +248,7 @@ func TestSetupRouteAndHandoff(t *testing.T) {
 	}
 
 	// the confirm button posts back with the CSRF token and prints
-	if body := h.post("/v1/handoff", url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {"32"}, "profile": {"2"}}).Body.String(); !strings.Contains(body, "Printed ✓") {
+	if body := h.do("POST", "/v1/handoff", url.Values{"src": {h.partdb.URL}, "type": {"part"}, "ids": {"32"}, "profile": {"2"}, "csrf": {h.srv.handoffCSRF}}).Body.String(); !strings.Contains(body, "Printed ✓") {
 		t.Fatalf("confirmed handoff:\n%s", body)
 	}
 	<-h.jobs
@@ -692,5 +692,23 @@ func TestFreshInstallFormKeepsSettingsPage(t *testing.T) {
 	}
 	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "flash") {
 		t.Error("the form's message is not on the settings page")
+	}
+}
+
+// localhost and [::1] are ours only while we listen on [::1] too: with IPv4Only (the service
+// couldn't bind [::1]) a program there could share our origin, so those Host headers are refused.
+func TestGuardLoopbackHosts(t *testing.T) {
+	for _, v4only := range []bool{false, true} {
+		t.Run(fmt.Sprint("IPv4Only ", v4only), func(t *testing.T) {
+			h := newHarness(t)
+			h.srv.IPv4Only = v4only
+			h.h = h.srv.Handler()
+			for host, ok := range map[string]bool{"127.0.0.1:8631": true, "localhost:8631": !v4only, "[::1]:8631": !v4only} {
+				w := h.do("GET", "/v1/info", nil, func(r *http.Request) { r.Host = host })
+				if (w.Code == 200) != ok {
+					t.Errorf("Host %s: %d, want allowed %v", host, w.Code, ok)
+				}
+			}
+		})
 	}
 }
