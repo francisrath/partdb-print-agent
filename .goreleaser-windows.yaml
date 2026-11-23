@@ -1,0 +1,60 @@
+# GoReleaser v2 config for Windows, run after .goreleaser.yaml (see .github/workflows/release.yml, job
+# release-windows): pdb-print.exe plus pdb-printw.exe and the zip, added to the draft release the Linux
+# job made; scripts/windows-setup.sh then builds setup.exe from these exes (release.yml publishes it).
+# Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-windows.yaml
+version: 2
+project_name: pdb-print
+
+# ponytail: the committed Windows resource (cmd/pdb-print/rsrc_*.syso) keeps file version
+# 0.0.0.0; `pdb-print version` reports the real one. Stamping it at release time would
+# rewrite tracked files on every run.
+
+builds:
+  - id: pdb-print-windows
+    main: ./cmd/pdb-print
+    binary: pdb-print
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  # the same program linked as a GUI-subsystem exe: the per-user autostart runs it, so no console window
+  # opens at login (internal/wininstall); main.gui=1 sends its log to a file, as it has no stderr
+  - id: pdb-printw-windows
+    main: ./cmd/pdb-print
+    binary: pdb-printw
+    env: [CGO_ENABLED=0]
+    goos: [windows]
+    goarch: [amd64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -H=windowsgui -X main.version={{ .Version }} -X main.gui=1"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  # the zip carries the guided printer test (double-click try-printer.cmd, see TRY.md)
+  - ids: [pdb-print-windows, pdb-printw-windows]
+    formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - config.example.yaml
+      - src: packaging/windows/try-printer.cmd
+        strip_parent: true
+      - src: packaging/windows/TRY.md
+        strip_parent: true
+
+checksum:
+  name_template: checksums-windows.txt # scripts/windows-setup.sh adds setup.exe to it
+
+# The release stays a draft: release-darwin publishes it once it carries every asset
+release:
+  prerelease: auto # a vX.Y.Z-rc.N tag is a pre-release: never "latest", so the update check skips it
+  draft: true
+  use_existing_draft: true # the Linux job's draft (a draft isn't found by its tag)
+  replace_existing_artifacts: true # a re-run of this job overwrites its own partial uploads
+  mode: keep-existing
+
+changelog:
+  disable: true

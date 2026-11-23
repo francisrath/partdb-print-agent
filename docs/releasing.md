@@ -1,22 +1,31 @@
 # Releasing (maintainers)
 
-Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in two jobs.
+Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in three jobs.
 
-1. **`release`** (ubuntu, `.goreleaser.yaml`): runs the tests, builds Linux and Windows archives, the `.deb`
+1. **`release`** (ubuntu, `.goreleaser.yaml`): runs the tests, builds the Linux archives, the `.deb`
    packages, the Docker images (including `:latest`) and `checksums.txt`, and creates a **draft** GitHub release.
-2. **`release-darwin`** (macos-latest, `.goreleaser-darwin.yaml`, needs `release`): builds the universal
+2. **`release-windows`** (ubuntu, `.goreleaser-windows.yaml`, needs `release`): builds `pdb-print.exe` and
+   `pdb-printw.exe` and the zip and uploads them with `checksums-windows.txt` to that draft. Then
+   `scripts/windows-setup.sh` builds `pdb-print_X.Y.Z_windows_amd64_setup.exe` from the same exes with Inno
+   Setup under Wine on the runner (the Inno installer pinned by version and SHA-256 in the script;
+   `packaging/windows/pdb-print.iss`), adds it to `checksums-windows.txt`, and uploads both (`--clobber`).
+   Inno's setup needs Wine's 32-bit side, which doesn't run inside `docker build`, and Wine doesn't run
+   under Rosetta: the setup.exe part needs x86-64 Linux with Wine (the script's header lists the
+   packages). PR CI (`packaging-windows`) runs it on every PR.
+3. **`release-darwin`** (macos-latest, `.goreleaser-darwin.yaml`, needs both): builds the universal
    `pdb-print` (no cgo) and the Bluetooth helper `pdb-print-ble` (cgo, embedded Info.plist), uploads the
    macOS archive and `checksums-darwin.txt` to that draft (GoReleaser leaves it a draft: `draft: true`) and
    pushes the Homebrew cask to `francisrath/homebrew-tap`. Its last step, **publish the draft**, checks that
-   the tag has exactly one release, that it is a draft, and that it carries `checksums.txt`,
-   `checksums-darwin.txt` and the Linux, Windows and macOS archives; only then it publishes it. The step lists those
-   files by name: renaming or adding an archive in a `.goreleaser*.yaml` means updating that list too.
+   the tag has exactly one release, that it is a draft, and that it carries the three checksum files, the
+   Linux, Windows and macOS archives and the setup.exe; only then it publishes it. The step lists those files
+   by name: renaming or adding an asset in a `.goreleaser*.yaml` or `scripts/windows-setup.sh` means updating
+   that list too.
 
    Before the archive is made, `scripts/macos-sign.sh` (a GoReleaser hook on each universal binary) signs
    both binaries with the Developer ID certificate and the hardened runtime and notarises them; the job then
    checks the archive's binaries with `codesign --verify --strict` and `spctl --assess` before publishing.
 
-A failed macOS build therefore leaves a draft, never a release without macOS. Between the cask push and the
+A failed Windows or macOS build therefore leaves a draft, never a release without them. Between the cask push and the
 publish step (seconds), the cask points at the still-draft release: `brew install` fails in that window.
 
 ## macOS signing
@@ -63,10 +72,14 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
 
 ## Recovery
 
+- **`release-windows` fails:** `release-darwin` doesn't start and the release stays a draft. Fix the cause
+  and re-run the failed jobs (GitHub re-runs `release-darwin` after it); `release-windows` overwrites its own
+  uploads. It refuses to run without the draft, so after a published release turn it back into a draft
+  first (`gh release edit TAG --draft=true`), then re-run both.
 - **`release-darwin` fails:** the release stays a draft. Fix the cause and re-run that job; it finds the draft.
 - **Only the publish step fails** (a check or the `gh` call): the cask already points at the draft. Look at the
-  draft's assets and, if they are complete, publish by hand: `gh release edit TAG --draft=false`; or re-run
-  the job. If it reports several releases for the tag, delete the extra draft (below) first.
+  draft's assets and, if they are complete (and `checksums-windows.txt` lists the setup.exe, not only the zip),
+  publish by hand: `gh release edit TAG --draft=false`; or re-run the job. If it reports several releases for the tag, delete the extra draft (below) first.
   The Docker images, `:latest` included, are already pushed by then (accepted trade-off).
 - **Re-running `release-darwin` after the release was published** turns it back into a draft for the
   duration of the run. If that re-run fails, publish the draft by hand: `gh release edit TAG --draft=false`.
@@ -80,6 +93,8 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
 - **Don't re-run the release jobs of an old tag:** it can move the "latest" badge back to it.
 
 Local macOS dry run: `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew`
+
+Local Windows dry run (setup.exe only on x86-64 Linux with Wine): `go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-windows.yaml`, then `scripts/windows-setup.sh`
 
 ## Don't move a release tag
 

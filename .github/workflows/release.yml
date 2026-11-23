@@ -2,10 +2,10 @@ name: Release
 
 # Push a tag like v0.1.0 to build and publish: GitHub release with archives and
 # checksums, multi-arch image on ghcr.io, and the Homebrew cask in francisrath/homebrew-tap.
-# release (Linux) makes a draft release with everything but macOS; release-darwin adds the
-# macOS archive (it needs cgo for the Bluetooth helper) and pushes the cask, then its last step
-# publishes the draft once it carries every archive, so a failed macOS build leaves a draft,
-# never a half release.
+# release (Linux) makes a draft release with everything but Windows and macOS; release-windows
+# adds the Windows zip and setup.exe; release-darwin (after both) adds the macOS archive (it needs
+# cgo for the Bluetooth helper) and pushes the cask, then its last step publishes the draft once it
+# carries every archive, so a failed Windows or macOS build leaves a draft, never a half release.
 on:
   push:
     tags: ["v*"]
@@ -42,8 +42,55 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release-darwin:
+  release-windows:
     needs: release
+    runs-on: ubuntu-24.04 # pinned: setup.exe builds with the image's Wine (scripts/windows-setup.sh)
+    permissions:
+      contents: write # add to the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser reads the tags
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job publishes: don't restore a cache another run wrote
+      # Without a draft GoReleaser would create a Windows-only release
+      - name: require the Linux job's draft
+        run: |
+          if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::error::no draft release for $GITHUB_REF_NAME; the release job makes it (docs/releasing.md)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.3
+          args: release --clean --config .goreleaser-windows.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb
+      - name: build setup.exe
+        run: scripts/windows-setup.sh
+      # the checksums file GoReleaser uploaded lacks setup.exe: replace it
+      - name: upload setup.exe
+        run: |
+          cd dist
+          sha256sum -c checksums-windows.txt
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
+            pdb-print_*_windows_amd64_setup.exe checksums-windows.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-darwin:
+    needs: [release, release-windows] # it publishes: only once the Windows assets are there
     runs-on: macos-latest
     permissions:
       contents: write # add to and publish the release
@@ -149,9 +196,10 @@ jobs:
           fi
           assets=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$id/assets" --jq '.[].name')
           v=${GITHUB_REF_NAME#v}
-          for a in checksums.txt checksums-darwin.txt "pdb-print_${v}_darwin_universal.tar.gz" \
+          for a in checksums.txt checksums-darwin.txt checksums-windows.txt "pdb-print_${v}_darwin_universal.tar.gz" \
             "pdb-print_${v}_linux_amd64.tar.gz" "pdb-print_${v}_linux_arm64.tar.gz" \
-            "pdb-print_${v}_linux_armv6.tar.gz" "pdb-print_${v}_windows_amd64.zip"; do
+            "pdb-print_${v}_linux_armv6.tar.gz" "pdb-print_${v}_windows_amd64.zip" \
+            "pdb-print_${v}_windows_amd64_setup.exe"; do
             if ! grep -qxF "$a" <<<"$assets"; then
               echo "::error::draft $GITHUB_REF_NAME lacks $a; not publishing"
               exit 1
