@@ -39,6 +39,7 @@ type seen struct {
 	mod     time.Time
 	stable  time.Time // when size/mtime were first observed unchanged
 	skipped bool      // too old: never print
+	held    bool      // waited out an update pause: its age doesn't count
 }
 
 func (f *Folder) defaults() {
@@ -82,6 +83,7 @@ func (f *Folder) scan(ctx context.Context, state map[string]*seen, now time.Time
 		f.Log.Error("hot folder: bad pattern", "pattern", f.Pattern, "err", err)
 		return
 	}
+	paused := f.Paused != nil && f.Paused() // updating: files wait, and the wait doesn't age them
 	present := map[string]bool{}
 	for _, path := range matches {
 		fi, err := os.Stat(path)
@@ -93,20 +95,24 @@ func (f *Folder) scan(ctx context.Context, state map[string]*seen, now time.Time
 		changed := s != nil && (fi.Size() != s.size || !fi.ModTime().Equal(s.mod))
 		switch {
 		case s == nil || changed: // new, still being written, or replaced by a new download
-			state[path] = &seen{size: fi.Size(), mod: fi.ModTime(), skipped: now.Sub(fi.ModTime()) > f.MaxAge}
+			state[path] = &seen{size: fi.Size(), mod: fi.ModTime(), skipped: !paused && now.Sub(fi.ModTime()) > f.MaxAge, held: paused}
 			continue
 		case s.skipped:
 			continue
 		case s.stable.IsZero():
 			s.stable = now
 		}
+		if paused {
+			s.held = true
+			continue
+		}
 		if now.Sub(s.stable) < f.Settle {
 			continue
 		}
-		if ctx.Err() != nil || f.Paused != nil && f.Paused() {
-			return // shutting down, or updating: leave the remaining files in place
+		if ctx.Err() != nil {
+			return // shutting down: leave the remaining files in place
 		}
-		if now.Sub(fi.ModTime()) > f.MaxAge {
+		if !s.held && now.Sub(fi.ModTime()) > f.MaxAge {
 			s.skipped = true // settled too late to count as a fresh download
 			continue
 		}

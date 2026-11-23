@@ -283,3 +283,23 @@ func TestPausedWaits(t *testing.T) {
 		t.Errorf("after the pause: printed %v", h.printed)
 	}
 }
+
+// A file that waited out a pause longer than MaxAge still prints: the wait isn't its fault.
+func TestPausedLongerThanMaxAge(t *testing.T) {
+	h := newHarness(t)
+	paused := true
+	h.f.Paused = func() bool { return paused }
+	h.file("label_b.pdf", "%PDF-1", 0)
+	h.scan(0)
+	for i := 0; i < 4; i++ {
+		h.scan(30 * time.Second) // 2 minutes paused
+	}
+	h.file("label_c.pdf", "%PDF-1", 0) // arrives during the pause too and settles before it ends
+	h.scan(time.Second)
+	h.scan(time.Second)
+	paused = false
+	h.scan(time.Second)
+	if len(h.printed) != 2 {
+		t.Errorf("after a long pause: printed %v", h.printed)
+	}
+}
