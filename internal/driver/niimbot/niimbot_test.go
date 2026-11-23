@@ -176,6 +176,9 @@ func TestHeartbeat(t *testing.T) {
 		{b1, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 0, 1}}, driver.CoverOpen, "cover open"},
 		{b1, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0}}, driver.NoMedia, "no labels"},
 		{b1, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1}}, driver.OK, "battery low"},
+		{b1, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}}, driver.LowBattery, "battery empty: charge the printer"},
+		// a B21S (firmware 40.36) with a flat battery, on USB: it refuses to print
+		{b1, reply{rspHeartbeatV4, []byte{0x1a, 0x15, 0, 0x4b, 0, 0, 1, 0, 0}}, driver.LowBattery, "battery empty: charge the printer"},
 		{d110, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 1, 80}}, driver.OK, ""}, // 1 = closed on a D110
 		{d110, reply{0xDD, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 80}}, driver.CoverOpen, "cover open"},
 		{b1, reply{rspHeartbeatV4, []byte{0, 0, 90, 30, 0, 1, 1, 0, 0}}, driver.NoMedia, "no labels"},
@@ -480,6 +483,9 @@ func TestPrintErrors(t *testing.T) {
 		{"cover open on page start", func(p reply) ([]byte, bool) {
 			return packet(rspError, 0x01), p.cmd == cmdPageStart
 		}, driver.CoverOpen},
+		{"battery too low on page start", func(p reply) ([]byte, bool) {
+			return packet(rspError, 0x03), p.cmd == cmdPageStart
+		}, driver.LowBattery},
 		{"no labels in the status", func(p reply) ([]byte, bool) {
 			return packet(0xB3, 0, 0, 0, 0, 0, 0, 0x02, 0, 0, 0), p.cmd == cmdPrintStatus
 		}, driver.NoMedia},

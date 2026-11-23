@@ -70,7 +70,7 @@ var (
 	transports = set("tcp", "usb", "ble", "bt", "serial")
 	jobSources = set("bookmarklet", "part-db", "hot-folder", "web-ui", "setup", "other")
 	errorCodes = set("BUSY", "NO_MEDIA", "MEDIA_MISMATCH", "MEDIA_END_SOON", "COVER_OPEN", "CUTTER_JAM", "PAPER_JAM",
-		"OVERHEAT", "PAUSED", "RIBBON_OUT", "COMMS_ERROR", "UNSUPPORTED", "RENDER_ERROR", "UNKNOWN", "OTHER")
+		"OVERHEAT", "LOW_BATTERY", "PAUSED", "RIBBON_OUT", "COMMS_ERROR", "UNSUPPORTED", "RENDER_ERROR", "UNKNOWN", "OTHER")
 	// distros: os-release IDs reported by name; others are reported as "linux".
 	distros = set("debian", "ubuntu", "raspbian", "fedora", "centos", "rhel", "rocky", "almalinux", "arch", "manjaro",
 		"alpine", "opensuse-leap", "opensuse-tumbleweed", "linuxmint", "pop", "nixos", "gentoo", "void", "elementary",

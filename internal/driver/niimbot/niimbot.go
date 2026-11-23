@@ -224,7 +224,7 @@ func printerError(code byte) *driver.Error {
 	case 0x02, 0x08, 0x1C:
 		e.Code, e.Detail = driver.NoMedia, "no labels"
 	case 0x03:
-		e.Detail = "battery low"
+		e.Code, e.Detail = driver.LowBattery, "battery too low to print: charge the printer"
 	case 0x07:
 		e.Code, e.Detail = driver.Overheat, "overheated"
 	case 0x09:
@@ -308,7 +308,9 @@ func (n *niimbot) heartbeat(p reply) *driver.Status {
 		st.Code, st.Detail = driver.CoverOpen, "cover open"
 	case paper > 0:
 		st.Code, st.Detail = driver.NoMedia, "no labels"
-	case battery >= 0 && battery <= 25:
+	case battery == 0: // the printer refuses jobs then (seen on a B21S)
+		st.Code, st.Detail = driver.LowBattery, "battery empty: charge the printer"
+	case battery > 0 && battery <= 25:
 		st.Detail = "battery low"
 	}
 	return st
