@@ -35,6 +35,9 @@ type Config struct {
 	// UpdateCheck: false stops the daily look at GitHub for a newer release (default on; the web UI
 	// and the log say when one is out).
 	UpdateCheck *bool `yaml:"update_check,omitempty"`
+	// SelfUpdate: false keeps an installed Windows agent from updating itself (`pdb-print install
+	// --no-self-update` sets it).
+	SelfUpdate *bool `yaml:"self_update,omitempty"`
 	// Telemetry: the weekly anonymous usage report (docs/telemetry.md). Unset = not decided yet, and
 	// nothing is sent until the setup wizard or the web UI records a choice.
 	Telemetry *bool `yaml:"telemetry,omitempty"`

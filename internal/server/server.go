@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -77,6 +78,8 @@ type Server struct {
 	// OnInstance is called after a Part-DB instance with a token was saved (token filled in),
 	// so its print jobs are fetched without a restart. nil = nothing.
 	OnInstance func(in config.Instance)
+	// Quit stops serve like SIGTERM (POST /v1/quit from `pdb-print install`/`uninstall`); nil = not offered.
+	Quit func()
 	// Window is the setup window (see window.go); LANAddrs overrides LocalAddrs in tests.
 	Window      *Window
 	LANAddrs    func() []netip.Addr
@@ -147,6 +150,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /telemetry", s.saveTelemetry)
 	mux.HandleFunc("POST /routes/{profile}/delete", s.deleteRoute)
 	mux.HandleFunc("POST /v1/pair", s.pairAPI)
+	mux.HandleFunc("POST /v1/quit", func(w http.ResponseWriter, r *http.Request) {
+		if s.Quit == nil { // only offered on Windows
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		// the pid lets the caller wait until we have exited, in-flight prints included
+		_ = json.NewEncoder(w).Encode(map[string]int{"pid": os.Getpid()})
+		s.Quit() // the graceful shutdown waits for this response and in-flight prints
+	})
 	mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
 		d := s.local.Draft // a fresh start
 		d.mu.Lock()
@@ -182,6 +196,13 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/pair" {
 			// `pdb-print pair` on this machine: no CSRF token, but never from a browser or the LAN
 			if r.Header.Get("Origin") != "" || !loopbackRemote(r) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		} else if r.Method == http.MethodPost && r.URL.Path == "/v1/quit" {
+			// `pdb-print install`/`uninstall` on this machine: the custom header forces a CORS
+			// preflight, which we never answer, so no web page can send it
+			if r.Header.Get("X-PDB-Print") != "1" || !loopbackRemote(r) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
@@ -221,7 +242,7 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, text string, e
 		s.flash = &flash{Text: text}
 	}
 	s.mu.Unlock()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?manual", http.StatusSeeOther) // a fresh install would bounce "/" to the wizard and lose the flash
 }
 
 // update applies fn to a copy of the config, validates and saves it, then swaps it in.
@@ -297,6 +318,11 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		// connected through PDB_PRINT_URL/PDB_PRINT_TOKEN; saving the form makes it permanent
 		in = &config.Instance{ID: env.ID, BaseURL: env.BaseURL}
 		data["FromEnv"] = true
+	}
+	if in == nil && len(cfg.Printers) == 0 && !r.URL.Query().Has("manual") {
+		// a fresh install: the step-by-step wizard, not the settings page ("?manual" still shows it)
+		http.Redirect(w, r, "/setup/", http.StatusSeeOther)
+		return
 	}
 	if in != nil {
 		data["Instance"] = in

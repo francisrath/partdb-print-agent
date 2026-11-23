@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -507,4 +508,54 @@ func TestFinishClosesItsOwnWindow(t *testing.T) {
 	if !h.srv.Window.IsOpen(time.Now()) {
 		t.Error("Finish closed a window it wasn't paired in")
 	}
+}
+
+func TestQuitLoopbackWithHeaderOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name, remote, header string
+		want                 int
+	}{
+		{"ok", "127.0.0.1:50000", "1", http.StatusAccepted},
+		{"header missing", "127.0.0.1:50000", "", http.StatusForbidden},
+		{"from the LAN", "192.168.1.40:50000", "1", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			quit := 0
+			h.srv.Quit = func() { quit++ }
+			w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+				r.RemoteAddr = tc.remote
+				if tc.header != "" {
+					r.Header.Set("X-PDB-Print", tc.header)
+				}
+			})
+			if w.Code != tc.want {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			if wantQuit := btoi(tc.want == http.StatusAccepted); quit != wantQuit {
+				t.Errorf("Quit called %d times, want %d", quit, wantQuit)
+			}
+			if tc.want == http.StatusAccepted && strings.TrimSpace(w.Body.String()) != fmt.Sprintf(`{"pid":%d}`, os.Getpid()) {
+				t.Errorf("body %q, want our pid", w.Body)
+			}
+		})
+	}
+}
+
+func TestQuitNotOfferedWithoutQuit(t *testing.T) {
+	h := newHarness(t) // Quit unset, as serve leaves it outside Windows
+	w := h.do("POST", "/v1/quit", nil, func(r *http.Request) {
+		r.RemoteAddr = "127.0.0.1:50000"
+		r.Header.Set("X-PDB-Print", "1")
+	})
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

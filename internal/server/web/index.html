@@ -142,7 +142,7 @@
   {{with .TelemetryOff}}<p class="muted">Not sent: {{.}}.</p>{{end}}
   <form method="post" action="/telemetry">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label><input type="checkbox" name="on" value="1"{{if .TelemetryOn}} checked{{end}}> Send the weekly usage report</label>
+    <label class="check"><input type="checkbox" name="on" value="1"{{if .TelemetryOn}} checked{{end}}> Send the weekly usage report</label>
     <button>Save</button>
   </form>
 </section>

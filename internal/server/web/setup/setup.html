@@ -43,7 +43,7 @@ in Part-DB, click your user name (top right) → User settings → API tokens, a
   <label>API token <input name="token" type="password" autocomplete="off" required></label>
   <label class="check"><span><input type="checkbox" name="allow_http"{{if .AllowHTTP}} checked{{end}}> Allow plain http
   <span class="muted">(only for a Part-DB without https on your own network)</span></span></label>
-  <div class="nav"><span></span><button>Next</button></div>
+  <div class="nav">{{if .Local}}<a class="button secondary" href="/?manual">Set up by hand</a>{{else}}<span></span>{{end}}<button>Next</button></div>
 </form>
 {{template "setup-bottom" .}}{{end}}
 
@@ -150,7 +150,7 @@ print server; if it can, the printer shows up there by itself.</p>
 {{if gt (len .D.Saved) 1}}<p class="muted">Set up in this session: {{range $i, $n := .D.Saved}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}
 <form method="post" action="/setup/done">
   {{template "csrf" .}}
-  <p><label><input type="checkbox" name="telemetry" value="1"{{if .TelemetryOn}} checked{{end}}> Send an anonymous
+  <p><label class="check"><input type="checkbox" name="telemetry" value="1"{{if .TelemetryOn}} checked{{end}}> Send an anonymous
   usage report once a week</label><br><span class="muted">Version, operating system, printer models, connection
   types and job counts; no addresses, names or label content, and no ID that ties reports together.
   <a href="https://github.com/francisrath/pdb-print/blob/main/docs/telemetry.md" target="_blank" rel="noopener">Every field</a>.

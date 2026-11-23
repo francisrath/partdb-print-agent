@@ -5,6 +5,8 @@ log_level: info
 # Once a day the agent asks GitHub for the latest release (only that request; nothing about this agent
 # is sent) and the web UI and log say when a newer one is out. false turns it off.
 # update_check: false
+# Windows install (`pdb-print install`): false stops the agent from updating itself to a new release.
+# self_update: false
 # Weekly anonymous usage report (every field: docs/telemetry.md). Unset = not decided yet: nothing is sent
 # until the setup wizard's last step or the web UI's "Usage statistics" section records a choice.
 # telemetry: true
