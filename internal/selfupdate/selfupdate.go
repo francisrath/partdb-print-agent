@@ -27,6 +27,9 @@ const (
 // runs the new version.
 var ErrInstalled = errors.New("the new version is installed")
 
+// quiesceWait bounds the wait for a running print before the swap (meanwhile every print fails); tests shorten it.
+var quiesceWait = 2 * time.Minute
+
 // grace is how long Apply waits after the last job ends, before the swap; tests shorten it.
 var grace = 2 * time.Second
 
@@ -35,7 +38,7 @@ var exes = []string{"pdb-print.exe", "pdb-printw.exe"}
 
 type Updater struct {
 	Base    string                                                // "" = the GitHub releases download URL
-	Client  *http.Client                                          // nil = 5 min timeout
+	Client  *http.Client                                          // nil = 15 min timeout
 	Dir     string                                                // program dir holding pdb-print.exe and pdb-printw.exe
 	Quiesce func(ctx context.Context) (release func(), err error) // required
 	// Restart is required and runs while jobs are still held back. On success it does not return (the
@@ -93,14 +96,22 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return err
 	}
 
-	release, err := u.Quiesce(ctx)
-	if err != nil {
+	qctx, cancel := context.WithTimeout(ctx, quiesceWait)
+	release, err := u.Quiesce(qctx)
+	cancel()
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return errors.New("a label is still printing; try Update now again in a moment")
+	} else if err != nil {
 		return fmt.Errorf("waiting for running jobs: %w", err)
 	}
 	// ponytail: a fixed grace for a just-finished Part-DB job to report its result before we exit; a
 	// real handoff with agentjobs (wait for its report) if reports ever get cut off.
 	time.Sleep(grace)
 	if err = u.swap(tmp); err == nil {
+		// Restart exits on success, which runs no defers
+		_ = zf.Close()
+		_ = os.Remove(zf.Name())
+		_ = os.RemoveAll(tmp)
 		if err = u.Restart(); err != nil {
 			err = fmt.Errorf("%w, but not restarted: %w", ErrInstalled, err)
 		}
@@ -109,8 +120,9 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 	return err
 }
 
-// swap renames each exe to .old and copies the new one in (a copy, so it gets the program dir's
-// permissions, not the temp dir's); on an error it puts the originals back.
+// swap first copies each new exe in full to <exe>.new in Dir (a copy, so it gets the program dir's
+// permissions, not the temp dir's), then renames each live exe to .old and its .new to the live name:
+// a live name never holds a partial file. On an error it puts the originals back and removes the .new files.
 func (u *Updater) swap(from string) (err error) {
 	var done []string
 	defer func() {
@@ -124,7 +136,19 @@ func (u *Updater) swap(from string) (err error) {
 			}
 			err = errors.Join(err, os.Rename(p+".old", p))
 		}
+		for _, n := range exes {
+			if e := os.Remove(filepath.Join(u.Dir, n) + ".new"); e != nil && !errors.Is(e, os.ErrNotExist) {
+				err = errors.Join(err, e)
+			}
+		}
 	}()
+	for _, n := range exes {
+		p := filepath.Join(u.Dir, n) + ".new"
+		_ = os.Remove(p) // a stale one from an interrupted update
+		if err = u.copyIn(filepath.Join(from, n), p); err != nil {
+			return err
+		}
+	}
 	for _, n := range exes {
 		p := filepath.Join(u.Dir, n)
 		_ = os.Remove(p + ".old") // a stale one from an earlier update
@@ -132,7 +156,7 @@ func (u *Updater) swap(from string) (err error) {
 			return err
 		}
 		done = append(done, n)
-		if err = u.copyIn(filepath.Join(from, n), p); err != nil {
+		if err = os.Rename(p+".new", p); err != nil {
 			return err
 		}
 	}
@@ -155,6 +179,9 @@ func (u *Updater) copyIn(src, dst string) error {
 		return err
 	}
 	if _, err = io.Copy(out, in); err == nil {
+		err = out.Sync() // on disk before it is renamed to the live name
+	}
+	if err == nil {
 		err = out.Close()
 	} else {
 		_ = out.Close()
@@ -165,11 +192,15 @@ func (u *Updater) copyIn(src, dst string) error {
 	return err
 }
 
-func (u *Updater) get(ctx context.Context, url string) (*http.Response, error) {
-	c := u.Client
-	if c == nil {
-		c = &http.Client{Timeout: 5 * time.Minute}
+func (u *Updater) client() *http.Client {
+	if u.Client == nil {
+		return &http.Client{Timeout: 15 * time.Minute}
 	}
+	return u.Client
+}
+
+func (u *Updater) get(ctx context.Context, url string) (*http.Response, error) {
+	c := u.client()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -187,20 +218,36 @@ func (u *Updater) get(ctx context.Context, url string) (*http.Response, error) {
 
 // download writes the body to w and returns its SHA-256 (hex).
 func (u *Updater) download(ctx context.Context, url string, w io.Writer) (string, error) {
+	var n int64
+	tooSlow := func(err error) error {
+		var te interface{ Timeout() bool }
+		if errors.As(err, &te) && te.Timeout() {
+			return fmt.Errorf("the download took too long (%d MB in %s); try again", n>>20, minutes(u.client().Timeout))
+		}
+		return err
+	}
 	resp, err := u.get(ctx, url)
 	if err != nil {
-		return "", err
+		return "", tooSlow(err)
 	}
 	defer resp.Body.Close()
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(resp.Body, maxZip+1))
+	n, err = io.Copy(io.MultiWriter(w, h), io.LimitReader(resp.Body, maxZip+1))
 	if err != nil {
-		return "", fmt.Errorf("download %s: %w", url, err)
+		return "", tooSlow(fmt.Errorf("download %s: %w", url, err))
 	}
 	if n > maxZip {
 		return "", fmt.Errorf("download %s: larger than %d MB", url, maxZip>>20)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// minutes is d for people: "15 min", or d as Go prints it when it isn't whole minutes.
+func minutes(d time.Duration) string {
+	if d >= time.Minute && d%time.Minute == 0 {
+		return fmt.Sprintf("%d min", d/time.Minute)
+	}
+	return d.String()
 }
 
 func (u *Updater) fetch(ctx context.Context, url string) (string, error) {
@@ -268,10 +315,12 @@ func extractOne(f *zip.File, dst string) error {
 	return out.Close()
 }
 
-// CleanupOld deletes the *.old files an update left in dir; call it once the new version has started.
+// CleanupOld deletes the *.old files an update left in dir, and *.new ones an interrupted update left;
+// call it once the new version has started.
 func CleanupOld(dir string) {
 	old, _ := filepath.Glob(filepath.Join(dir, "*.old"))
-	for _, p := range old {
+	nw, _ := filepath.Glob(filepath.Join(dir, "*.new"))
+	for _, p := range append(old, nw...) {
 		_ = os.Remove(p) // still in use: the next start tries again
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,9 +97,14 @@ func TestApplySwaps(t *testing.T) {
 	if *restarts != 1 {
 		t.Errorf("Restart called %d times, want 1", *restarts)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "pdb-print.exe.new"), []byte("partial"), 0o755); err != nil { // an interrupted update
+		t.Fatal(err)
+	}
 	CleanupOld(dir)
-	if _, err := os.Stat(filepath.Join(dir, "pdb-print.exe.old")); !os.IsNotExist(err) {
-		t.Error(".old left after CleanupOld")
+	for _, n := range []string{"pdb-print.exe.old", "pdb-print.exe.new"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s left after CleanupOld", n)
+		}
 	}
 	if read(t, filepath.Join(dir, "pdb-print.exe")) != "new-cli" {
 		t.Error("CleanupOld removed the live exe")
@@ -299,7 +305,7 @@ func TestApplyFailedCopyRestoresOriginals(t *testing.T) {
 	u.Base = srv.URL
 	u.create = func(p string) (*os.File, error) {
 		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
-		if err == nil && filepath.Base(p) == "pdb-printw.exe" {
+		if err == nil && filepath.Base(p) == "pdb-printw.exe.new" {
 			f.Close() // writing to it fails
 		}
 		return f, err
@@ -311,4 +317,96 @@ func TestApplyFailedCopyRestoresOriginals(t *testing.T) {
 	if *restarts != 0 {
 		t.Error("Restart called after a failure")
 	}
+}
+
+// On success Restart exits the process, which runs no defers: the zip and the extracted exes must
+// be gone before it is called.
+func TestApplyRestartFindsNoTempFiles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+	u, _, _ := setup(t)
+	srv := httptest.NewServer(good(t, ""))
+	defer srv.Close()
+	u.Base = srv.URL
+	u.Restart = func() error {
+		if es, _ := os.ReadDir(tmp); len(es) != 0 {
+			t.Errorf("temp dir holds %v when Restart runs", es)
+		}
+		return nil
+	}
+	if err := u.Apply(context.Background(), ver); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The new exes are written in full next to the live ones (.new) before any live exe is moved, so a
+// kill mid-copy never leaves a live name missing or truncated.
+func TestApplyCopiesBeforeRename(t *testing.T) {
+	u, dir, _ := setup(t)
+	srv := httptest.NewServer(good(t, ""))
+	defer srv.Close()
+	u.Base = srv.URL
+	var created []string
+	u.create = func(p string) (*os.File, error) {
+		created = append(created, filepath.Base(p))
+		for _, n := range []string{"pdb-print.exe", "pdb-printw.exe"} {
+			if got := read(t, filepath.Join(dir, n)); got != "old" {
+				t.Errorf("%s = %q while copying %s", n, got, filepath.Base(p))
+			}
+		}
+		return os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pdb-print.exe.new"), []byte("stale"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Apply(context.Background(), ver); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(created) != "[pdb-print.exe.new pdb-printw.exe.new]" {
+		t.Errorf("created %v", created)
+	}
+	es, _ := os.ReadDir(dir)
+	if len(es) != 4 { // the two new exes and the two .old
+		t.Errorf("dir holds %v", es)
+	}
+}
+
+// A print that doesn't end in time: the update gives up, nothing is swapped and jobs run again.
+func TestApplyQuiesceTimeout(t *testing.T) {
+	u, dir, restarts := setup(t)
+	srv := httptest.NewServer(good(t, ""))
+	defer srv.Close()
+	u.Base = srv.URL
+	old := quiesceWait
+	quiesceWait = 30 * time.Millisecond
+	t.Cleanup(func() { quiesceWait = old })
+	u.Quiesce = func(ctx context.Context) (func(), error) { <-ctx.Done(); return nil, ctx.Err() }
+	err := u.Apply(context.Background(), ver)
+	if err == nil || err.Error() != "a label is still printing; try Update now again in a moment" {
+		t.Fatalf("err %v", err)
+	}
+	untouched(t, dir)
+	if *restarts != 0 {
+		t.Error("restarted")
+	}
+}
+
+// A slow link: the error says so, in words.
+func TestApplyDownloadTooSlow(t *testing.T) {
+	u, dir, _ := setup(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 1<<10))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	u.Base = srv.URL
+	u.Client = &http.Client{Timeout: 100 * time.Millisecond}
+	err := u.Apply(context.Background(), ver)
+	if err == nil || !strings.Contains(err.Error(), "the download took too long (0 MB in 100ms); try again") {
+		t.Fatalf("err %v", err)
+	}
+	untouched(t, dir)
 }
