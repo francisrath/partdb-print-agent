@@ -50,6 +50,7 @@ checksum:
 
 # The release stays a draft: release-darwin publishes it once it carries every asset
 release:
+  prerelease: auto # a vX.Y.Z-rc.N tag is a pre-release: never "latest", so the update check skips it
   draft: true
   use_existing_draft: true # the Linux job's draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # a re-run of this job overwrites its own partial uploads

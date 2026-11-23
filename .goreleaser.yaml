@@ -78,6 +78,7 @@ nfpms:
     dependencies: [init-system-helpers, poppler-utils]
 
 release:
+  prerelease: auto # a vX.Y.Z-rc.N tag is a pre-release: never "latest", so the update check skips it
   draft: true # release-windows and release-darwin add their assets, then release-darwin publishes it
   use_existing_draft: true # a re-run reuses this draft (a draft isn't found by its tag)
   replace_existing_artifacts: true # … and overwrites what the first run uploaded
