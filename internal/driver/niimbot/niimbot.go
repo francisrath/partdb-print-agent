@@ -143,6 +143,7 @@ func (n *niimbot) Encode(w io.Writer, job *driver.Job) error {
 // reader parses packets off the notification stream, keeping partial packets between reads.
 type reader struct {
 	t        driver.Transport
+	ctx      context.Context // nil = never cancelled
 	buf      []byte
 	lastPage int  // the last unsolicited page count (0xE0)
 	pageSeen bool // one came since the last reset
@@ -172,6 +173,9 @@ func (r *reader) next() (reply, bool) {
 // await waits up to d for an answer in want; an error answer is a *driver.Error, silence ErrNoReadback.
 func (r *reader) await(d time.Duration, want []byte) (reply, error) {
 	for end := time.Now().Add(d); ; {
+		if r.ctx != nil && r.ctx.Err() != nil { // a cancelled job stops waiting at once
+			return reply{}, r.ctx.Err()
+		}
 		for {
 			p, ok := r.next()
 			if !ok {
@@ -234,7 +238,7 @@ func printerError(code byte) *driver.Error {
 // Status connects (the printer answers with its protocol level), then reads the heartbeat: cover, labels,
 // battery. The label roll's RFID tag, where the printer reads one, adds how many labels are left.
 func (n *niimbot) Status(ctx context.Context, t driver.Transport) (*driver.Status, error) {
-	r := &reader{t: t}
+	r := &reader{t: t, ctx: ctx}
 	c, err := r.do(step{connectPacket, []byte{answers[cmdConnect]}})
 	if err != nil {
 		return nil, err
@@ -258,10 +262,13 @@ func (n *niimbot) Status(ctx context.Context, t driver.Transport) (*driver.Statu
 	if st.Code == driver.OK {
 		if tag, err := r.do(ask(cmdRFID, 1)); err == nil {
 			if left, kind, ok := rfid(tag.data); ok {
-				if st.Detail == "" {
-					st.Detail = fmt.Sprintf("%d labels left on the roll", left)
-				}
 				st.MediaType = labelTypes[kind]
+				if st.Detail == "" && left >= 0 {
+					st.Detail = fmt.Sprintf("%d labels left on the roll", left)
+					if st.MediaType != "" {
+						st.Detail += " (" + st.MediaType + ")"
+					}
+				}
 			}
 		}
 	}
@@ -307,8 +314,9 @@ func (n *niimbot) heartbeat(p reply) *driver.Status {
 	return st
 }
 
-// rfid reads labels left (total − used) and the label kind from an RFID answer: uuid(8), barcode and serial
-// (length-prefixed), total, used (u16 each), kind.
+// rfid reads labels left (total − used, or -1 when the tag counts none) and the label kind (0 when it has
+// none) from an RFID answer: uuid(8), barcode and serial (length-prefixed), total, used (u16 each), kind.
+// ok is false without a tag (a one-byte answer) or for one too short to read.
 func rfid(d []byte) (left int, kind byte, ok bool) {
 	i := 8
 	for range 2 {
@@ -324,7 +332,10 @@ func rfid(d []byte) (left int, kind byte, ok bool) {
 	if i+4 < len(d) {
 		kind = d[i+4]
 	}
-	return max(total-used, 0), kind, total > 0
+	if total == 0 {
+		return -1, kind, true
+	}
+	return max(total-used, 0), kind, true
 }
 
 // Print needs a good status first, sends the job packet by packet (waiting for each answer), waits for the
@@ -336,7 +347,7 @@ func (n *niimbot) Print(ctx context.Context, t driver.Transport, job *driver.Job
 	case job.Status.Code != driver.OK:
 		return nil, &driver.Error{Code: job.Status.Code, Detail: job.Status.Detail}
 	}
-	r := &reader{t: t}
+	r := &reader{t: t, ctx: ctx}
 	res := &driver.Result{Pages: len(job.Pages), Media: job.Media.ID}
 	page := 0
 	for _, s := range n.steps(job) {

@@ -412,7 +412,7 @@ Bluetooth LE, per OS:
   printer. Both binaries are Developer-ID signed and notarised.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
 
-### Niimbot and Phomemo label makers (`kind: ble`)
+### Niimbot and Phomemo label makers (`kind: ble`, B21S also `kind: serial`)
 
 Same `ble` transport and discovery as the cat printers, recognised by the advertised name. The Niimbot
 B21S is tested (Bluetooth LE and USB); the other models come from public write-ups and MIT/Apache

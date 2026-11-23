@@ -152,8 +152,9 @@ type Status struct {
 	Detail string
 	Model  string
 	Media  *devicedb.Media // loaded media, if the printer reports it
-	// MediaType is the tape kind where the printer reports it (brother-pt: laminated,
-	// non-laminated, lettering, hg, av); "" otherwise.
+	// MediaType is the media kind where the printer reports it (brother-pt: laminated,
+	// non-laminated, lettering, hg, av; niimbot, from the roll's RFID tag: with-gaps, transparent, …);
+	// "" otherwise.
 	MediaType string
 	Done      bool   // a "printing completed" notification
 	Idle      bool   // idle when read (QL over SNMP: confirms a job only if it was idle before)

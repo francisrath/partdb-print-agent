@@ -65,7 +65,9 @@ printers:
   #   media: paper-57
   #   darkness: normal          # light | normal | dark (darker prints slower)
   # Niimbot (B1, B21, B21S, D11, D110, …) or Phomemo (M02, M110, M220, D30, Q30, …) label maker over
-  # Bluetooth LE (untested). Narrow heads take labels lengthwise: a 40×12 mm D11 label is niimbot-12x40.
+  # Bluetooth LE (B21S tested; the rest untested). Narrow heads take labels lengthwise: a 40×12 mm D11
+  # label is niimbot-12x40. A B21S also prints over its USB-C cable, a USB serial port:
+  #   transport: {kind: serial, device: /dev/cu.usbmodem1101}   # Linux /dev/ttyACM0, Windows COM3
   # - id: niimbot
   #   name: Desk B21S
   #   model: B21S
