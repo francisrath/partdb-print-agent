@@ -680,3 +680,90 @@ func TestLazyTransportSetReadTimeout(t *testing.T) {
 	}
 	(&lazyTransport{t: &fakePT{}}).SetReadTimeout(time.Millisecond)
 }
+
+// Quiesce waits for a running job, then holds back new ones until released; a caller that gives up
+// leaves the gate open.
+func TestQuiesceBlocksNewJobs(t *testing.T) {
+	f := &fakeCat{gate: make(chan struct{}), printing: make(chan struct{})}
+	s, p := catService(t, f)
+	printed := make(chan error, 1)
+	go func() {
+		_, err := s.Print(context.Background(), p, "", labels(1))
+		printed <- err
+	}()
+	<-f.printing
+
+	// gives up while the job runs: no lock left behind
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := s.Quiesce(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Quiesce with a job running: %v, want deadline exceeded", err)
+	}
+
+	quiet := make(chan func(), 1)
+	go func() {
+		rel, err := s.Quiesce(context.Background())
+		if err != nil {
+			t.Error(err)
+		}
+		quiet <- rel
+	}()
+	select {
+	case <-quiet:
+		t.Fatal("Quiesce returned while a job was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err != ErrUpdating { // while Quiesce waits
+		t.Errorf("a job while Quiesce waits: %v, want ErrUpdating", err)
+	}
+	if !s.Updating() {
+		t.Error("not Updating while Quiesce waits")
+	}
+	close(f.gate)
+	if err := <-printed; err != nil {
+		t.Fatal(err)
+	}
+	rel := <-quiet
+	f.printing = nil // the fake closes it once per job
+
+	// a job during the update fails at once (reported, not lost), and runs again after release
+	var de *driver.Error
+	if _, err := s.Print(context.Background(), p, "", labels(1)); !errors.As(err, &de) || de.Code != driver.Busy || !strings.Contains(err.Error(), "updating") {
+		t.Fatalf("a job while quiesced: %v, want ErrUpdating", err)
+	}
+	rel()
+	if s.Updating() {
+		t.Error("still Updating after release")
+	}
+	if _, err := s.Print(context.Background(), p, "", labels(1)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Updating: from the Quiesce request until release, or until a Quiesce that gave up lets go.
+func TestUpdating(t *testing.T) {
+	s := &Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if s.Updating() {
+		t.Fatal("updating at start")
+	}
+	rel, err := s.Quiesce(context.Background())
+	if err != nil || !s.Updating() {
+		t.Fatalf("after Quiesce: %v, updating %v", err, s.Updating())
+	}
+	rel()
+	if s.Updating() {
+		t.Error("updating after release")
+	}
+	s.gate.RLock() // a job runs
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Quiesce(ctx); err == nil {
+		t.Fatal("Quiesce with a cancelled ctx succeeded")
+	}
+	s.gate.RUnlock()
+	for end := time.Now().Add(2 * time.Second); s.Updating(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("still updating after a Quiesce gave up and the job ended")
+		}
+	}
+}

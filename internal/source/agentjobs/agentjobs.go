@@ -29,7 +29,9 @@ type Loop struct {
 	Printers      func() []partdb.AgentPrinter
 	// Print prints a claimed print job and returns a short result for Part-DB's job list.
 	Print func(ctx context.Context, job partdb.Job) (string, error)
-	Log   *slog.Logger
+	// Paused (pdb-print updating itself): pending jobs aren't claimed, so they wait; nil = never.
+	Paused func() bool
+	Log    *slog.Logger
 
 	noAPILogged bool
 	apiSeen     atomic.Bool     // a heartbeat got through: this Part-DB has the agent API
@@ -167,8 +169,8 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		return wait
 	}
 	for _, job := range jobs {
-		if ctx.Err() != nil {
-			break // shutting down: leave the remaining jobs pending
+		if ctx.Err() != nil || l.Paused != nil && l.Paused() {
+			break // shutting down, or updating: leave the remaining jobs pending
 		}
 		l.handle(ctx, job)
 	}

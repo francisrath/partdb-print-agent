@@ -17,14 +17,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"html/template"
 
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/francisrath/pdb-print/internal/driver"
 	"github.com/francisrath/pdb-print/internal/partdb"
 	"github.com/francisrath/pdb-print/internal/printing"
+	"github.com/francisrath/pdb-print/internal/selfupdate"
 	"github.com/francisrath/pdb-print/internal/telemetry"
 	"github.com/francisrath/pdb-print/internal/update"
 	"github.com/zalando/go-keyring"
@@ -692,6 +696,169 @@ func TestFreshInstallFormKeepsSettingsPage(t *testing.T) {
 	}
 	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "flash") {
 		t.Error("the form's message is not on the settings page")
+	}
+}
+
+// withRelease gives h a release check that found 9.0.0 and an Updater whose downloads go to dl.
+func withRelease(t *testing.T, h *harness, dl http.HandlerFunc) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.0.0","html_url":"https://example.test/notes"}`))
+	}))
+	t.Cleanup(gh.Close)
+	h.srv.Updates = &update.Checker{Current: "0.2.0", URL: gh.URL}
+	if _, err := h.srv.Updates.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(dl)
+	t.Cleanup(srv.Close)
+	h.srv.Updater = &selfupdate.Updater{Base: srv.URL, Dir: t.TempDir(), Quiesce: h.srv.Svc.Quiesce,
+		Restart: func() error { t.Error("restarted"); return nil }}
+}
+
+func TestUpdateButtonShown(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	body := h.do("GET", "/", nil).Body.String()
+	if !strings.Contains(body, `action="/update"`) || !strings.Contains(body, "Update now") || strings.Contains(body, "To update:") {
+		t.Errorf("no Update now button: %s", body)
+	}
+}
+
+func TestUpdateButtonHiddenWhenOff(t *testing.T) {
+	off := false
+	for name, set := range map[string]func(h *harness){
+		"self_update: false": func(h *harness) { h.srv.cfg.SelfUpdate = &off },
+		"no updater":         func(h *harness) { h.srv.Updater = nil },
+	} {
+		h := newHarness(t)
+		withRelease(t, h, http.NotFound)
+		set(h)
+		body := h.do("GET", "/", nil).Body.String()
+		if strings.Contains(body, `action="/update"`) || !strings.Contains(body, "To update:") {
+			t.Errorf("%s: button shown or hint missing: %s", name, body)
+		}
+		if w := h.post("/update", nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s: POST /update: %d", name, w.Code)
+		}
+	}
+}
+
+// Review Focus 3: "Update now" in two tabs. The second request is refused and nothing is fetched twice.
+func TestUpdateTwice409(t *testing.T) {
+	h := newHarness(t)
+	unblock := make(chan struct{})
+	var mu sync.Mutex
+	gets := 0
+	withRelease(t, h, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gets++
+		mu.Unlock()
+		<-unblock
+		http.NotFound(w, r)
+	})
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("first POST: %d %s", w.Code, w.Body)
+	}
+	if !strings.Contains(h.do("GET", "/?manual", nil).Body.String(), "Updating to 9.0.0") {
+		t.Error("no running notice")
+	}
+	if w := h.post("/update", nil); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "reload the page in a moment") {
+		t.Errorf("second POST: %d %q, want 409 with a message for people", w.Code, w.Body)
+	}
+	if w := h.do("POST", "/update", url.Values{}); w.Code != http.StatusForbidden {
+		t.Errorf("POST without CSRF token: %d", w.Code)
+	}
+	close(unblock)
+	for end := time.Now().Add(5 * time.Second); h.srv.updating.Load(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("update still running")
+		}
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "Update failed: ") {
+		t.Errorf("no failure shown: %s", body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 1 {
+		t.Errorf("%d downloads, want 1", gets)
+	}
+}
+
+// A download that fails at once: its error is on the page (every tab, until the next Update now),
+// never replaced by the "Updating" notice, and no "reloads" text shows without the element that polls.
+func TestUpdateFailsFast(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close() // refuses connections
+	h.srv.Updater.Base = dead.URL
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("POST: %d", w.Code)
+	}
+	h.srv.updateWG.Wait()
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if strings.Count(body, "Update failed: ") != 1 {
+		t.Errorf("failure not shown once: %s", body)
+	}
+	if strings.Contains(body, "reloads") && !strings.Contains(body, "data-updating") {
+		t.Error(`"reloads" without polling`)
+	}
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Count(body, "Update failed: ") != 1 || !strings.Contains(body, `action="/update"`) {
+		t.Errorf("second page (another tab): failure gone, or no button to retry: %s", body)
+	}
+	// the next Update now clears it while it runs
+	unblock := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-unblock; http.NotFound(w, r) }))
+	defer slow.Close()
+	h.srv.Updater.Base = slow.URL
+	h.post("/update", nil)
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") {
+		t.Error("old failure shown while the next update runs")
+	}
+	close(unblock)
+	h.srv.updateWG.Wait()
+}
+
+// Swapped but not restarted: the page says to restart instead of offering the same update again.
+func TestUpdateInstalledNotRestarted(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	h.srv.updateResult(selfupdate.ErrInstalled, "9.0.0")
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if strings.Contains(body, `action="/update"`) || !strings.Contains(body, "pdb-print 9.0.0 is installed; restart pdb-print") {
+		t.Errorf("after a failed restart: %s", body)
+	}
+}
+
+// A Server not made by New: StopUpdate doesn't panic.
+func TestStopUpdateZeroServer(t *testing.T) {
+	(&Server{}).StopUpdate()
+}
+
+// The hint follows the current self_update setting when the page is rendered.
+func TestUpdateHintAtRender(t *testing.T) {
+	h := newHarness(t)
+	withRelease(t, h, http.NotFound)
+	off := false
+	h.srv.cfg.SelfUpdate = &off
+	body := h.do("GET", "/?manual", nil).Body.String()
+	if want := update.Hint("9.0.0", false); !strings.Contains(body, template.HTMLEscapeString(want)) {
+		t.Errorf("hint %q missing: %s", want, body)
+	}
+}
+
+// A stale tab after a swap whose restart failed: no second download, back to the restart notice.
+func TestUpdateAgainAfterInstalled(t *testing.T) {
+	h := newHarness(t)
+	gets := 0
+	withRelease(t, h, func(w http.ResponseWriter, r *http.Request) { gets++; http.NotFound(w, r) })
+	h.srv.updateResult(selfupdate.ErrInstalled, "9.0.0")
+	if w := h.post("/update", nil); w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/?manual" {
+		t.Fatalf("POST: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	h.srv.updateWG.Wait()
+	if gets != 0 || h.srv.updating.Load() {
+		t.Errorf("%d downloads, updating %v", gets, h.srv.updating.Load())
 	}
 }
 

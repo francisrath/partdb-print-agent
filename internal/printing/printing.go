@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/francisrath/pdb-print/internal/config"
@@ -107,6 +108,8 @@ type Service struct {
 	newDriver       func(*devicedb.Model, driver.Options) (driver.Driver, error) // tests: a fake driver; nil = driver.New
 	r               *render.Renderer
 	printers        map[string]*sync.Mutex
+	gate            sync.RWMutex // Print holds it for reading; Quiesce for writing
+	updating        atomic.Int32 // Quiesce calls not yet released
 }
 
 func (s *Service) Close() {
@@ -400,10 +403,39 @@ func (s *Service) observe(p *config.Printer, model *devicedb.Model, st *driver.S
 	}
 }
 
+// ErrUpdating is Print's error while a self-update holds jobs back.
+var ErrUpdating = &driver.Error{Code: driver.Busy, Detail: "pdb-print is updating; print again in a moment"}
+
+// Quiesce waits for running jobs and makes new ones fail with ErrUpdating until release is called
+// (a self-update swaps the program files meanwhile). ctx bounds the wait; on error nothing stays held.
+func (s *Service) Quiesce(ctx context.Context) (release func(), err error) {
+	s.updating.Add(1)
+	done := func() { s.gate.Unlock(); s.updating.Add(-1) }
+	got := make(chan struct{})
+	go func() { s.gate.Lock(); close(got) }()
+	select {
+	case <-got:
+		return done, nil
+	case <-ctx.Done():
+		go func() { <-got; done() }()
+		return nil, ctx.Err()
+	}
+}
+
+// Updating reports whether a self-update holds jobs back (from the Quiesce request until release, or
+// until the process exits): job sources leave work queued meanwhile instead of having it fail.
+func (s *Service) Updating() bool { return s.updating.Load() > 0 }
+
 // Print checks the printer, settles the media (what the printer reports, else the config's), gets the
 // PDF from source, renders it and hands it to the driver, which sends it and waits for the
 // printer to confirm. With dryRun set, the byte stream goes to that file instead.
 func (s *Service) Print(ctx context.Context, p *config.Printer, dryRun string, source Source) (_ *Result, err error) {
+	// fails only while Quiesce holds or waits for the gate: a job that waited until the update's
+	// restart would be lost (Part-DB doesn't re-queue a claimed job), a failed one is reported
+	if !s.gate.TryRLock() {
+		return nil, ErrUpdating
+	}
+	defer s.gate.RUnlock()
 	lock := s.printerLock(p.ID)
 	lock.Lock()
 	defer lock.Unlock()

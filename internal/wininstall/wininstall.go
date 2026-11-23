@@ -716,6 +716,17 @@ func InstalledAs(sys System, m Mode, e Env) (Layout, bool, error) {
 	return l, true, nil
 }
 
+// SyncVersion sets the DisplayVersion of mode m's uninstall entry to version, so Settings → Apps
+// shows the running version after a self-update; without an entry it does nothing.
+func SyncVersion(sys System, m Mode, version string) error {
+	e, ok, err := sys.ReadUninstall(m)
+	if err != nil || !ok || e.DisplayVersion == version {
+		return err
+	}
+	e.DisplayVersion = version
+	return sys.WriteUninstall(m, e)
+}
+
 // ModeOf reports which mode's program dir exe is in (false: neither, e.g. a copy run from a zip).
 // Short (8.3) names are expanded first.
 func ModeOf(exe string, e Env) (Mode, bool) {

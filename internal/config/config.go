@@ -36,7 +36,7 @@ type Config struct {
 	// and the log say when one is out).
 	UpdateCheck *bool `yaml:"update_check,omitempty"`
 	// SelfUpdate: false keeps an installed Windows agent from updating itself (`pdb-print install
-	// --no-self-update` sets it).
+	// --no-self-update` sets it); PDB_PRINT_SELF_UPDATE=off does the same.
 	SelfUpdate *bool `yaml:"self_update,omitempty"`
 	// Telemetry: the weekly anonymous usage report (docs/telemetry.md). Unset = not decided yet, and
 	// nothing is sent until the setup wizard or the web UI records a choice.
@@ -45,6 +45,11 @@ type Config struct {
 
 // UpdateCheckOn: the daily release check is on (the default).
 func (c *Config) UpdateCheckOn() bool { return c.UpdateCheck == nil || *c.UpdateCheck }
+
+// SelfUpdateOn: an installed Windows agent may update itself (the default).
+func (c *Config) SelfUpdateOn() bool {
+	return (c.SelfUpdate == nil || *c.SelfUpdate) && os.Getenv("PDB_PRINT_SELF_UPDATE") != "off"
+}
 
 // HotFolder prints label PDFs that land in a folder (Part-DB downloads label_*.pdf).
 type HotFolder struct {
