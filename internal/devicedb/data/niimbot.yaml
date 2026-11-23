@@ -25,10 +25,11 @@ models:
       niimbot-40x20, niimbot-30x20, niimbot-30x15, niimbot-25x15]
   - {<<: *niimbot, id: B21, dialect: b21, match: {ble_name: "^B21-"}}
   # tested 2026-11-23 (hardware 40.10, firmware 40.27): niimbluelib's D110 task printed a blank label as the
-  # first job on each connection (as niimblue #108 saw on a D101); the B1 task prints at once. Its USB-C port
+  # first job on each connection (as niimblue #108 saw on a D101); firmware 40.36 fixed that, but the B1 task
+  # prints at once on both, so units still on older firmware work too. Its USB-C port
   # is a USB serial device (macOS /dev/cu.usbmodem…, Linux /dev/ttyACM…) speaking the same packets: tested on macOS
   - {<<: *niimbot, id: B21S, dialect: b1, transports: [ble, serial], match: {ble_name: "^B21S-"}, tested: maintainer,
-    tested_note: "Bluetooth LE on a Raspberry Pi and USB serial on macOS, 2026-11 (firmware 40.27)"}
+    tested_note: "Bluetooth LE on a Raspberry Pi and USB serial on macOS, 2026-11 (firmware 40.27 and 40.36)"}
   # 300 dpi; niimbluelib's table says 591 (B21 Pro) and 567 (B1 Pro) dots, the wiki 576 read from the printers.
   # The advertised name is a guess.
   - {<<: *niimbot, id: B21-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B21[ _-]?PRO-"}}

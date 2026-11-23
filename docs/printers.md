@@ -103,7 +103,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
 | 🟡 | B1 | Bluetooth LE | niimbot/b1 |  |
-| ✅ maintainer | B21S | Bluetooth LE, Serial | niimbot/b1 | Bluetooth LE on a Raspberry Pi and USB serial on macOS, 2026-11 (firmware 40.27) |
+| ✅ maintainer | B21S | Bluetooth LE, Serial | niimbot/b1 | Bluetooth LE on a Raspberry Pi and USB serial on macOS, 2026-11 (firmware 40.27 and 40.36) |
 | 🟡 | D101 | Bluetooth LE | niimbot/b1 |  |
 | 🟡 | B21 | Bluetooth LE | niimbot/b21 |  |
 | 🟡 | D11 | Bluetooth LE | niimbot/d11 |  |
