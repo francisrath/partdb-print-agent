@@ -421,7 +421,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 			return err
 		}
 		// ponytail: read once at startup; changing hot_folder needs a restart
-		folder := &hotfolder.Folder{Dir: dir, Pattern: hf.Pattern, Log: a.log,
+		folder := &hotfolder.Folder{Dir: dir, Pattern: hf.Pattern, Log: a.log, Paused: a.svc.Updating,
 			Print: func(ctx context.Context, path string) error {
 				return srv.PrintFile(ctx, "hot folder", hf.Printer, path)
 			}}
@@ -742,7 +742,8 @@ func (j *agentJobs) start(in config.Instance) {
 	l := &jobLoop{stop: stop, done: make(chan struct{}), url: in.BaseURL, loop: &agentjobs.Loop{
 		Client: partdb.FromInstance(&in), AgentID: j.agentID, Name: j.name, Version: appVersion(),
 		Printers: j.srv.AgentPrinters, Log: j.log.With("instance", in.ID),
-		Print: func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) }}}
+		Print:  func(ctx context.Context, job partdb.Job) (string, error) { return j.srv.PrintJob(ctx, in.ID, job) },
+		Paused: j.srv.Svc.Updating}}
 	j.loops[in.ID] = l
 	j.log.Info("fetching print jobs", "instance", in.ID, "url", in.BaseURL)
 	j.wg.Add(1)

@@ -48,12 +48,24 @@ document.querySelectorAll('a[data-busy]').forEach((a) => a.addEventListener('cli
 document.addEventListener('submit', (e) => { if (!e.defaultPrevented && e.submitter && e.submitter.dataset.busy) busy(e.submitter); });
 
 // Update now: poll until the restarted agent reports another version, or the update has stopped (failed).
+// Unreachable for 2 minutes in a row (a download may take longer, but then the agent answers): it
+// didn't come back, so say how to start it.
 document.querySelectorAll('[data-updating]').forEach((el) => {
+  let downSince = 0;
   const poll = async () => {
     try {
       const info = await (await fetch('/v1/info', { cache: 'no-store' })).json();
       if (info.version !== el.dataset.updating || !info.updating) { location.replace('/?manual'); return; }
-    } catch (e) { /* restarting */ }
+      downSince = 0;
+    } catch (e) { // restarting
+      downSince = downSince || Date.now();
+      if (Date.now() - downSince > 120000) {
+        el.textContent = "pdb-print didn't come back after the update: sign out of Windows and in again " +
+          '(the service: Restart-Service pdb-print in an administrator PowerShell), then reload this page.';
+        el.classList.add('err');
+        return;
+      }
+    }
     setTimeout(poll, 2000);
   };
   setTimeout(poll, 2000);

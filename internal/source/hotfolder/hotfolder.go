@@ -27,7 +27,9 @@ type Folder struct {
 	Settle  time.Duration // default 500 ms
 	Poll    time.Duration // default 1 s
 	Print   func(ctx context.Context, path string) error
-	Log     *slog.Logger
+	// Paused (pdb-print updating itself): settled files wait instead of failing; nil = never.
+	Paused func() bool
+	Log    *slog.Logger
 
 	link func(oldname, newname string) error // os.Link; tests swap it to exercise the copy fallback
 }
@@ -101,8 +103,8 @@ func (f *Folder) scan(ctx context.Context, state map[string]*seen, now time.Time
 		if now.Sub(s.stable) < f.Settle {
 			continue
 		}
-		if ctx.Err() != nil {
-			return // shutting down: leave the remaining files in place
+		if ctx.Err() != nil || f.Paused != nil && f.Paused() {
+			return // shutting down, or updating: leave the remaining files in place
 		}
 		if now.Sub(fi.ModTime()) > f.MaxAge {
 			s.skipped = true // settled too late to count as a fresh download

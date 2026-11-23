@@ -777,9 +777,6 @@ func TestUpdateTwice409(t *testing.T) {
 	if body := h.do("GET", "/?manual", nil).Body.String(); !strings.Contains(body, "Update failed: ") {
 		t.Errorf("no failure shown: %s", body)
 	}
-	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") {
-		t.Error("failure shown twice")
-	}
 	mu.Lock()
 	defer mu.Unlock()
 	if gets != 1 {
@@ -787,8 +784,8 @@ func TestUpdateTwice409(t *testing.T) {
 	}
 }
 
-// A download that fails at once: its error is on the next page, once, never replaced by the
-// "Updating" notice, and no "reloads" text shows without the element that polls.
+// A download that fails at once: its error is on the page (every tab, until the next Update now),
+// never replaced by the "Updating" notice, and no "reloads" text shows without the element that polls.
 func TestUpdateFailsFast(t *testing.T) {
 	h := newHarness(t)
 	withRelease(t, h, http.NotFound)
@@ -806,9 +803,20 @@ func TestUpdateFailsFast(t *testing.T) {
 	if strings.Contains(body, "reloads") && !strings.Contains(body, "data-updating") {
 		t.Error(`"reloads" without polling`)
 	}
-	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") || !strings.Contains(body, `action="/update"`) {
-		t.Errorf("second page: failure again, or no button to retry: %s", body)
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Count(body, "Update failed: ") != 1 || !strings.Contains(body, `action="/update"`) {
+		t.Errorf("second page (another tab): failure gone, or no button to retry: %s", body)
 	}
+	// the next Update now clears it while it runs
+	unblock := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-unblock; http.NotFound(w, r) }))
+	defer slow.Close()
+	h.srv.Updater.Base = slow.URL
+	h.post("/update", nil)
+	if body := h.do("GET", "/?manual", nil).Body.String(); strings.Contains(body, "Update failed") {
+		t.Error("old failure shown while the next update runs")
+	}
+	close(unblock)
+	h.srv.updateWG.Wait()
 }
 
 // Swapped but not restarted: the page says to restart instead of offering the same update again.

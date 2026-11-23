@@ -264,3 +264,22 @@ func TestCopyExclusiveNeverOverwrites(t *testing.T) {
 		t.Error("copy wrong or source not removed")
 	}
 }
+
+// While pdb-print updates itself, a settled file waits in place (not moved to failed/); it prints afterwards.
+func TestPausedWaits(t *testing.T) {
+	h := newHarness(t)
+	paused := true
+	h.f.Paused = func() bool { return paused }
+	p := h.file("label_a.pdf", "%PDF-1", 0)
+	h.scan(0)
+	h.scan(100 * time.Millisecond)
+	h.scan(600 * time.Millisecond)
+	if len(h.printed) != 0 || !exists(p) {
+		t.Fatalf("while paused: printed %v, file there %v", h.printed, exists(p))
+	}
+	paused = false
+	h.scan(time.Second)
+	if len(h.printed) != 1 {
+		t.Errorf("after the pause: printed %v", h.printed)
+	}
+}

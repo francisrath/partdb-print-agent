@@ -120,7 +120,7 @@ type Server struct {
 	flash       *flash
 	jobs        []Job
 	seen        map[string]time.Time // used handoff signatures
-	updateErr   string               // the last update's failure, shown once
+	updateErr   string               // the last update's failure, shown until the next Update now
 	installed   string               // a version swapped in but not restarted into
 	updating    atomic.Bool          // an Updater.Apply runs
 	updateWG    sync.WaitGroup       // the Apply goroutine
@@ -469,7 +469,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	data["Flash"], s.flash = s.flash, nil
-	data["UpdateErr"], s.updateErr = s.updateErr, ""
+	data["UpdateErr"] = s.updateErr
 	data["Installed"] = s.installed
 	data["Jobs"] = append([]Job(nil), s.jobs...)
 	s.mu.Unlock()
@@ -509,6 +509,9 @@ func (s *Server) selfUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pdb-print is already updating; reload the page in a moment.", http.StatusConflict)
 		return
 	}
+	s.mu.Lock()
+	s.updateErr = ""
+	s.mu.Unlock()
 	ctx, _ := s.stopCtx()
 	s.updateWG.Add(1)
 	go func() {
