@@ -457,8 +457,8 @@ The sketch in 7.1 was the starting point; the code now works like this:
   Status `^ee` is documented over USB and serial only, so USB jobs are confirmed when seen busy (`50`, then `00`);
   never seen busy, silent or stopped = sent unconfirmed. TCP jobs (ZebraNet print server) go blind. Untested on hardware.
 
-* **`niimbot` and `phomemo` driver families** (`internal/driver/niimbot`, `internal/driver/phomemo`; untested,
-  no printer on hand): Bluetooth LE label makers on the `ble` transport, whose `ble_service`/`ble_write`/
+* **`niimbot` and `phomemo` driver families** (`internal/driver/niimbot`, `internal/driver/phomemo`; Niimbot
+  B21S tested over BLE and USB serial in 2026-11, the rest untested): Bluetooth LE label makers on the `ble` transport, whose `ble_service`/`ble_write`/
   `ble_notify` quirks take a 16-bit number or a 128-bit UUID string, and may name one characteristic for
   both (Niimbot). Niimbot frames requests `55 55 cmd len data xor AA AA`, one per write with 10 ms between
   them, waits for each answer, sends rows across the head (bitmap, blank and repeated rows), and confirms
@@ -536,7 +536,7 @@ type Transport interface {
 | `escpos` | ESC/POS label/receipt (Xprinter XP-T…, Rongta, some Munbyn) | USB, TCP, serial, BT SPP | `GS v 0` raster, `GS V` cut; label mode varies by vendor (quirks in devices DB) | `DLE EOT n` | P2 | Epson ESC/POS reference |
 | `dymo` | **LabelWriter 330/400/450/4XL (done, untested)** | USB (usblp) | die-cut (`ESC L`), continuous, density | `ESC A` status byte (paper, jam) | P2 | DYMO LabelWriter 400 and 450 Series Technical Reference Manuals. **LW 550/5XL: chip-locked labels, not supported.** |
 | `dymo-lm` | LabelManager PnP/280/420P | USB (HID-like bulk) | D1 tape 6–24 mm | limited | P3 | protocol notes; labelle (check licence before porting) |
-| `niimbot` | **B1, B21, B21S, B21/B1 Pro, B18, D11, D11S, D11-H, D110, D101 (done, untested)** | BLE (GATT); USB-serial and SPP later | die-cut with RFID media info | heartbeat: cover, paper, battery; RFID labels left | P2 | own implementation from niimbluelib (MIT) and printers.niim.blue (CC-BY-SA, facts only) |
+| `niimbot` | **B1, B21, B21S, B21/B1 Pro, B18, D11, D11S, D11-H, D110, D101 (done; B21S tested)** | BLE (GATT); USB serial (B21S); SPP later | die-cut with RFID media info | heartbeat: cover, paper, battery; RFID labels left | P2 | own implementation from niimbluelib (MIT) and printers.niim.blue (CC-BY-SA, facts only) |
 | `phomemo` | **M02/M02S/M02 Pro/T02, M110/M120/M200/M220/M221, Q30, D30/D35 (done, untested)** | BLE; BT SPP later | continuous/die-cut | paper, cover, heat; `1A 0F 0C` per page | P2 | own implementation from MIT/Apache projects; phomemo-tools is GPL, never read |
 | `ipp` | IPP Everywhere / AirPrint printers, LPrint | IPP/IPPS | PDF/PWG-raster/URF, `media-col`, `print-scaling` | `printer-state-reasons` | P2 | RFC 8011, PWG 5100.14 |
 | `os-queue` | anything with an OS driver | CUPS (Linux/macOS), Windows spooler | sheets, office printers | job state only | **MVP** | OS APIs |

@@ -1136,7 +1136,7 @@ func checkHint(kind string) string {
 	case "usb":
 		return "check the printer's power and USB cable"
 	case "serial":
-		return "check the printer's power, the serial cable (printers usually need a null-modem cable) and the baud setting"
+		return "check the printer's power and cable (an RS-232 printer usually needs a null-modem cable and the right baud setting)"
 	}
 	return "check the printer's power and network connection"
 }

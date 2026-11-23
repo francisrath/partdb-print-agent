@@ -3,6 +3,7 @@ package niimbot
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"image"
 	"image/color"
@@ -196,13 +197,36 @@ func TestHeartbeat(t *testing.T) {
 	}
 }
 
-func TestLabelsLeft(t *testing.T) {
-	tag := cat(make([]byte, 8), []byte{3, 'A', 'B', 'C'}, []byte{2, '1', '2'}, []byte{0, 200, 0, 50, 1})
-	if n, ok := labelsLeft(tag); !ok || n != 150 {
-		t.Errorf("%d %v", n, ok)
-	}
-	if _, ok := labelsLeft([]byte{0}); ok {
-		t.Error("no tag read as a tag")
+func TestRFID(t *testing.T) {
+	head := cat(make([]byte, 8), []byte{3, 'A', 'B', 'C'}, []byte{2, '1', '2'})
+	for _, tc := range []struct {
+		name       string
+		tag        string // hex, or "" for head + rest
+		rest       []byte
+		left, kind int
+		ok         bool
+	}{
+		// read from a B21S, 2026-11-23: a white round roll and a "transparent" one
+		{name: "real white", tag: "881d781df6960000083033313132313136105043304643313833303930303036373200b4000f01", left: 165, kind: 1, ok: true},
+		{name: "real transparent", tag: "881d0d306195000008303330333232303210504330464232313331333030303830370" + "0b4002405", left: 144, kind: 5, ok: true},
+		{name: "no kind byte", rest: []byte{0, 200, 0, 50}, left: 150, kind: 0, ok: true},
+		{name: "kind 0", rest: []byte{0, 200, 0, 50, 0}, left: 150, kind: 0, ok: true},
+		{name: "unknown kind", rest: []byte{0, 200, 0, 50, 7}, left: 150, kind: 7, ok: true},
+		{name: "no count, a kind", rest: []byte{0, 0, 0, 0, 3}, left: -1, kind: 3, ok: true},
+		{name: "truncated", rest: []byte{0, 200}, ok: false},
+		{name: "no tag", tag: "00", ok: false},
+	} {
+		d := cat(head, tc.rest)
+		if tc.tag != "" {
+			var err error
+			if d, err = hex.DecodeString(tc.tag); err != nil {
+				t.Fatal(tc.name, err)
+			}
+		}
+		left, kind, ok := rfid(d)
+		if ok != tc.ok || ok && (left != tc.left || int(kind) != tc.kind) {
+			t.Errorf("%s: %d %d %v, want %d %d %v", tc.name, left, kind, ok, tc.left, tc.kind, tc.ok)
+		}
 	}
 }
 
@@ -288,8 +312,8 @@ func (f *printer) cmds() []byte {
 }
 
 func fast(t *testing.T) {
-	vars := []*time.Duration{&replyWait, &packetGap, &pollEvery, &confirmBase, &confirmPerPage, &pageIndexWait}
-	vals := []time.Duration{50 * time.Millisecond, 0, time.Millisecond, 200 * time.Millisecond, 0, 50 * time.Millisecond}
+	vars := []*time.Duration{&replyWait, &packetGap, &pollEvery, &confirmBase, &confirmPerPage, &pageIndexWait, &pageEndWait}
+	vals := []time.Duration{50 * time.Millisecond, 0, time.Millisecond, 200 * time.Millisecond, 0, 50 * time.Millisecond, 100 * time.Millisecond}
 	for i, v := range vars {
 		old := *v
 		*v = vals[i]
@@ -500,7 +524,7 @@ func TestStatus(t *testing.T) {
 		return nil, false
 	}
 	st, err := newDriver(t, "B21-PRO", "").Status(context.Background(), f)
-	if err != nil || st.Code != driver.OK || st.Detail != "60 labels left on the roll" || st.Via != "ble" || hb != 4 {
+	if err != nil || st.Code != driver.OK || st.Detail != "60 labels left on the roll (with-gaps)" || st.Via != "ble" || hb != 4 {
 		t.Fatalf("%+v %v (heartbeat type %d)", st, err, hb)
 	}
 	// a heartbeat in a layout we don't know is no ready printer
@@ -542,5 +566,100 @@ func TestModels(t *testing.T) {
 				t.Errorf("%s %s: %d dots", m.ID, md.ID, md.PrintableWidthDots)
 			}
 		}
+	}
+}
+
+// The roll's RFID tag says what kind of label it is; the print uses that label type (a transparent roll
+// printed blank as "with gaps" on a B21S) and falls back to the media kind without a tag.
+func TestLabelTypeFromRFID(t *testing.T) {
+	fast(t)
+	tag := cat(make([]byte, 8), []byte{1, 'A'}, []byte{1, '1'}, []byte{0, 180, 0, 37, 5})
+	f := &printer{protocol: 3, answer: func(p reply) ([]byte, bool) {
+		return packet(0x1B, tag...), p.cmd == cmdRFID
+	}}
+	d := newDriver(t, "B21S", "")
+	st, err := d.Status(context.Background(), f)
+	if err != nil || st.MediaType != "transparent" || st.Detail != "143 labels left on the roll (transparent)" {
+		t.Fatalf("%+v %v", st, err)
+	}
+	// a tag with a kind but no count still sets the kind
+	noCount := cat(make([]byte, 8), []byte{1, 'A'}, []byte{1, '1'}, []byte{0, 0, 0, 0, 3})
+	f2 := &printer{protocol: 3, answer: func(p reply) ([]byte, bool) { return packet(0x1B, noCount...), p.cmd == cmdRFID }}
+	if st2, err := d.Status(context.Background(), f2); err != nil || st2.MediaType != "continuous" || st2.Detail != "" {
+		t.Errorf("no count: %+v %v", st2, err)
+	}
+	for _, tc := range []struct {
+		status *driver.Status
+		media  devicedb.MediaKind
+		want   byte
+	}{
+		{st, devicedb.DieCut, 5},
+		{&driver.Status{Code: driver.OK}, devicedb.DieCut, 1},
+		{&driver.Status{Code: driver.OK}, devicedb.Continuous, 3},
+		{&driver.Status{Code: driver.OK, MediaType: "brother-only"}, devicedb.DieCut, 1},
+	} {
+		f := &printer{}
+		j := job(1, &devicedb.Media{ID: "m", Kind: tc.media})
+		j.Status = tc.status
+		if _, err := d.Print(context.Background(), f, j); err != nil {
+			t.Fatal(err)
+		}
+		var sent []byte
+		for _, p := range f.written {
+			if p.cmd == cmdLabelType {
+				sent = append(sent, p.data[0])
+			}
+		}
+		if !bytes.Equal(sent, []byte{tc.want}) {
+			t.Errorf("%q %v: label types sent %v, want [%d]", tc.status.MediaType, tc.media, sent, tc.want)
+		}
+	}
+}
+
+// A B21S (firmware 40.27) prints a blank label for the first D110-style job on a connection; the B1
+// print task prints at once. It also took up to 3.5 s to answer the page end.
+func TestB21SPrintsB1Style(t *testing.T) {
+	fast(t)
+	setDur(t, &pageEndWait, time.Second)
+	f := &printer{}
+	f.answer = func(p reply) ([]byte, bool) {
+		if p.cmd != cmdPageEnd {
+			return nil, false
+		}
+		f.page++
+		go func() { // answers after replyWait (50 ms here), within pageEndWait
+			time.Sleep(200 * time.Millisecond)
+			f.mu.Lock()
+			f.in = append(f.in, packet(0xE4, 1)...)
+			f.mu.Unlock()
+		}()
+		return nil, true
+	}
+	res, err := newDriver(t, "B21S", "").Print(context.Background(), f, job(1, nil))
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if got, want := f.cmds(), []byte{0x21, 0x23, 0x01, 0x03, 0x13, 0xE3, 0xA3, 0xF3}; !bytes.Equal(got, want) {
+		t.Errorf("sent % X, want % X (the B1 sequence)", got, want)
+	}
+}
+
+func setDur(t *testing.T, p *time.Duration, v time.Duration) {
+	old := *p
+	*p = v
+	t.Cleanup(func() { *p = old })
+}
+
+// Cancelling a job stops the wait for an answer at once, not after the 10 s page-end wait.
+func TestPrintCancelWhileWaiting(t *testing.T) {
+	fast(t)
+	setDur(t, &pageEndWait, 5*time.Second)
+	f := &printer{answer: func(p reply) ([]byte, bool) { return nil, p.cmd == cmdPageEnd }}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := newDriver(t, "B21S", "").Print(ctx, f, job(1, nil))
+	if !errors.Is(err, context.Canceled) || time.Since(start) > time.Second {
+		t.Errorf("%v after %v", err, time.Since(start))
 	}
 }

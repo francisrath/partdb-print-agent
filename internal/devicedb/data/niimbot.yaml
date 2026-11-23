@@ -1,5 +1,5 @@
-# Niimbot label makers (driver niimbot) over Bluetooth LE. None of these has been tried on a printer yet:
-# every model is untested (2026-11-20). Source for heads, dpi, density ranges, cover polarity and which
+# Niimbot label makers (driver niimbot) over Bluetooth LE. Tried on a printer: B21S (2026-11-23); every other
+# model is untested. Source for heads, dpi, density ranges, cover polarity and which
 # print task (dialect) each model takes: niimbluelib's model table and print tasks (MIT,
 # github.com/MultiMote/niimbluelib) and the printers.niim.blue notes (CC-BY-SA-4.0, facts only).
 # All models use GATT service e7810a71-… with one characteristic for writes and notifications. Printers
@@ -24,7 +24,11 @@ models:
     media: [niimbot-50x30, niimbot-50x20, niimbot-50x50, niimbot-50x70, niimbot-50x80, niimbot-40x30,
       niimbot-40x20, niimbot-30x20, niimbot-30x15, niimbot-25x15]
   - {<<: *niimbot, id: B21, dialect: b21, match: {ble_name: "^B21-"}}
-  - {<<: *niimbot, id: B21S, dialect: d110, match: {ble_name: "^B21S-"}}
+  # tested 2026-11-23 (hardware 40.10, firmware 40.27): niimbluelib's D110 task printed a blank label as the
+  # first job on each connection (as niimblue #108 saw on a D101); the B1 task prints at once (40.27 and 40.36). Its USB-C port
+  # is a USB serial device (macOS /dev/cu.usbmodem…, Linux /dev/ttyACM…) speaking the same packets: tested on macOS
+  - {<<: *niimbot, id: B21S, dialect: b1, transports: [ble, serial], match: {ble_name: "^B21S-"}, tested: maintainer,
+    tested_note: "Bluetooth LE on a Raspberry Pi and USB serial on macOS, 2026-11 (firmware 40.27 and 40.36)"}
   # 300 dpi; niimbluelib's table says 591 (B21 Pro) and 567 (B1 Pro) dots, the wiki 576 read from the printers.
   # The advertised name is a guess.
   - {<<: *niimbot, id: B21-PRO, dialect: v4, dpi: 300, head_pins: 576, match: {ble_name: "(?i)^B21[ _-]?PRO-"}}
