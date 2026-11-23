@@ -47,6 +47,17 @@ type Draft struct {
 
 	SavedCurrent bool     // this printer is saved (a repeated Save goes to Done)
 	Saved        []string // names saved in this session
+
+	used time.Time // the last wizard request (lockDraft)
+}
+
+// draftStale: a shared draft (service mode) unused this long starts over at /setup/.
+const draftStale = 15 * time.Minute
+
+// reset starts the wizard over (Part-DB step first, its check done again).
+func (d *Draft) reset() {
+	d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
+	d.resetPrinter(config.Printer{})
 }
 
 // resetPrinter starts the printer steps over with p.
@@ -94,6 +105,7 @@ func lockDraft(r *http.Request) (*Session, *Draft, func()) {
 	sess := session(r)
 	d := sess.Draft
 	d.mu.Lock()
+	d.used = time.Now()
 	return sess, d, d.mu.Unlock
 }
 
