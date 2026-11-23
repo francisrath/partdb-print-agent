@@ -407,6 +407,16 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	ctx, quit := context.WithCancel(ctx) // POST /v1/quit: the same graceful shutdown as SIGTERM
 	defer quit()
 	srv := a.newServer(ln.Addr().String(), quit)
+	lns := []net.Listener{ln}
+	if serviceMode { // browsers try localhost on [::1] first: that must be us, not another user's program
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		if ln6, err := net.Listen("tcp", net.JoinHostPort("::1", port)); err != nil {
+			srv.IPv4Only = true // a program on [::1] can't share our origin: localhost and [::1] are refused
+			a.log.Error("can't listen on [::1]: the web UI is only at http://127.0.0.1:"+port+" (http://localhost doesn't work)", "err", err)
+		} else {
+			lns = append(lns, ln6)
+		}
+	}
 	// before any job source starts: they count into it
 	srv.Stats = telemetry.Open(filepath.Join(filepath.Dir(a.cfgPath), "telemetry.json"))
 	a.setupSelfUpdate(ctx, srv)
@@ -457,6 +467,13 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		_ = hs.Shutdown(sctx)
 	}()
 	a.log.Info("web UI ready", "url", "http://"+ln.Addr().String(), "config", a.cfgPath, "renderer", a.renderer())
+	for _, l := range lns[1:] {
+		go func() {
+			if err := hs.Serve(l); !errors.Is(err, http.ErrServerClosed) {
+				a.log.Error("web UI stopped listening", "addr", l.Addr().String(), "err", err)
+			}
+		}()
+	}
 	if err := hs.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -482,8 +499,8 @@ func (a *app) newServer(addr string, quit func()) *server.Server {
 		srv.PairCodeFile = filepath.Join(dir, "pair-code.txt")
 		srv.SessionKeyFile = filepath.Join(dir, "session.key")
 		srv.PairRequestFile = filepath.Join(dir, "pair-request")
-		if exe, err := os.Executable(); err == nil { // %ProgramFiles% isn't on PATH
-			srv.PairCommand = `"` + exe + `" pair`
+		if exe, err := os.Executable(); err == nil { // %ProgramFiles% isn't on PATH; & runs a quoted path in PowerShell
+			srv.PairCommand = `& "` + exe + `" pair`
 		}
 	case goos == "windows": // for `pdb-print install`/`uninstall`; elsewhere the service manager stops us
 		srv.Quit = quit
@@ -594,10 +611,12 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	var nonceErr error     // why no nonce was sent (Windows); a per-user agent needs none
+	var codeFile string    // where the service writes the code (admin-only)
 	if goos == "windows" { // the service opens a window only for the nonce in its admin-only folder
 		if pd := envFromOS().ProgramData; pd == "" {
 			nonceErr = errors.New("ProgramData is not set")
 		} else {
+			codeFile = filepath.Join(pd, "pdb-print", "pair-code.txt")
 			b := make([]byte, 32)
 			rand.Read(b)
 			nonce := hex.EncodeToString(b)
@@ -623,16 +642,18 @@ func pairCmd(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("pdb-print serve on %s: %s %s", *addr, resp.Status, strings.TrimSpace(string(b)))
 	}
 	var res struct {
-		Code     string    `json:"code"`
-		CodeFile string    `json:"code_file"` // the service: the code is only in this admin-only file
-		URLs     []string  `json:"urls"`
-		Expires  time.Time `json:"expires"`
+		Code    string    `json:"code"` // "" from the service: the code is only in codeFile
+		URLs    []string  `json:"urls"`
+		Expires time.Time `json:"expires"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return err
 	}
-	if res.CodeFile != "" {
-		b, err := os.ReadFile(res.CodeFile)
+	if res.Code == "" {
+		if codeFile == "" {
+			return fmt.Errorf("pdb-print serve on %s sent no code", *addr)
+		}
+		b, err := os.ReadFile(codeFile)
 		if errors.Is(err, os.ErrPermission) {
 			return errors.New("run pdb-print pair as administrator to see the code")
 		} else if err != nil {

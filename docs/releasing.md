@@ -81,8 +81,8 @@ isn't updated (`skip_upload: auto`). PR CI (`packaging-darwin`) has no secrets a
   first (`gh release edit TAG --draft=true`), then re-run both.
 - **`release-darwin` fails:** the release stays a draft. Fix the cause and re-run that job; it finds the draft.
 - **Only the publish step fails** (a check or the `gh` call): the cask already points at the draft. Look at the
-  draft's assets and, if they are complete, publish by hand: `gh release edit TAG --draft=false`; or re-run
-  the job. If it reports several releases for the tag, delete the extra draft (below) first.
+  draft's assets and, if they are complete (and `checksums-windows.txt` lists the setup.exe, not only the zip),
+  publish by hand: `gh release edit TAG --draft=false`; or re-run the job. If it reports several releases for the tag, delete the extra draft (below) first.
   The Docker images, `:latest` included, are already pushed by then (accepted trade-off).
 - **Re-running `release-darwin` after the release was published** turns it back into a draft for the
   duration of the run. If that re-run fails, publish the draft by hand: `gh release edit TAG --draft=false`.

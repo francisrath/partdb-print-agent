@@ -18,7 +18,7 @@ import (
 
 // PairLoopback's sessions: a browser that typed the code gets a stateless cookie
 // "<expiry, unix seconds>.<hex HMAC-SHA256 of the expiry>", keyed by the secret in SessionKeyFile,
-// so it survives restarts. ponytail: no per-browser sign-out; deleting the key file signs all out.
+// so it survives restarts. ponytail: no per-browser sign-out; deleting the key file (signOutAll) signs all out.
 const (
 	sessionCookie = "pdb_session"
 	sessionLife   = 30 * 24 * time.Hour
@@ -101,4 +101,19 @@ func (s *Server) pairLocal(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: v, Path: "/", MaxAge: int(sessionLife / time.Second),
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
 	http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
+}
+
+// signOutAll is POST /sessions/sign-out under PairLoopback: the key file goes, so every session
+// cookie stops working (this browser's too); the next pairing makes a new key.
+func (s *Server) signOutAll(w http.ResponseWriter, r *http.Request) {
+	s.keyMu.Lock()
+	err := os.Remove(s.SessionKeyFile)
+	s.keyMu.Unlock()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.Log.Error("can't delete the session key", "file", s.SessionKeyFile, "err", err)
+		http.Error(w, "can't sign the browsers out: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.Log.Info("signed out all browsers")
+	http.Redirect(w, r, "/setup/", http.StatusSeeOther)
 }

@@ -17,7 +17,7 @@
 <section>
 {{if .Open}}
   <h2>Type the 6-digit code</h2>
-  {{if .Service}}<p>In a Command Prompt run as administrator on this PC, run this; it shows the code:</p>
+  {{if .Service}}<p>In Terminal (Admin) or PowerShell as administrator, run this (in Command Prompt leave out the leading &amp;): It shows the code.</p>
   {{else}}<p>It is shown where you installed pdb-print: in the install output or in <code>docker logs</code>.
   Or run this on the print server:</p>{{end}}
   {{template "cmd" .Cmd}}
@@ -32,10 +32,11 @@
   command above again to open it. Use this on a network you trust.</p>
 {{else}}
   <h2>Setup is closed</h2>
-  {{if .Service}}<p>In a Command Prompt run as administrator on this PC, run this to open it again, then reload this page:</p>
+  {{if .Service}}<p>To open it again: in Terminal (Admin) or PowerShell as administrator, run this (in Command Prompt leave out the leading &amp;):</p>
   {{else}}<p>Run this on the print server (in Docker: <code>docker exec &lt;name&gt; pdb-print pair</code>) to open it
   again, then reload this page:</p>{{end}}
   {{template "cmd" .Cmd}}
+  {{if .Service}}<p>Then reload this page.</p>{{end}}
 {{end}}
 </section>
 </main>

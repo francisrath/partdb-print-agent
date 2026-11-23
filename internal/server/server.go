@@ -88,6 +88,9 @@ type Server struct {
 	// answering it. Both are set before Handler.
 	PairLoopback bool
 	PairCodeFile string
+	// IPv4Only: only 127.0.0.1 is ours (the service couldn't listen on [::1]); localhost and [::1]
+	// Host headers are refused, as a program listening there would share our origin. Set before Handler.
+	IPv4Only bool
 	// PairCommand is how the pages tell people to open setup again; "" = `pdb-print pair`.
 	PairCommand string
 	// PairRequestFile (PairLoopback): /v1/pair opens a window only for a request that carries, in
@@ -209,12 +212,12 @@ func (s *Server) Handler() http.Handler {
 	if s.PairLoopback { // as on the LAN: the pair page, then the wizard
 		mux.HandleFunc("GET /setup/{$}", s.setupStart)
 		mux.HandleFunc("POST /setup/pair", s.pairLocal)
+		mux.HandleFunc("POST /sessions/sign-out", s.signOutAll)
 	} else {
 		mux.HandleFunc("GET /setup/{$}", func(w http.ResponseWriter, r *http.Request) {
 			d := s.local.Draft // a fresh start
 			d.mu.Lock()
-			d.Instance, d.Notes, d.NoAgentAPI, d.APIChecked, d.APIErr, d.Candidates, d.Scanned, d.Saved = nil, nil, false, false, "", nil, false, nil
-			d.resetPrinter(config.Printer{})
+			d.reset()
 			d.mu.Unlock()
 			http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 		})
@@ -235,8 +238,10 @@ func (s *Server) Handler() http.Handler {
 // guard enforces the loopback Host allowlist, CSRF on POST and safe headers.
 func (s *Server) guard(next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(s.Addr)
-	allowed := map[string]bool{"127.0.0.1:" + port: true, "localhost:" + port: true, "[::1]:" + port: true,
-		s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
+	allowed := map[string]bool{"127.0.0.1:" + port: true, s.Addr: true} // e.g. 127.0.0.2:8631; serve only binds loopback addresses
+	if !s.IPv4Only {
+		allowed["localhost:"+port], allowed["[::1]:"+port] = true, true
+	}
 	pairLoopback := s.PairLoopback
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowed[r.Host] {
@@ -409,7 +414,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		"SelfUpdate": s.selfUpdater(cfg) != nil, "Updating": s.updating.Load(),
 		// undecided installs get the box ticked: saving without touching it means yes
 		"TelemetryDecided": cfg.Telemetry != nil, "TelemetryOn": cfg.Telemetry == nil || *cfg.Telemetry,
-		"TelemetryOff": telemetryOffReason(cfg),
+		"TelemetryOff": telemetryOffReason(cfg), "Service": s.PairLoopback,
 	}
 	data["Media"] = formMedia()
 

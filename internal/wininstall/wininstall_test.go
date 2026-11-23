@@ -2,6 +2,7 @@ package wininstall
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,6 +30,8 @@ type fakeSystem struct {
 	up       bool            // Listening says yes (a started service serves unless dead)
 	dead     bool            // a started service never listens
 	stopped  bool            // ServiceStopped says yes
+	// perUserAtStart: the per-user install (entry, Run value) was still there when the service started
+	perUserAtStart bool
 }
 
 func newFake() *fakeSystem {
@@ -66,6 +69,8 @@ func (f *fakeSystem) RemoveService() error {
 }
 func (f *fakeSystem) StartService() error {
 	f.calls = append(f.calls, "start")
+	_, entry := f.unin[PerUser]
+	f.perUserAtStart = entry && f.run[name] != ""
 	f.up = f.startErr == nil && !f.dead
 	return f.startErr
 }
@@ -352,7 +357,7 @@ func TestInstallServiceReinstall(t *testing.T) {
 		t.Errorf("start failure: %v", err)
 	}
 	sys.startErr = errors.New("access denied")
-	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "or Event Viewer → Windows Logs → System") {
+	if _, err := Install(sys, Options{Mode: Service, Self: fakeSelf(t), Env: e}); err == nil || !strings.Contains(err.Error(), "or Event Viewer → Windows Logs → Application (source pdb-print)") {
 		t.Errorf("start error without the hint: %v", err)
 	}
 	sys.startErr, sys.writeOK = nil, 0
@@ -370,13 +375,13 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 		hadService bool
 		kept, gone []string
 	}{
-		{"fresh", nil, false, []string{"config.yaml", "pdb-print.log", "planted.txt", "sub"}, []string{"session.key", "pair-code.txt"}},
+		{"fresh", nil, false, []string{"config.yaml", "pdb-print.log", "planted.txt", "sub"}, []string{"pair-code.txt"}},
 		// anything an ordinary user made: the whole dir is moved aside, a new empty one made
-		{"planted file", []string{"planted.txt"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "session.key", "planted.txt", "sub"}},
+		{"planted file", []string{"planted.txt"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "planted.txt", "sub"}},
 		{"planted subdir", []string{"sub"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "planted.txt", "sub"}},
-		{"planted config", []string{"config.yaml"}, false, []string{"config.yaml"}, []string{"pdb-print.log", "session.key"}},
-		{"reinstall", nil, true, []string{"config.yaml", "session.key", "pair-code.txt", "planted.txt"}, nil},
-		{"reinstall, planted", []string{"planted.txt"}, true, []string{"config.yaml"}, []string{"session.key", "planted.txt"}},
+		{"planted config", []string{"config.yaml"}, false, []string{"config.yaml"}, []string{"pdb-print.log"}},
+		{"reinstall", nil, true, []string{"config.yaml", "pair-code.txt", "planted.txt"}, nil},
+		{"reinstall, planted", []string{"planted.txt"}, true, []string{"config.yaml"}, []string{"planted.txt"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			sys, e := newFake(), testEnv(t)
@@ -402,6 +407,10 @@ func TestInstallServiceCleansConfigDir(t *testing.T) {
 				if exists(filepath.Join(dir, n)) {
 					t.Errorf("%s kept", n)
 				}
+			}
+			// every install signs every browser out: a new session key, never the old one
+			if b, _ := os.ReadFile(filepath.Join(dir, "session.key")); len(b) != 32 {
+				t.Errorf("session key %q, want a new 32-byte key", b)
 			}
 			planted := len(tt.notOwned) > 0
 			if b, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); planted && len(b) != 0 {
@@ -595,7 +604,7 @@ func TestReadyServiceDir(t *testing.T) {
 			before, _ := os.ReadFile(cfg)
 			err := ReadyServiceDir(sys, cfg)
 			if tt.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "not starting") {
+				if err == nil || !strings.Contains(err.Error(), tt.want) || !errors.Is(err, ErrUntrustedDir) {
 					t.Errorf("err = %v", err)
 				}
 				return
@@ -979,5 +988,47 @@ func TestSyncVersion(t *testing.T) {
 	}
 	if _, ok := sys.unin[Service]; ok {
 		t.Error("an entry was created")
+	}
+}
+
+// The per-user install goes only once the service serves; if the service doesn't start, the per-user
+// agent (stopped by the caller, not removed) is started again.
+func TestInstallServiceTakeOverOrder(t *testing.T) {
+	setVar(t, &serveWait, 30*time.Millisecond)
+	setVar(t, &servePoll, time.Millisecond)
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint("service fails ", fail), func(t *testing.T) {
+			sys, e := newFake(), testEnv(t)
+			pu, err := Install(sys, Options{Mode: PerUser, Self: fakeSelf(t), Version: "1", Env: e})
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.MkdirAll(filepath.Dir(pu.Config), 0o755)
+			os.WriteFile(pu.Config, []byte("log_level: debug\n"), 0o600)
+			sys.spawns, sys.dead = nil, fail
+			_, err = Install(sys, Options{Mode: Service, Self: fakeSelf(t), Version: "2", Env: e})
+			if !sys.perUserAtStart {
+				t.Error("per-user install removed before the service started")
+			}
+			if b, _ := os.ReadFile(LayoutFor(Service, e).Config); string(b) != "log_level: debug\n" {
+				t.Errorf("service config %q: not copied before the start", b)
+			}
+			_, entry := sys.unin[PerUser]
+			if !fail {
+				if err != nil || entry || len(sys.run) != 0 || exists(pu.ProgramDir) || len(sys.spawns) != 0 {
+					t.Errorf("err %v, per-user entry %v, run %v, spawns %v", err, entry, sys.run, sys.spawns)
+				}
+				return
+			}
+			if !errors.Is(err, ErrNotStarted) || !strings.Contains(err.Error(), "the per-user pdb-print was started again") {
+				t.Errorf("err %v", err)
+			}
+			if !entry || sys.run[name] == "" || !exists(pu.ExeW) {
+				t.Errorf("per-user install removed: entry %v, run %v", entry, sys.run)
+			}
+			if want := [][]string{{pu.ExeW, "serve"}}; fmt.Sprint(sys.spawns) != fmt.Sprint(want) {
+				t.Errorf("spawns %v, want %v", sys.spawns, want)
+			}
+		})
 	}
 }

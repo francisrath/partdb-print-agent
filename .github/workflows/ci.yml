@@ -63,7 +63,7 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.20.3
-          args: check .goreleaser.yaml .goreleaser-darwin.yaml
+          args: check .goreleaser.yaml .goreleaser-darwin.yaml .goreleaser-windows.yaml
       - name: cross-compile without cgo
         run: |
           for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
@@ -113,7 +113,7 @@ jobs:
   # the Windows release half (.goreleaser-windows.yaml plus setup.exe), as release.yml's release-windows
   # job runs it
   packaging-windows:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # as release-windows: setup.exe builds with the image's Wine
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

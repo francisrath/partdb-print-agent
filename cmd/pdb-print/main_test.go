@@ -424,13 +424,21 @@ func TestPairCmd(t *testing.T) {
 	}
 }
 
+// The service answers without the code: an elevated pair reads it from %ProgramData%\pdb-print\pair-code.txt,
+// never from a path in the reply.
 func TestPairCmdReadsCodeFile(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "pair-code.txt")
+	pd := t.TempDir()
+	stub(t, &goos, "windows")
+	stub(t, &envFromOS, func() wininstall.Env { return wininstall.Env{ProgramData: pd} })
+	file := filepath.Join(pd, "pdb-print", "pair-code.txt")
+	os.MkdirAll(filepath.Dir(file), 0o700)
 	if err := os.WriteFile(file, []byte("482913"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	decoy := filepath.Join(t.TempDir(), "decoy.txt")
+	os.WriteFile(decoy, []byte("111111"), 0o600)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"code_file":%q,"urls":[],"expires":"2026-11-19T12:15:00Z"}`, file)
+		fmt.Fprintf(w, `{"code_file":%q,"urls":[],"expires":"2026-11-19T12:15:00Z"}`, decoy)
 	}))
 	t.Cleanup(srv.Close)
 	addr := strings.TrimPrefix(srv.URL, "http://")
@@ -442,6 +450,9 @@ func TestPairCmdReadsCodeFile(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "111111") {
+		t.Errorf("read the file the reply named:\n%s", out.String())
 	}
 	if err := os.Chmod(file, 0); err != nil {
 		t.Fatal(err)
@@ -852,8 +863,8 @@ func TestNewServerServiceMode(t *testing.T) {
 	stub(t, &serviceMode, true)
 	s := a.newServer("127.0.0.1:8631", quit)
 	if s.Quit != nil || !s.PairLoopback || s.PairCodeFile != filepath.Join(dir, "pair-code.txt") || s.SessionKeyFile != filepath.Join(dir, "session.key") ||
-		s.PairRequestFile != filepath.Join(dir, "pair-request") {
-		t.Errorf("service: quit %v, loopback %v, %q %q", s.Quit != nil, s.PairLoopback, s.PairCodeFile, s.SessionKeyFile)
+		s.PairRequestFile != filepath.Join(dir, "pair-request") || !strings.HasPrefix(s.PairCommand, `& "`) || !strings.HasSuffix(s.PairCommand, `" pair`) {
+		t.Errorf("service: quit %v, loopback %v, %q %q, command %q", s.Quit != nil, s.PairLoopback, s.PairCodeFile, s.SessionKeyFile, s.PairCommand)
 	}
 }
 

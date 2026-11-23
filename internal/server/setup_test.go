@@ -786,15 +786,17 @@ func pairCode(t *testing.T, h *harness) (string, time.Time) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	var res struct {
-		Code     string    `json:"code"`
-		CodeFile string    `json:"code_file"`
-		Expires  time.Time `json:"expires"`
+		Code    string    `json:"code"`
+		Expires time.Time `json:"expires"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.CodeFile != "" {
-		b, err := os.ReadFile(res.CodeFile)
+	if strings.Contains(w.Body.String(), "code_file") {
+		t.Errorf("the reply names the code file: %s", w.Body) // pair reads the one it knows
+	}
+	if h.srv.PairCodeFile != "" {
+		b, err := os.ReadFile(h.srv.PairCodeFile)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -814,7 +816,7 @@ func TestPairAPIReusesOpenWindow(t *testing.T) {
 			code, expires := pairCode(t, h)
 			h.srv.Window.Check("wrong", time.Now())
 			again, expires2 := pairCode(t, h)
-			if again != code || !expires2.Equal(expires) {
+			if again != code || expires2.Before(expires) {
 				t.Errorf("second /v1/pair: %q %v, want %q %v", again, expires2, code, expires)
 			}
 			h.srv.Window.mu.Lock()
@@ -826,10 +828,7 @@ func TestPairAPIReusesOpenWindow(t *testing.T) {
 			if _, ok := h.srv.Window.Check(code, time.Now()); !ok { // a browser pairs: the code is used up
 				t.Fatal("code didn't pair")
 			}
-			h.srv.Window.mu.Lock()
-			h.srv.Window.opened = h.srv.Window.opened.Add(-windowEvery)
-			h.srv.Window.mu.Unlock()
-			if fresh, _ := pairCode(t, h); fresh == code {
+			if fresh, _ := pairCode(t, h); fresh == code { // at once: a used window isn't rate-limited
 				t.Errorf("/v1/pair after the code was used: the same code %q", fresh)
 			}
 		})
@@ -863,7 +862,7 @@ func TestPairCodeFile(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := res["code"]; ok || res["code_file"] != h.srv.PairCodeFile {
+	if _, ok := res["code"]; ok || res["code_file"] != nil {
 		t.Fatalf("reply %s", w.Body)
 	}
 	b, err := os.ReadFile(h.srv.PairCodeFile)
@@ -1006,15 +1005,24 @@ func TestNewCodeKeepsPairedBrowser(t *testing.T) {
 // PATH), in an administrator prompt, and no Docker hint.
 func TestPairLoopbackPairCommand(t *testing.T) {
 	h := pairLoopbackHarness(t)
-	h.srv.PairCommand = `"C:\Program Files\pdb-print\pdb-print.exe" pair`
-	body := h.do("GET", "/setup/", nil, fromLoopback).Body.String()
-	for _, want := range []string{`&#34;C:\Program Files\pdb-print\pdb-print.exe&#34; pair`, "as administrator"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("pair page lacks %q: %s", want, body)
+	h.srv.PairCommand = `& "C:\Program Files\pdb-print\pdb-print.exe" pair`
+	for _, open := range []bool{false, true} {
+		if open {
+			h.srv.Window.Open(time.Now())
 		}
-	}
-	if strings.Contains(body, "docker") {
-		t.Errorf("pair page mentions Docker: %s", body)
+		body := h.do("GET", "/setup/", nil, fromLoopback).Body.String()
+		for _, want := range []string{
+			`<code>&amp; &#34;C:\Program Files\pdb-print\pdb-print.exe&#34; pair</code>`,
+			`data-copy="&amp; &#34;C:\Program Files\pdb-print\pdb-print.exe&#34; pair"`, // Copy copies what is shown
+			"in terminal (admin) or powershell as administrator, run this (in command prompt leave out the leading &amp;):",
+		} {
+			if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
+				t.Errorf("open %v: pair page lacks %q: %s", open, want, body)
+			}
+		}
+		if strings.Contains(body, "docker") {
+			t.Errorf("pair page mentions Docker: %s", body)
+		}
 	}
 }
 
@@ -1030,5 +1038,70 @@ func TestPairLoopbackPairedPairAgain(t *testing.T) {
 	cross := func(r *http.Request) { withCookie(r); r.Header.Set("Origin", "http://evil.example") }
 	if w := h.do("POST", "/setup/pair", url.Values{"code": {"123456"}}, cross); w.Code != http.StatusForbidden {
 		t.Errorf("cross-origin pair POST: %d", w.Code)
+	}
+}
+
+// "Sign out all browsers" (service mode) deletes the session key: every cookie stops working.
+func TestSignOutAllBrowsers(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	cookie := pairLoopback(t, h)
+	other := pairLoopback(t, h)
+	withCookie := func(r *http.Request) { r.AddCookie(cookie); fromLoopback(r) }
+	if w := h.do("GET", "/", nil, withCookie); !strings.Contains(w.Body.String(), `action="/sessions/sign-out"`) {
+		t.Fatalf("no sign-out button: %s", w.Body)
+	}
+	if w := h.do("POST", "/sessions/sign-out", url.Values{}, withCookie); w.Code != http.StatusForbidden {
+		t.Errorf("without CSRF: %d", w.Code)
+	}
+	if w := h.do("POST", "/sessions/sign-out", url.Values{"csrf": {h.srv.csrf}}, fromLoopback); w.Code != http.StatusForbidden {
+		t.Errorf("unpaired: %d", w.Code)
+	}
+	w := h.do("POST", "/sessions/sign-out", url.Values{"csrf": {h.srv.csrf}}, withCookie)
+	wantRedirect(t, w, "/setup/")
+	for _, c := range []*http.Cookie{cookie, other} {
+		if w := h.do("GET", "/", nil, fromLoopback, func(r *http.Request) { r.AddCookie(c) }); w.Code != http.StatusSeeOther {
+			t.Errorf("cookie still works: %d", w.Code)
+		}
+	}
+	if _, err := os.Stat(h.srv.SessionKeyFile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("key file: %v", err)
+	}
+	if fresh := pairLoopback(t, h); fresh == nil { // pairing works again with a new key
+		t.Error("no pairing after sign-out")
+	}
+
+	plain := newHarness(t) // not the service: no such thing
+	if w := plain.do("POST", "/sessions/sign-out", url.Values{"csrf": {plain.srv.csrf}}); w.Code != http.StatusNotFound {
+		t.Errorf("per-user: %d", w.Code)
+	}
+	if w := plain.do("GET", "/?manual", nil); strings.Contains(w.Body.String(), "/sessions/sign-out") {
+		t.Error("per-user settings offer the sign-out")
+	}
+}
+
+// In service mode every paired browser shares the local draft: /setup/ starts over when it is
+// finished or stale, as the per-user /setup/ always does, but not in the middle of a setup.
+func TestPairLoopbackSetupStartResetsDraft(t *testing.T) {
+	h := pairLoopbackHarness(t)
+	cookie := pairLoopback(t, h)
+	withCookie := func(r *http.Request) { r.AddCookie(cookie); fromLoopback(r) }
+	d := h.srv.local.Draft
+	for _, tc := range []struct {
+		name  string
+		set   func()
+		reset bool
+	}{
+		{"in progress", func() { d.Saved, d.used = nil, time.Now() }, false},
+		{"finished", func() { d.Saved, d.used = []string{"ql"}, time.Now() }, true},
+		{"stale", func() { d.Saved, d.used = nil, time.Now().Add(-draftStale-time.Minute) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.set()
+			d.Printer = config.Printer{ID: "setup", Model: "QL-810W"}
+			wantRedirect(t, h.do("GET", "/setup/", nil, withCookie), "/setup/partdb")
+			if reset := d.Printer.Model == "" && d.Saved == nil; reset != tc.reset {
+				t.Errorf("reset %v, want %v", reset, tc.reset)
+			}
+		})
 	}
 }

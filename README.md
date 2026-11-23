@@ -104,13 +104,20 @@ is replaced: other accounts remove theirs from their own Settings → Apps. A fo
 `%ProgramData%\pdb-print` that an administrator didn't make is moved aside
 (`pdb-print.untrusted.<time>`) and a new one created. The service runs as SYSTEM: `~` in
 `hot_folder.dir` is the system profile, so give an absolute path, and use a folder other users can't
-write to (the service deletes and moves the files in it). This relies on Windows' default owner for
-objects administrators create ("Administrators group"); with the policy "System objects: Default owner
+write to (the service deletes and moves the files in it). What the installer and the service write
+there is owned by Administrators; a file you put there yourself relies on Windows' default owner for
+objects administrators create ("Administrators group"): with the policy "System objects: Default owner
 for objects created by members of the Administrators group" set to "Object creator", the service
-refuses its folder. The web UI asks every browser for a code: run
-`pdb-print pair` as administrator and type the code it shows. A paired browser stays signed in for
-30 days; to sign every browser out, delete `%ProgramData%\pdb-print\session.key`. Any local user can
-still print from Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
+refuses its folder. If the service doesn't start, the reason is in its log or in Event Viewer →
+Windows Logs → Application (source `pdb-print`); after a failure it restarts after 5 s, then 1 min,
+then every 5 min. The web UI asks every browser for a code: in Terminal (Admin) or PowerShell as
+administrator, run `& "C:\Program Files\pdb-print\pdb-print.exe" pair` (in Command Prompt without the
+`&`) and type the code it shows. A paired browser stays signed in for 30 days; "Sign out all browsers"
+in the web UI signs every browser out, and so does every `pdb-print install --service` (an upgrade
+too). Pairing keeps other users of the PC from casually changing the settings; it doesn't stop a
+determined local user who can run programs (one could, for example, catch the sign-in cookie while
+the service restarts). If in doubt, sign out all browsers. Any local user can still print from
+Part-DB: the bookmarklet's confirm page needs no code. Bluetooth LE printers may not
 work from a service: use the per-user install for them. To remove it: Settings → Apps → pdb-print
 (it asks for administrator rights), or `pdb-print uninstall` as administrator.
 

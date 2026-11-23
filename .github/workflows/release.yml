@@ -44,7 +44,7 @@ jobs:
 
   release-windows:
     needs: release
-    runs-on: ubuntu-latest # setup.exe: Inno Setup under Wine (scripts/windows-setup.sh)
+    runs-on: ubuntu-24.04 # pinned: setup.exe builds with the image's Wine (scripts/windows-setup.sh)
     permissions:
       contents: write # add to the release
     steps:

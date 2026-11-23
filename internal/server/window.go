@@ -66,16 +66,23 @@ func (w *Window) Open(now time.Time) (code string, expires time.Time) {
 // errTooSoon: OpenOrCurrent was asked for a new window within windowEvery of the last one.
 var errTooSoon = errors.New("a setup window was opened less than a minute ago: wait a minute, then try again")
 
-// OpenOrCurrent returns the open window's code and expiry (tries not reset), or opens a new window,
-// at most one per windowEvery: that limits guessing to windowTries codes a minute.
+// OpenOrCurrent returns the open window's code (tries not reset) with a full window from now, or
+// opens a new window, at most one per windowEvery after one whose code paired nothing (closed by
+// wrong codes or expiry): that limits guessing to windowTries codes a minute. After a pairing a
+// new window opens at once: the used code can't be guessed any more.
 func (w *Window) OpenOrCurrent(now time.Time) (code string, expires time.Time, err error) {
 	open := w.IsOpen(now) // closes an expired window
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch {
 	case open && w.open && !w.used: // a used code pairs nothing: a new window, as below
+		// asked for again: as if just opened (windowMax counts from here too)
+		w.opened = now
+		if e := now.Add(windowOpen); e.After(w.expires) {
+			w.expires = e
+		}
 		return w.code, w.expires, nil
-	case !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
+	case !w.used && !w.opened.IsZero() && now.Sub(w.opened) < windowEvery:
 		return "", time.Time{}, errTooSoon
 	}
 	kept := w.sessions // open with its code used: browsers already paired stay paired
@@ -523,7 +530,15 @@ func session(r *http.Request) *Session {
 
 // setupStart shows the pairing page, or sends a paired browser into the wizard.
 func (s *Server) setupStart(w http.ResponseWriter, r *http.Request) {
-	if session(r) != nil {
+	if sess := session(r); sess != nil {
+		if sess == s.local { // service mode: every paired browser shares it
+			d := sess.Draft
+			d.mu.Lock()
+			if len(d.Saved) > 0 || time.Since(d.used) > draftStale { // finished, or abandoned: a fresh start
+				d.reset()
+			}
+			d.mu.Unlock()
+		}
 		http.Redirect(w, r, "/setup/partdb", http.StatusSeeOther)
 		return
 	}
@@ -595,7 +610,7 @@ func (s *Server) pairAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.Log.Info("setup window opened", "code_file", s.PairCodeFile, "urls", urls, "until", expires.Format("15:04"))
-		writeJSON(w, map[string]any{"code_file": s.PairCodeFile, "urls": urls, "expires": expires})
+		writeJSON(w, map[string]any{"urls": urls, "expires": expires}) // pair reads the code from the file it knows
 		return
 	}
 	s.Log.Info("setup window opened", "code", code, "urls", urls, "until", expires.Format("15:04"))
