@@ -5,6 +5,7 @@
 package wininstall
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -139,6 +140,10 @@ func Quote(path string) string {
 // ErrNotStarted marks an Install that completed but could not start the agent.
 var ErrNotStarted = errors.New("installed, but could not start the agent")
 
+// ErrPerUserStarted marks a service Install that failed after which the per-user agent it was to
+// replace was started again.
+var ErrPerUserStarted = errors.New("the per-user pdb-print was started again")
+
 // Install copies the binaries into the mode's program dir, registers autostart
 // and the uninstall entry, writes the Start-menu link and starts the agent.
 // Running it again over an existing install updates it in place.
@@ -174,6 +179,11 @@ func Install(sys System, o Options) (l Layout, err error) {
 		if err := readyConfigDir(sys, filepath.Dir(l.Config), hadService, o.Out); err != nil {
 			return l, err
 		}
+		// every install (an upgrade too) signs every browser out: a cookie may have reached another
+		// program on 127.0.0.1 (cookies ignore ports)
+		if err := newSessionKey(filepath.Join(filepath.Dir(l.Config), "session.key")); err != nil {
+			return l, fmt.Errorf("write session key: %w", err)
+		}
 	}
 	if err := os.MkdirAll(l.ProgramDir, 0o755); err != nil {
 		return l, fmt.Errorf("create program dir: %w", err)
@@ -203,8 +213,10 @@ func Install(sys System, o Options) (l Layout, err error) {
 	if err := os.WriteFile(l.StartMenuLink, []byte("[InternetShortcut]\r\nURL="+uiURL+"\r\n"), 0o644); err != nil {
 		return l, fmt.Errorf("write Start menu link: %w", err)
 	}
+	var perUser Layout // the per-user install the service replaces (ProgramDir "" = none)
+	copied := false    // its config is the service's now
 	if o.Mode == Service {
-		if err := takeOver(sys, o, l.Config); err != nil {
+		if perUser, copied, err = copyPerUserConfig(sys, o, l.Config); err != nil {
 			return l, err
 		}
 		if _, err := os.Stat(l.Config); errors.Is(err, os.ErrNotExist) { // service run --config needs one
@@ -214,7 +226,7 @@ func Install(sys System, o Options) (l Layout, err error) {
 		}
 	}
 	if o.NoSelfUpdate { // before the agent starts, so it reads the new value
-		if err := disableSelfUpdate(l.Config); err != nil {
+		if err := disableSelfUpdate(l.Config, o.Mode); err != nil {
 			return l, fmt.Errorf("write config: %w", err)
 		}
 	}
@@ -229,8 +241,18 @@ func Install(sys System, o Options) (l Layout, err error) {
 			err = waitServing(sys)
 		}
 		if err != nil {
-			return l, fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s, or Event Viewer → Windows Logs → System if there is none",
+			err = fmt.Errorf("%w: the pdb-print service didn't start (%v); see %s, or Event Viewer → Windows Logs → Application (source pdb-print) if there is none",
 				ErrNotStarted, err, filepath.Join(filepath.Dir(l.Config), "pdb-print.log"))
+			if perUser.ProgramDir != "" { // the caller stopped it; it is still installed
+				if serr := sys.Spawn(perUser.ExeW, "serve"); serr != nil {
+					return l, fmt.Errorf("%w; and the per-user pdb-print couldn't be started again: %v", err, serr)
+				}
+				return l, fmt.Errorf("%w; %w", err, ErrPerUserStarted)
+			}
+			return l, err
+		}
+		if perUser.ProgramDir != "" {
+			return l, removePerUser(sys, o, perUser, copied && keychainTokens(l.Config))
 		}
 		return l, nil
 	}
@@ -270,20 +292,20 @@ func waitServing(sys System) error {
 	return nil
 }
 
-// cleanConfigDir readies a trusted config dir for a first install: an old session key and pairing
-// code go (someone may know them).
+// cleanConfigDir readies a trusted config dir for a first install: an old pairing code goes (someone
+// may know it). The session key is new on every install (newSessionKey).
 func cleanConfigDir(dir string) error {
-	for _, n := range []string{"session.key", "pair-code.txt"} {
-		if err := os.Remove(filepath.Join(dir, n)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
+	if err := os.Remove(filepath.Join(dir, "pair-code.txt")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
 
 // untrusted says why dir can't be trusted as the service's config dir ("" = it can): it, or anything
-// in it, is a link, or is not owned by Administrators or SYSTEM. Everything is checked, so an
-// ordinary user's file or folder can't be swapped in between a check and its removal.
+// in it, is a link, or is not owned by Administrators or SYSTEM. This is a check, not a lock: a user
+// who can still write somewhere in the tree could swap a file in after it. That fails closed: the
+// service then refuses its folder (or ignores the file), so the most such a user gets is a service
+// that doesn't start, never their file trusted.
 func untrusted(sys System, dir string) (string, error) {
 	fi, err := os.Lstat(dir)
 	if err != nil {
@@ -350,6 +372,9 @@ func readyConfigDir(sys System, dir string, hadService bool, out io.Writer) erro
 	return nil
 }
 
+// ErrUntrustedDir: ReadyServiceDir refused the config dir (see untrusted).
+var ErrUntrustedDir = errors.New("not starting: untrusted config folder")
+
 // ReadyServiceDir is what the service does before it opens its log: the config dir must be trusted
 // (see untrusted), else it doesn't start; a missing one (deleted by an admin) is created admin-only.
 // A missing config.yaml is written empty. A trusted dir gets the admin-only ACL again (an admin may
@@ -363,7 +388,7 @@ func ReadyServiceDir(sys System, cfgPath string) error {
 	} else if why, err := untrusted(sys, dir); err != nil {
 		return err
 	} else if why != "" {
-		return fmt.Errorf("not starting: %s (%s); delete it and run pdb-print install --service again", dir, why)
+		return fmt.Errorf("%w %s (%s): delete it and run pdb-print install --service again", ErrUntrustedDir, dir, why)
 	} else if err := MkdirAdminOnly(dir); err != nil { // the whole tree is admins': safe in place
 		return fmt.Errorf("reset %s: %w", dir, err) // e.g. an admin recreated it with the inherited ACL
 	}
@@ -392,36 +417,41 @@ func notLink(dir string) error {
 	return nil
 }
 
-// takeOver replaces this user's per-user install with the service: its config is copied to cfg
-// (unless the service has one already), then the per-user install is removed. The caller has
-// stopped the per-user agent.
-func takeOver(sys System, o Options, cfg string) error {
-	if _, ok, err := sys.ReadUninstall(PerUser); err != nil {
-		return fmt.Errorf("read per-user uninstall entry: %w", err)
+// copyPerUserConfig finds this user's per-user install, which the service replaces, and copies its
+// config to cfg (unless the service has one already; copied says whether it was). The caller has
+// stopped the per-user agent; it is removed (removePerUser) only once the service serves.
+func copyPerUserConfig(sys System, o Options, cfg string) (pu Layout, copied bool, err error) {
+	pu, ok, err := InstalledAs(sys, PerUser, o.Env)
+	if err != nil {
+		return Layout{}, false, fmt.Errorf("per-user install: %w", err)
 	} else if !ok {
-		return nil
+		return Layout{}, false, nil
 	}
-	from := LayoutFor(PerUser, o.Env).Config
-	copied := false
 	if _, err := os.Stat(cfg); errors.Is(err, os.ErrNotExist) {
-		b, err := os.ReadFile(from)
+		b, err := os.ReadFile(pu.Config)
 		if err == nil {
-			if err := os.WriteFile(cfg, b, 0o600); err != nil {
-				return fmt.Errorf("copy config: %w", err)
+			if err := WriteAdminOnly(cfg, b); err != nil {
+				return Layout{}, false, fmt.Errorf("copy config: %w", err)
 			}
 			copied = true
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("read per-user config: %w", err)
+			return Layout{}, false, fmt.Errorf("read per-user config: %w", err)
 		}
 	}
+	return pu, copied, nil
+}
+
+// removePerUser removes the per-user install pu (its config stays) once the service serves;
+// keychain: the copied config has a token in that user's keychain.
+func removePerUser(sys System, o Options, pu Layout, keychain bool) error {
 	if err := Uninstall(sys, PerUser, false, o.Env); err != nil {
-		return fmt.Errorf("remove the per-user install: %w", err)
+		return fmt.Errorf("the service runs, but the per-user install couldn't be removed (remove it in Settings → Apps): %w", err)
 	}
 	if o.Out == nil {
 		return nil
 	}
-	fmt.Fprintf(o.Out, "Replaced the per-user install of pdb-print; its config stays in %s.\n", filepath.Dir(from))
-	if copied && keychainTokens(cfg) {
+	fmt.Fprintf(o.Out, "Replaced the per-user install of pdb-print; its config stays in %s.\n", filepath.Dir(pu.Config))
+	if keychain {
 		// the token is in this user's keychain; the service (LocalSystem) has its own
 		fmt.Fprintln(o.Out, "The service can't read this user's keychain: re-enter the Part-DB token in the web UI (pair with `pdb-print pair`).")
 	}
@@ -442,14 +472,30 @@ func keychainTokens(path string) bool {
 	return false
 }
 
-func disableSelfUpdate(path string) error {
+func disableSelfUpdate(path string, m Mode) error {
 	cfg, err := config.Load(path, false)
 	if err != nil {
 		return err
 	}
 	off := false
 	cfg.SelfUpdate = &off
-	return cfg.Save(path)
+	if err := cfg.Save(path); err != nil || m != Service {
+		return err
+	}
+	b, err := os.ReadFile(path) // again, owned by Administrators (Save's file is this account's)
+	if err != nil {
+		return err
+	}
+	return WriteAdminOnly(path, b)
+}
+
+// newSessionKey writes a new random key for the service's browser sessions (see server.sessionKey).
+func newSessionKey(path string) error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	return WriteAdminOnly(path, key)
 }
 
 // check rejects an Env that lacks the folders mode m needs.

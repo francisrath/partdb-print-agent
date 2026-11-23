@@ -84,7 +84,7 @@ func installCmd(ctx context.Context, args []string, out io.Writer) error {
 		mode = wininstall.Service
 	}
 	l, err := install(sys, env, mode, *quiet, *noSelfUpdate, out)
-	if err != nil && stopped && *service { // the per-user install may be gone already
+	if err != nil && stopped && *service && !errors.Is(err, wininstall.ErrPerUserStarted) { // the per-user install may be gone already
 		return fmt.Errorf("%w (the per-user pdb-print was stopped; run the install again)", err)
 	}
 	if err != nil && stopped {
