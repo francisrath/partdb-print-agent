@@ -40,7 +40,7 @@ real hardware, and which are implemented from the documentation only, is in [doc
 | TSC and TSPL clones | USB, Network, Bluetooth Classic | TSC, Xprinter, Munbyn, iDPRT, HPRT | 🟡 not yet |
 | DYMO LabelWriter | USB, Serial (330) | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
-| Niimbot, Phomemo | Bluetooth LE | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | 🟡 not yet |
+| Niimbot, Phomemo | Bluetooth LE, USB serial (B21S) | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | ✅ B21S |
 | ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
 
 ✅ tested on real hardware, 🟡 implemented from the documentation but not tested yet, ⏳ not supported
@@ -412,16 +412,19 @@ Bluetooth LE, per OS:
   printer. Both binaries are Developer-ID signed and notarised.
 - **Docker:** no Bluetooth; the container can't reach the host's D-Bus/BlueZ.
 
-### Niimbot and Phomemo label makers (`kind: ble`, untested)
+### Niimbot and Phomemo label makers (`kind: ble`)
 
-Same `ble` transport and discovery as the cat printers, recognised by the advertised name. No one has
-tried these on a printer yet: the protocols come from public write-ups and MIT/Apache projects, so treat
-them as experimental and report what happens (`pdb-print report`).
+Same `ble` transport and discovery as the cat printers, recognised by the advertised name. The Niimbot
+B21S is tested (Bluetooth LE and USB); the other models come from public write-ups and MIT/Apache
+projects, so treat them as experimental and report what happens (`pdb-print report`).
 
 - **Niimbot** (`driver: niimbot`): B1, B21, B21S, B21-PRO, B1-PRO (wide heads; labels across, e.g.
   `niimbot-50x30`), D11, D11S, D110, D11-H, B18 and D101 (narrow heads; labels lengthwise, so a 40×12 mm
   label is `niimbot-12x40`). They advertise `<model>-<serial>`. `darkness` sets the density. Some units
-  refuse rolls without Niimbot's RFID tag; the status shows how many labels the tag says are left.
+  refuse rolls without Niimbot's RFID tag; the status shows how many labels the tag says are left and
+  the kind of label (`type=transparent`, `with-gaps`, …), which the print sends to the printer. A B21S also
+  prints over its USB-C cable, a USB serial port: `transport: {kind: serial, device: /dev/cu.usbmodem…}`
+  on macOS (`/dev/ttyACM0` on Linux, `COM3` on Windows).
 - **Phomemo** (`driver: phomemo`): M02, M02S, M02-PRO, T02 (pocket printers, continuous paper), M110,
   M120, M200, M220, M221 (label printers; `darkness` sets the density), Q30 and D30, D35 (12 mm label
   makers, labels lengthwise: `phomemo-12x40`). The M200 and M220 advertise names we don't know yet:
