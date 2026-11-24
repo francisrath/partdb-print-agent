@@ -421,6 +421,17 @@ func TestPrintCoverOpenedAndClosed(t *testing.T) {
 	}
 }
 
+// Opened while waiting for label 2: the printer may still be feeding label 1, so both are named.
+func TestPrintCoverWarningNamesBothLabels(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, nil, {0x16}, {0x12, 0x00}}}
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "label 1 or 2 of 2") }) {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
 // A cover left open stops the job before the next label, saying how many printed.
 func TestPrintCoverLeftOpen(t *testing.T) {
 	f := &fake{replies: [][]byte{{0x00}, nil}}

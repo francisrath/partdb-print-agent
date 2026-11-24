@@ -313,7 +313,13 @@ func (d *escpos) await(ctx context.Context, t driver.Transport, rs *replies, res
 					coverSince = now
 					if !warned {
 						warned = true
-						res.Warnings = append(res.Warnings, fmt.Sprintf("cover opened while printing label %d of %d: it may be misaligned", i+1, n))
+						// GS r is answered once a label is taken in, which can be while it still
+						// feeds out: the one the cover stopped may be the label before
+						which := fmt.Sprintf("label %d of %d", i+1, n)
+						if i > 0 {
+							which = fmt.Sprintf("label %d or %d of %d", i, i+1, n)
+						}
+						res.Warnings = append(res.Warnings, "cover opened while printing "+which+": check for a seam")
 					}
 				case b&coverOpen == 0 && !coverSince.IsZero():
 					coverSince, end = time.Time{}, time.Now().Add(d.confirm) // closed: the label goes on
