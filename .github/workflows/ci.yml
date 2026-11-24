@@ -174,6 +174,8 @@ jobs:
           mkdir -p ~/wine-debs/partial
           before=$(find ~/wine-debs -name '*.deb' | wc -l)
           sudo dpkg --add-architecture i386
+          # the runner's regional mirror was down to 30-60 KB/s (2026-11-24); Ubuntu's Azure CDN mirror instead
+          sudo sed -i -E 's#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://azure.archive.ubuntu.com/ubuntu/#' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives="$HOME/wine-debs" \
             install -y --no-install-recommends wine wine64 wine32:i386 xvfb
