@@ -50,7 +50,9 @@ func (d *dialog) output() string {
 // answer waits for prompt (after the last one answered) and types ans; hook runs just before.
 func (d *dialog) answer(prompt, ans string, hook ...func()) {
 	d.t.Helper()
-	for end := time.Now().Add(20 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+	// generous: only a hung session waits it out, and the first render under -race on a busy CI
+	// runner (PDFium compiled from scratch) has taken over 20 s
+	for end := time.Now().Add(2 * time.Minute); ; time.Sleep(5 * time.Millisecond) {
 		out := d.output()
 		if i := strings.Index(out[d.seen:], prompt); i >= 0 {
 			d.seen += i + len(prompt)
@@ -77,7 +79,7 @@ func (d *dialog) finish() string {
 	d.in.Close()
 	select {
 	case <-d.done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(2 * time.Minute):
 		d.t.Fatalf("still running; output:\n%s", d.output())
 	}
 	if d.err != nil {

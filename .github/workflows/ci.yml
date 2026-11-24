@@ -103,12 +103,13 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-          # a key of its own (ci.yml only makes it differ from test's and packaging's), so the cache
+          # a key of its own (.goreleaser.yaml, which lint checks, only makes it differ from test's and
+          # packaging's; ci.yml would empty it on every workflow edit), so the cache
           # holds staticcheck's and the cross-compiles' builds
           cache-dependency-path: |
             go.sum
             go.mod
-            .github/workflows/ci.yml
+            .goreleaser.yaml
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: staticcheck
