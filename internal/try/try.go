@@ -42,6 +42,8 @@ type Options struct {
 	Version  string
 	Discover func(ctx context.Context) ([]discovery.Candidate, error)
 	Now      func() time.Time
+	// ReplyIdle is how long a printer's reply to a report query may pause before it's complete; 0 = 1.5 s.
+	ReplyIdle time.Duration
 }
 
 type session struct {
@@ -70,7 +72,7 @@ func Run(ctx context.Context, o Options) (string, error) {
 		o.Port = 9100
 	}
 	s := &session{o: o, ctx: ctx, lines: make(chan string), setup: map[string]int{},
-		rep: &report.Report{Tool: "pdb-print " + o.Version, OS: runtime.GOOS + "/" + runtime.GOARCH, Time: o.Now().UTC().Format(time.RFC3339)}}
+		rep: &report.Report{Tool: "pdb-print " + o.Version, OS: runtime.GOOS + "/" + runtime.GOARCH, Time: o.Now().UTC().Format(time.RFC3339), Idle: o.ReplyIdle}}
 	go func() { // stdin can't be interrupted: read it in the background
 		sc := bufio.NewScanner(o.In)
 		for sc.Scan() {

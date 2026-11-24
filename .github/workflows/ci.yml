@@ -46,21 +46,50 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+          # a key of its own (setup-go hashes these files): with go.sum alone it shares lint's and
+          # packaging's key, and whichever job saves first leaves the test and race builds out
+          cache-dependency-path: |
+            go.sum
+            go.mod
       - run: go vet ./...
       # Tests never print: printers and Part-DB are faked on localhost.
       - run: go test ./...
         if: matrix.os != 'ubuntu-latest'
       # with the race detector (needs cgo, which Linux runners have): the code shares state between
       # goroutines in many places (printer locks, Bluetooth bridge, usage counters, job loops)
-      - name: go test with coverage and the race detector
+      - name: go test with the race detector
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          CGO_ENABLED=1 go test -race -coverpkg=./... -coverprofile=coverage.out ./...
-          { echo '### Test coverage'; echo; awk -f .github/coverage-summary.awk coverage.out; } >> "$GITHUB_STEP_SUMMARY"
+        # render without it: its Go side is a thin wrapper around one PDFium instance, and the race
+        # detector only slows wazero compiling PDFium (~3 min for TestCompilationCache's cold compiles);
+        # the coverage job and macOS/Windows run render's tests
+        run: CGO_ENABLED=1 go test -race $(go list ./... | grep -v /internal/render$)
       # the macOS Bluetooth helper needs cgo (pdb-print itself stays cgo-free, see lint)
       - name: build pdb-print-ble with cgo
         if: matrix.os == 'macos-latest'
         run: CGO_ENABLED=1 go build -o /dev/null ./cmd/pdb-print-ble
+
+  # coverage on its own runner: with the race detector in one run, every test binary was rebuilt with
+  # both and the job took twice as long
+  coverage:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          # a key of its own, apart from test (ubuntu-latest)'s race builds
+          cache-dependency-path: |
+            go.sum
+            go.mod
+            .github/coverage-summary.awk
+      - run: |
+          go test -coverpkg=./... -coverprofile=coverage.out ./...
+          { echo '### Test coverage'; echo; awk -f .github/coverage-summary.awk coverage.out; } >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     needs: changes
@@ -74,6 +103,12 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+          # a key of its own (ci.yml only makes it differ from test's and packaging's), so the cache
+          # holds staticcheck's and the cross-compiles' builds
+          cache-dependency-path: |
+            go.sum
+            go.mod
+            .github/workflows/ci.yml
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: staticcheck
@@ -253,7 +288,7 @@ jobs:
   # the one required status check: fails if any job above failed or was cancelled (skipped is fine)
   ci:
     if: always()
-    needs: [changes, test, lint, packaging, packaging-windows, packaging-darwin]
+    needs: [changes, test, coverage, lint, packaging, packaging-windows, packaging-darwin]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -5,6 +5,7 @@ package report
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,7 +39,8 @@ type Report struct {
 	Notes      []string              `json:"notes,omitempty"`
 	// Secrets are values found in replies that JSON masks like serial numbers (a Zebra's serial
 	// and printer name).
-	Secrets []string `json:"-"`
+	Secrets []string      `json:"-"`
+	Idle    time.Duration `json:"-"` // as Options.ReplyIdle
 }
 
 // Query is one exchange with a printer. Sent and Reply are escaped text (non-ASCII as \xNN).
@@ -65,6 +67,7 @@ type Options struct {
 	Svc       *printing.Service
 	Sysfs     string                                                 // "" = /sys
 	SysDescr  func(ctx context.Context, host string) (string, error) // nil = SNMP
+	ReplyIdle time.Duration                                          // a reply is complete after this long without bytes; 0 = 1.5 s
 }
 
 // Identify queries, one per connection: ~HI first; the other ZPL queries only to a printer that
@@ -134,7 +137,7 @@ func Run(ctx context.Context, o Options) (*Report, error) {
 	if o.Confirm == nil {
 		o.Confirm = func(string) bool { return false }
 	}
-	r := &Report{Tool: "pdb-print " + o.Version, OS: runtime.GOOS + "/" + runtime.GOARCH, Time: time.Now().UTC().Format(time.RFC3339)}
+	r := &Report{Tool: "pdb-print " + o.Version, OS: runtime.GOOS + "/" + runtime.GOARCH, Time: time.Now().UTC().Format(time.RFC3339), Idle: o.ReplyIdle}
 	var hosts []netip.Prefix
 	usbOnly := false
 	for _, t := range o.Targets {
@@ -253,7 +256,7 @@ func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, nam
 			if err != nil {
 				return "", err
 			}
-			t = &connTransport{conn}
+			t = &connTransport{conn, cmp.Or(r.Idle, 1500*time.Millisecond)}
 		}
 		if err := t.Open(ctx); err != nil {
 			return "", err
@@ -276,13 +279,16 @@ func (r *Report) exchange(ctx context.Context, c discovery.Candidate, where, nam
 	return r.Queries[len(r.Queries)-1].Reply
 }
 
-// connTransport reads with a 1.5 s idle timeout; replies end when the printer stops talking.
-type connTransport struct{ net.Conn }
+// connTransport reads with an idle timeout; replies end when the printer stops talking.
+type connTransport struct {
+	net.Conn
+	idle time.Duration
+}
 
 func (c *connTransport) Open(context.Context) error { return nil }
 func (c *connTransport) Kind() string               { return "tcp" }
 func (c *connTransport) Read(p []byte) (int, error) {
-	_ = c.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	_ = c.SetReadDeadline(time.Now().Add(c.idle))
 	return c.Conn.Read(p)
 }
 

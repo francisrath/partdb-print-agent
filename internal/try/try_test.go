@@ -125,7 +125,7 @@ func start(t *testing.T, addr string) *dialog {
 	d := &dialog{t: t, in: w, done: make(chan struct{})}
 	svc := &printing.Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	t.Cleanup(svc.Close)
-	o := try.Options{In: r, Out: d, Port: p, Dir: t.TempDir(), Svc: svc, Version: "test",
+	o := try.Options{In: r, Out: d, Port: p, Dir: t.TempDir(), Svc: svc, Version: "test", ReplyIdle: 100 * time.Millisecond, // the fake answers at once
 		Discover: func(context.Context) ([]discovery.Candidate, error) {
 			return []discovery.Candidate{{Kind: "tcp", Host: host, Port: p, Status: discovery.Unknown}}, nil
 		}}
