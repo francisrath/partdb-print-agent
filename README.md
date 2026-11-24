@@ -73,6 +73,8 @@ help test one: [docs/printers.md](docs/printers.md).
 curl -fsSL https://github.com/francisrath/pdb-print/releases/latest/download/install.sh | sh
 ```
 Or read it first: download `install.sh` from the release, read it (about 40 lines), then `sh install.sh`.
+Every release file comes with a signed build provenance: `gh attestation verify <file> --repo francisrath/pdb-print`
+shows it was built by this repository's release workflow from the tagged commit.
 The script picks the `.deb` package for your system, checks it against the release's `checksums.txt`,
 installs it with `apt-get` (the one step that needs `sudo`) and shows a setup code. The package adds:
 - `/usr/bin/pdb-print`;

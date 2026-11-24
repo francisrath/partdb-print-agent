@@ -20,13 +20,18 @@ redeployed before the release (it rejects values it doesn't know, so those repor
    macOS archive and `checksums-darwin.txt` to that draft (GoReleaser leaves it a draft: `draft: true`) and
    pushes the Homebrew cask to `francisrath/homebrew-tap`. Its last step, **publish the draft**, checks that
    the tag has exactly one release, that it is a draft, and that it carries the three checksum files, the
-   Linux, Windows and macOS archives and the setup.exe; only then it publishes it. The step lists those files
+   Linux, Windows and macOS archives, the setup.exe and the SBOM; only then it publishes it. The step lists those files
    by name: renaming or adding an asset in a `.goreleaser*.yaml` or `scripts/windows-setup.sh` means updating
    that list too.
 
    Before the archive is made, `scripts/macos-sign.sh` (a GoReleaser hook on each universal binary) signs
    both binaries with the Developer ID certificate and the hardened runtime and notarises them; the job then
    checks the archive's binaries with `codesign --verify --strict` and `spctl --assess` before publishing.
+
+   Right before publishing, the job adds an SBOM of the Go modules (`pdb-print_<version>_sbom.spdx.json`,
+   Syft via `anchore/sbom-action`) and a signed build-provenance attestation for every file of the release
+   (`actions/attest-build-provenance`). Anyone can check a download with
+   `gh attestation verify <file> --repo francisrath/pdb-print`.
 
 A failed Windows or macOS build therefore leaves a draft, never a release without them. Between the cask push and the
 publish step (seconds), the cask points at the still-draft release: `brew install` fails in that window.
