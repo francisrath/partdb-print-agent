@@ -472,7 +472,11 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
   on macOS (`/dev/ttyACM0` on Linux, `COM3` on Windows). That's the setup we recommend for a B21S that
   stays at a desk: about 4 s a label instead of 12 over Bluetooth, nothing to pair, and with the printer's
   auto shutdown at its highest setting (in niim.blue or the Niimbot app) it was still on after 70 minutes
-  idle on USB, so it doesn't need waking for each job.
+  idle on USB, so it doesn't need waking for each job. In our case (a used unit) it didn't charge over a
+  C-to-C cable, from a Mac or a USB-C charger: it printed, but the battery ran flat. It did charge from a
+  USB-A port with an A-to-C cable, which is a common fix for USB-C gadgets that don't charge from USB-C: empty to
+  full in about 2¼ hours (LED flashing red while charging, blue when full), and it stayed on overnight. When the
+  battery is empty the status says `LOW_BATTERY` and the printer refuses jobs.
 - **Phomemo** (`driver: phomemo`): M02, M02S, M02-PRO, T02 (pocket printers, continuous paper), M110,
   M120, M200, M220, M221 (label printers; `darkness` sets the density), Q30 and D30, D35 (12 mm label
   makers, labels lengthwise: `phomemo-12x40`). The M200 and M220 advertise names we don't know yet:
