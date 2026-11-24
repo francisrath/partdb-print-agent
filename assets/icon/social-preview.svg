@@ -7,6 +7,9 @@
     <text x="640" y="270" font-size="96" font-weight="700">pdb-print</text>
     <text x="644" y="345" font-size="38">Direct label printing</text>
     <text x="644" y="395" font-size="38">for Part-DB</text>
-    <text x="644" y="470" font-size="26" fill="#1c6f7a" opacity=".8">Brother QL · crisp QR codes · no driver scaling</text>
+    <g font-size="26" fill="#1c6f7a" opacity=".8">
+      <text x="644" y="470">Network, USB, serial or Bluetooth</text>
+      <text x="644" y="508">Linux, macOS, Windows · no drivers</text>
+    </g>
   </g>
 </svg>

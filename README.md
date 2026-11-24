@@ -1,12 +1,13 @@
-<p align="center"><img src="assets/icon/social-preview.png" alt="pdb-print – Labelbot, direct label printing for Part-DB" width="100%"></p>
+<p align="center"><img src="assets/icon/social-preview.png" alt="pdb-print – Labelbot, direct label printing for Part-DB over the network, USB, serial or Bluetooth, on Linux, macOS and Windows, no drivers" width="100%"></p>
 
 # pdb-print
 
 Direct label printing for [Part-DB](https://github.com/Part-DB/Part-DB-server).
 
 A small cross-platform agent (`pdb-print`) that takes the label PDFs Part-DB already generates,
-rasterises them at the printer's native resolution and sends them straight to your label printer –
-crisp QR codes, exact sizes, automatic cutting, no fiddling with OS print dialogs.
+rasterises them at the printer's native resolution and sends them straight to your label printer over
+the network, USB, serial or Bluetooth – crisp QR codes, exact sizes, no printer drivers or OS print dialogs.
+It runs on Linux, macOS and Windows.
 
 <p align="center"><img src="docs/images/flow.svg" width="880" alt="Part-DB sends a label PDF over HTTPS to pdb-print, which renders it at the print head's dots and sends it over the network, USB or Bluetooth to the label printer"></p>
 
