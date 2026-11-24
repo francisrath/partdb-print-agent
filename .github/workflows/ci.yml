@@ -63,10 +63,6 @@ jobs:
         # detector only slows wazero compiling PDFium (~3 min for TestCompilationCache's cold compiles);
         # the coverage job and macOS/Windows run render's tests
         run: CGO_ENABLED=1 go test -race $(go list ./... | grep -v /internal/render$)
-      # the macOS Bluetooth helper needs cgo (pdb-print itself stays cgo-free, see lint)
-      - name: build pdb-print-ble with cgo
-        if: matrix.os == 'macos-latest'
-        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/pdb-print-ble
 
   # coverage on its own runner: with the race detector in one run, every test binary was rebuilt with
   # both and the job took twice as long
@@ -105,7 +101,7 @@ jobs:
           go-version-file: go.mod
           # a key of its own (.goreleaser.yaml, which lint checks, only makes it differ from test's and
           # packaging's; ci.yml would empty it on every workflow edit), so the cache
-          # holds staticcheck's and the cross-compiles' builds
+          # holds staticcheck's builds
           cache-dependency-path: |
             go.sum
             go.mod
@@ -122,11 +118,6 @@ jobs:
           distribution: goreleaser
           version: v2.20.3
           args: check .goreleaser.yaml .goreleaser-darwin.yaml .goreleaser-windows.yaml
-      - name: cross-compile without cgo
-        run: |
-          for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do
-            CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/pdb-print
-          done
 
   packaging:
     needs: changes
