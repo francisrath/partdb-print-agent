@@ -17,6 +17,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,6 +46,7 @@ jobs:
   release-windows:
     needs: release
     runs-on: ubuntu-24.04 # pinned: setup.exe builds with the image's Wine (scripts/windows-setup.sh)
+    timeout-minutes: 30
     permissions:
       contents: write # add to the release
     steps:
@@ -72,11 +74,31 @@ jobs:
           args: release --clean --config .goreleaser-windows.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: install Wine
+      # Wine's debs come from Ubuntu's mirror, which is sometimes very slow; keep them in the Actions cache.
+      # CI's pushes to main fill the cache; a release only reads it.
+      - id: image
+        run: echo "version=$ImageOS-$ImageVersion" >>"$GITHUB_OUTPUT"
+      - id: debs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/wine-debs
+          key: wine-debs-${{ steps.image.outputs.version }}-${{ github.run_id }}
+          restore-keys: |
+            wine-debs-${{ steps.image.outputs.version }}-
+            wine-debs-
+      - id: wine
+        name: install Wine
+        timeout-minutes: 10 # without cached debs a slow mirror can take minutes; fail rather than hang
         run: |
+          mkdir -p ~/wine-debs/partial
+          before=$(find ~/wine-debs -name '*.deb' | wc -l)
           sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb
+          # the runner's regional mirror was down to 30-60 KB/s (2026-11-24); Ubuntu's Azure CDN mirror instead
+          sudo sed -i -E 's#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://azure.archive.ubuntu.com/ubuntu/#' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives="$HOME/wine-debs" \
+            install -y --no-install-recommends wine wine64 wine32:i386 xvfb
+          [ "$(find ~/wine-debs -name '*.deb' | wc -l)" = "$before" ] || echo downloaded=true >>"$GITHUB_OUTPUT"
       - name: build setup.exe
         run: scripts/windows-setup.sh
       # the checksums file GoReleaser uploaded lacks setup.exe: replace it
@@ -92,6 +114,7 @@ jobs:
   release-darwin:
     needs: [release, release-windows] # it publishes: only once the Windows assets are there
     runs-on: macos-latest
+    timeout-minutes: 30
     permissions:
       contents: write # add to and publish the release
     steps:
