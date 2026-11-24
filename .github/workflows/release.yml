@@ -94,6 +94,8 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write # add to and publish the release
+      id-token: write # sign the build provenance (Sigstore)
+      attestations: write # store it with the repository
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -180,6 +182,30 @@ jobs:
             codesign --verify --strict "$RUNNER_TEMP/check/$b"
             spctl --assess --type install "$RUNNER_TEMP/check/$b"
           done
+      # One SBOM for the release: every binary is built from the same go.mod
+      - uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          path: .
+          format: spdx-json
+          output-file: ${{ runner.temp }}/pdb-print_sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: upload the SBOM
+        run: |
+          f="$RUNNER_TEMP/pdb-print_${GITHUB_REF_NAME#v}_sbom.spdx.json"
+          mv "$RUNNER_TEMP/pdb-print_sbom.spdx.json" "$f"
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$f"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Build provenance for every release file, signed by this workflow run:
+      # `gh attestation verify <file> --repo francisrath/pdb-print`
+      - name: download the release files
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/assets" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/*
       # The only release for the tag must be a draft with every archive; then publish it. The cask
       # pushed by GoReleaser points at it from here on.
       - name: publish the draft
@@ -199,7 +225,7 @@ jobs:
           for a in checksums.txt checksums-darwin.txt checksums-windows.txt "pdb-print_${v}_darwin_universal.tar.gz" \
             "pdb-print_${v}_linux_amd64.tar.gz" "pdb-print_${v}_linux_arm64.tar.gz" \
             "pdb-print_${v}_linux_armv6.tar.gz" "pdb-print_${v}_windows_amd64.zip" \
-            "pdb-print_${v}_windows_amd64_setup.exe"; do
+            "pdb-print_${v}_windows_amd64_setup.exe" "pdb-print_${v}_sbom.spdx.json"; do
             if ! grep -qxF "$a" <<<"$assets"; then
               echo "::error::draft $GITHUB_REF_NAME lacks $a; not publishing"
               exit 1
