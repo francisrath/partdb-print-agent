@@ -23,6 +23,14 @@ const (
 	idBufLen       = 4094     // Microsoft: larger buffers fail on some printers
 	ioctlTimeout   = 2 * time.Second
 	writeChunk     = 64 << 10
+
+	// usbprint.h; the GET calls fill only the first byte of their DWORD
+	ioctlGetProtocol        = 0x220044 // IOCTL_USBPRINT_GET_PROTOCOL
+	ioctlSetProtocol        = 0x220048 // IOCTL_USBPRINT_SET_PROTOCOL
+	ioctlGetInterfaceType   = 0x22004C // IOCTL_USBPRINT_GET_INTERFACE_TYPE
+	usbPrinterInterfaceDual = 3        // 7/1/2 and 7/1/4 alternate settings
+	protocolBIDI            = 2        // raster printer protocol
+	protocolIPP             = 4        // IPP over USB
 	// writeTimeout bounds one chunk. Longer than drainTimeout (sized for the idle tail on Linux): a
 	// printer may pause mid-job (head cooling, a cut) and Linux usblp writes wait as long as it takes.
 	writeTimeout = 30 * time.Second
@@ -91,6 +99,44 @@ func deviceID(path string) (string, error) {
 type winDevice struct {
 	h        windows.Handle
 	deadline time.Time
+	restore  uint32 // protocol to switch back to on Close; 0 = none
+}
+
+// openPrinter opens a device for a job. Windows starts an interface that also speaks IPP over USB
+// (QL-810W) in that protocol, where the printer ignores raster data: switch it to BIDI while we print
+// and back on Close, so Windows' own IPP queue keeps working.
+// ponytail: an older Windows without these IOCTLs fails them; the device is then used as it is.
+func openPrinter(device string) (io.ReadWriteCloser, error) {
+	f, err := OpenDevice(device)
+	if err != nil {
+		return nil, err
+	}
+	d := f.(*winDevice)
+	if typ, err := d.dword(ioctlGetInterfaceType); err == nil && typ == usbPrinterInterfaceDual {
+		if p, err := d.dword(ioctlGetProtocol); err == nil && p == protocolIPP && d.setProtocol(protocolBIDI) == nil {
+			d.restore = protocolIPP
+		}
+	}
+	return d, nil
+}
+
+func (d *winDevice) dword(code uint32) (uint32, error) {
+	b := make([]byte, 4)
+	n, err := d.do(ioctlTimeout, func(n *uint32, o *windows.Overlapped) error {
+		return windows.DeviceIoControl(d.h, code, nil, 0, &b[0], uint32(len(b)), n, o)
+	})
+	if err == nil && n == 0 {
+		err = errors.New("empty reply")
+	}
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24, err
+}
+
+func (d *winDevice) setProtocol(p uint32) error {
+	b := []byte{byte(p), byte(p >> 8), byte(p >> 16), byte(p >> 24)}
+	_, err := d.do(ioctlTimeout, func(n *uint32, o *windows.Overlapped) error {
+		return windows.DeviceIoControl(d.h, ioctlSetProtocol, &b[0], uint32(len(b)), nil, 0, n, o)
+	})
+	return err
 }
 
 // OpenDevice opens a usbprint.sys interface path. usbprint doesn't enforce exclusive access, so
@@ -186,4 +232,10 @@ func (d *winDevice) Write(p []byte) (int, error) {
 	return total, nil
 }
 
-func (d *winDevice) Close() error { return windows.CloseHandle(d.h) }
+func (d *winDevice) Close() error {
+	var err error
+	if d.restore != 0 {
+		err = d.setProtocol(d.restore)
+	}
+	return errors.Join(err, windows.CloseHandle(d.h))
+}

@@ -30,7 +30,7 @@ type Transport struct {
 	Serial      string        // tells identical printers apart
 	Sysfs       string        // "" = /sys (tests use a fake tree)
 	ReadTimeout time.Duration // per Read; 0 = 2s
-	// OpenFile opens Device; nil = OpenDevice. Tests swap in a fake.
+	// OpenFile opens Device; nil = openPrinter. Tests swap in a fake.
 	OpenFile func(device string) (io.ReadWriteCloser, error)
 	f        io.ReadWriteCloser
 }
@@ -42,7 +42,7 @@ func (t *Transport) Kind() string { return "usb" }
 func (t *Transport) Open(ctx context.Context) error {
 	open := t.OpenFile
 	if open == nil {
-		open = OpenDevice
+		open = openPrinter
 	}
 	if t.USBID != "" { // a replugged printer may come back as another device
 		dev, err := Find(t.Sysfs, t.USBID, t.Serial)

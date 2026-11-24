@@ -31,8 +31,42 @@ func TestListAndReadOnWindows(t *testing.T) {
 			t.Errorf("listNative(false) = %+v, want %+v without IEEE1284", p, ps[i])
 		}
 	}
-	for _, p := range ps { // a printer that answers nothing (QL-810W) keeps its read pending: the cancel path
+	for _, p := range ps {
 		readOnce(t, p.Device)
+		protocolSwitch(t, p.Device)
+	}
+}
+
+// protocolSwitch: a dual-protocol interface (QL-810W) starts in IPP over USB, as Windows leaves it;
+// it is in BIDI while open for printing and back in IPP after Close, so Windows' own queue keeps working.
+func protocolSwitch(t *testing.T, device string) {
+	f, err := OpenDevice(device) // plain open: no switch
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := f.(*winDevice)
+	typ, _ := d.dword(ioctlGetInterfaceType)
+	if typ != usbPrinterInterfaceDual {
+		f.Close()
+		return
+	}
+	if err := d.setProtocol(protocolIPP); err != nil { // the state Windows starts it in
+		t.Fatalf("%s: set IPP: %v", device, err)
+	}
+	f.Close()
+	if f, err = openPrinter(device); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := f.(*winDevice).dword(ioctlGetProtocol); p != protocolBIDI {
+		t.Errorf("%s: protocol %d (%v) while open, want BIDI", device, p, err)
+	}
+	f.Close()
+	if f, err = OpenDevice(device); err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if p, err := f.(*winDevice).dword(ioctlGetProtocol); p != protocolIPP {
+		t.Errorf("%s: protocol %d (%v) after Close, want IPP-over-USB back", device, p, err)
 	}
 }
 
