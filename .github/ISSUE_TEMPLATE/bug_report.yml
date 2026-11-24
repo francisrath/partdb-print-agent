@@ -19,7 +19,7 @@ body:
     attributes:
       label: pdb-print version
       description: Output of `pdb-print version`
-      placeholder: pdb-print v0.4.0 (go1.25.4 linux/arm64)
+      placeholder: pdb-print v0.4.0 (go1.27.4 linux/arm64)
     validations:
       required: true
   - type: dropdown
