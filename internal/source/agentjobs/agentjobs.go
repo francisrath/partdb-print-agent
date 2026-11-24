@@ -1,4 +1,4 @@
-// Package agentjobs fetches print jobs from Part-DB's print agent API (architecture §4.1, source 4):
+// Package agentjobs fetches print jobs from Part-DB's print agent API (architecture §4.2):
 // heartbeat with our printers, list pending jobs, claim one, print it, report the result.
 package agentjobs
 

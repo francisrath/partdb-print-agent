@@ -1,4 +1,4 @@
-// Package hotfolder prints label PDFs that appear in a folder (architecture §4.1, source 3):
+// Package hotfolder prints label PDFs that appear in a folder (architecture §4.1, flow 2):
 // Part-DB's label downloads are named label_<Type><id>_<profile>.pdf.
 package hotfolder
 

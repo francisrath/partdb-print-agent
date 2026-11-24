@@ -392,7 +392,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		return err
 	}
 	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		// ponytail: LAN bind needs the admin password from architecture §10; not built yet.
+		// ponytail: loopback only (architecture §10); the LAN gets the setup window, not the full UI.
 		return fmt.Errorf("refusing to listen on %s: only loopback addresses are supported", host)
 	}
 	if waitPid > 0 { // the agent we updated: it frees the port when it exits
