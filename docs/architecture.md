@@ -420,12 +420,19 @@ print queue, IPP. Exec plugins for external GPL tools were considered and not bu
 | Kind | Linux | macOS | Windows |
 |---|---|---|---|
 | `tcp` (raw 9100) | ✓ | ✓ | ✓ |
-| `usb` | usblp `/dev/usb/lpN`, found by `usb_id` in sysfs | – | – |
+| `usb` | usblp `/dev/usb/lpN`, found by `usb_id` in sysfs | – | usbprint.sys (inbox "USB Printing Support"), found by `usb_id` among the `GUID_DEVINTERFACE_USBPRINT` interfaces |
 | `serial` | `/dev/serial/by-id/…`, `/dev/ttyUSB0`, Pi UART | `/dev/cu.*` | `COMn` |
 | `ble` | BlueZ over D-Bus | CoreBluetooth in the helper `pdb-print-ble` | WinRT, in-process (BLE adapter needed) |
 | `bt` (Classic RFCOMM) | RFCOMM socket; BlueZ for name lookup and scan | IOBluetooth in the helper | Winsock Bluetooth socket, SDP lookup |
 
-USB is Linux only for now. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
+USB on Linux: usblp opens non-blocking, so empty reads return 0 bytes (poll) and `poll(POLLOUT)` drains the
+last write before close. USB on Windows is pure Go (`golang.org/x/sys/windows`): SetupAPI/CfgMgr list the
+usbprint interfaces (the serial is on the parent devnode for composite devices), `IOCTL_USBPRINT_GET_1284_ID`
+reads the device id, and reads and writes are overlapped and cancelled with `CancelIoEx` at the read
+deadline or after 30 s without progress on a write chunk. usbprint doesn't lock the device: the Windows
+spooler can print to it at the same time. Windows starts an interface that also offers IPP over USB (7/1/4 next to 7/1/2,
+e.g. the QL-810W) in that protocol, where the printer ignores raster data: a job switches it to BIDI with
+`IOCTL_USBPRINT_SET_PROTOCOL` and back on close, so Windows' own IPP queue keeps working. No USB on macOS yet. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
 binary: `pdb-print` starts it on demand and talks to it over stdin/stdout (`internal/blebridge`), so only
 the helper asks for Bluetooth permission. Docker has no Bluetooth. A Bluetooth printer takes one connection
 at a time.
@@ -439,7 +446,7 @@ nothing printable is sent.
 
 | Method | What it finds |
 |---|---|
-| USB (Linux sysfs) | usblp printers: USB id, serial, IEEE 1284 device id |
+| USB (Linux sysfs, Windows usbprint.sys) | printer-class USB printers: USB id, serial, IEEE 1284 device id |
 | Network | hosts on the local subnets (each at most a /24) with port 9100 open, named from SNMP `sysDescr` |
 | Bluetooth LE | advertised names matching a model, and unknown devices with the cat printers' service `ae30` |
 | Bluetooth Classic | paired/known devices and an inquiry: names matching a model, or a printer class of device |

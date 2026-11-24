@@ -141,3 +141,10 @@ func TestParseIEEE1284LongKeys(t *testing.T) {
 		t.Errorf("%v", f)
 	}
 }
+
+func TestFindSerialIgnoresCase(t *testing.T) { // Windows may report a serial in another case than Linux
+	sys := fakeSysfs(t, map[string][4]string{"lp0": {"04f9", "200f", "AbC1", "MFG:Brother;"}})
+	if got, err := Find(sys, "04f9:200f", "ABC1"); err != nil || got != "/dev/usb/lp0" {
+		t.Fatalf("Find = %q, %v", got, err)
+	}
+}

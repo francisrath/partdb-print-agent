@@ -19,7 +19,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
-| ✅ maintainer | PT-9500PC | USB | brother/pt-cbp | USB on a Raspberry Pi, 2026-11 |
+| ✅ maintainer | PT-9500PC | USB | brother/pt-cbp | USB on a Raspberry Pi and on Windows 11, 2026-11 |
 | 🟡 | PT-E500 | USB | brother/pt-raster |  |
 | 🟡 | PT-E550W | Network, USB | brother/pt-raster |  |
 | 🟡 | PT-P700 | USB | brother/pt-raster |  |
@@ -41,7 +41,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | 🟡 | QL-710W | Network, USB | brother/ql |  |
 | 🟡 | QL-720NW | Network, USB | brother/ql |  |
 | 🟡 | QL-800 | USB | brother/ql |  |
-| ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10 |
+| ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10; USB on Linux and Windows 11, 2026-11 |
 | 🟡 | QL-820NWB | Network, USB | brother/ql |  |
 
 ### DYMO

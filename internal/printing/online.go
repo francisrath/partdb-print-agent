@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"time"
 
@@ -161,24 +160,27 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 	t := p.Transport
 	switch t.Kind {
 	case "usb":
-		dev := t.Device
-		if t.USBID != "" {
-			var err error
-			if dev, err = usb.Find("", t.USBID, t.Serial); err != nil {
-				close(done)
-				return false, done
-			}
-		}
-		open, timeout := s.openDevice, s.probeTimeout
+		open, find, timeout := s.openDevice, s.findUSB, s.probeTimeout
 		if open == nil {
-			open = func(path string) (io.Closer, error) { return os.OpenFile(path, os.O_RDWR, 0) }
+			open = func(path string) (io.Closer, error) { return usb.OpenDevice(path) }
+		}
+		if find == nil {
+			find = func(id, serial string) (string, error) { return usb.Find("", id, serial) }
 		}
 		if timeout == 0 {
 			timeout = 2 * time.Second
 		}
 		opened := make(chan bool, 1)
-		go func() { // usblp opens don't block, but a check must never hang a heartbeat
+		go func() { // usblp opens don't block, but a check must never hang a heartbeat (Windows lookups open devices)
 			defer close(done)
+			dev := t.Device
+			if t.USBID != "" {
+				var err error
+				if dev, err = find(t.USBID, t.Serial); err != nil {
+					opened <- false
+					return
+				}
+			}
 			f, err := open(dev)
 			opened <- err == nil && f.Close() == nil
 		}()

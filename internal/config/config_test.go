@@ -90,6 +90,7 @@ printers:
 		"driver field (removed)":     {"printers: [{id: a, driver: brother, model: QL-810W, transport: {kind: tcp, host: x}}]", "driver"},
 		"no host":                    {"printers: [{id: a, model: QL-810W, transport: {kind: tcp}}]", "needs a host"},
 		"duplicate":                  {"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}}, {id: a, model: QL-810W, transport: {kind: tcp, host: x}}]", "defined twice"},
+		"same usb printer twice":     {"printers: [{id: a, model: QL-810W, transport: {kind: usb, usb_id: 04f9:209c}}, {id: b, model: QL-810W, transport: {kind: usb, usb_id: 04f9:209c}}]", "same USB printer"},
 		"no model":                   {"printers: [{id: a, transport: {kind: usb, device: /dev/usb/lp0}}]", "unknown model"},
 		"bad yaml":                   {"printers: [", "yaml"},
 		"bad url":                    {"instances: [{id: h, base_url: partdb.local}]", "base_url"},
