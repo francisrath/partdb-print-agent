@@ -93,7 +93,6 @@ func (d *dialog) finish() string {
 // A measured length just over the label (804 dots: 100 mm + 0.5 mm gap) still suggests the size
 // the printer accepts, not a shorter label further off.
 func TestTrySuggestsAcceptedLength(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{LabelDots: 804}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -104,7 +103,6 @@ func TestTrySuggestsAcceptedLength(t *testing.T) {
 
 // A label too short for a QR code doesn't ask about one.
 func TestTryNoQRQuestionsOnShortLabels(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 300 * time.Millisecond, LabelDots: 116} // 13 mm + gap
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -139,7 +137,6 @@ func start(t *testing.T, addr string) *dialog {
 }
 
 func TestTryHappyPath(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -183,7 +180,6 @@ func TestTryHappyPath(t *testing.T) {
 }
 
 func TestTryNothingBeforeConsent(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "n")
@@ -196,7 +192,6 @@ func TestTryNothingBeforeConsent(t *testing.T) {
 }
 
 func TestTryNonZebraStops(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{SilentHI: true}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -210,7 +205,6 @@ func TestTryNonZebraStops(t *testing.T) {
 }
 
 func TestTryUpsideDownRetry(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -233,7 +227,6 @@ func TestTryUpsideDownRetry(t *testing.T) {
 }
 
 func TestTryShiftRetry(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -255,7 +248,6 @@ func TestTryShiftRetry(t *testing.T) {
 
 // Closing the window halfway still writes the report and puts the printer's settings back.
 func TestTryEOFWritesReport(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -270,7 +262,6 @@ func TestTryEOFWritesReport(t *testing.T) {
 
 // Enter at "Which side" skips the fix but not the questions after it.
 func TestTrySkipSideContinues(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -285,7 +276,6 @@ func TestTrySkipSideContinues(t *testing.T) {
 
 // When the input ends (window closed) no further label is sent, even mid-fix.
 func TestTryNoPrintAfterInputEnds(t *testing.T) {
-	t.Parallel()
 	fake := &zpltest.Fake{Hold: 600 * time.Millisecond}
 	d := start(t, fake.Start(t))
 	d.answer("Ask this printer what it is?", "y")
@@ -389,7 +379,6 @@ func (f *fakeCat) sent() []byte {
 
 // A cat printer: no Zebra identify, setup reads or restore; "too pale" reprints darker.
 func TestTryCatPrinter(t *testing.T) {
-	t.Parallel()
 	fake := &fakeCat{}
 	m, _ := devicedb.Default().Model("MX10")
 	r, w := io.Pipe()
@@ -434,7 +423,6 @@ func TestTryCatPrinter(t *testing.T) {
 
 // An unknown Bluetooth device in the list isn't taken for the Zebra.
 func TestTryListsUnknownBLENeutrally(t *testing.T) {
-	t.Parallel()
 	m, _ := devicedb.Default().Model("MX10")
 	r, w := io.Pipe()
 	d := &dialog{t: t, in: w, done: make(chan struct{})}
@@ -460,7 +448,6 @@ func TestTryListsUnknownBLENeutrally(t *testing.T) {
 
 // A Bluetooth Classic printer is found and named, never asked ~HI; try doesn't test ESC/POS yet.
 func TestTryBTPrinter(t *testing.T) {
-	t.Parallel()
 	m, _ := devicedb.Default().Model("RG-MLP80B")
 	r, w := io.Pipe()
 	d := &dialog{t: t, in: w, done: make(chan struct{})}
