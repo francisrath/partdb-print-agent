@@ -12,6 +12,7 @@ import (
 
 // The settings put back at the end come from the printer's real ^HZA and ^HH replies.
 func TestReadSetupRealReplies(t *testing.T) {
+	t.Parallel()
 	hza, err := os.ReadFile("../driver/zpl/zpltest/testdata/hza")
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +39,7 @@ func TestReadSetupRealReplies(t *testing.T) {
 
 // Settings the printer didn't report aren't "restored" as zeros.
 func TestRestoreOnlyReported(t *testing.T) {
+	t.Parallel()
 	s := &session{setup: map[string]int{"pw": 799, "ll": 812}}
 	if cmd := s.restoreCmd(); cmd != "^XA^PON^PW799^LL812^XZ\r\n" {
 		t.Errorf("restore %q", cmd)
@@ -46,6 +48,7 @@ func TestRestoreOnlyReported(t *testing.T) {
 
 // Two sessions in the same minute keep both reports.
 func TestReportNamesUnique(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := func() time.Time { return time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC) }
 	var paths []string
@@ -64,6 +67,7 @@ func TestReportNamesUnique(t *testing.T) {
 
 // The closing message names only the settings that were put back.
 func TestRestoredNames(t *testing.T) {
+	t.Parallel()
 	s := &session{setup: map[string]int{"pw": 799, "ll": 812}}
 	if got := s.restoredNames(); got != "print width and label length" {
 		t.Errorf("%q", got)

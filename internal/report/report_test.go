@@ -87,7 +87,7 @@ func fakeZebra(t *testing.T) (port string, got *lockedBuf) {
 func options(port string, identify bool, confirm func(string) bool) Options {
 	return Options{
 		DB: devicedb.Default(), Targets: []string{"127.0.0.1"}, Port: port, Identify: identify, Confirm: confirm,
-		Out: &bytes.Buffer{}, NoUSB: true,
+		Out: &bytes.Buffer{}, NoUSB: true, ReplyIdle: 100 * time.Millisecond, // the fakes answer at once
 		SysDescr: func(context.Context, string) (string, error) { return "", errors.New("no snmp") },
 	}
 }

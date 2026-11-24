@@ -56,6 +56,11 @@ func TestStatusIdle(t *testing.T) {
 	}
 }
 
+// quickTCP is a TCP transport that gives up on a silent fake after 100 ms instead of 2 s.
+func quickTCP(addr string) *tcp.Transport {
+	return &tcp.Transport{Addr: addr, ReadTimeout: 100 * time.Millisecond}
+}
+
 func TestStatusErrors(t *testing.T) {
 	for name, tc := range map[string]struct {
 		fake *zpltest.Fake
@@ -67,7 +72,7 @@ func TestStatusErrors(t *testing.T) {
 		"head up (~HS, old fw)":   {&zpltest.Fake{HeadUp: true, NoHQES: true}, driver.CoverOpen},
 	} {
 		d, _ := gk420d(t)
-		st, err := d.Status(context.Background(), tcp.New(tc.fake.Start(t)))
+		st, err := d.Status(context.Background(), quickTCP(tc.fake.Start(t))) // old firmware: ~HQES goes unanswered
 		if err != nil || st.Code != tc.want || st.Detail == "" {
 			t.Errorf("%s: %+v %v, want %s", name, st, err, tc.want)
 		}
@@ -84,7 +89,7 @@ func TestStatusSilentHS(t *testing.T) {
 		t.Errorf("%+v %v after %v", st, err, time.Since(start))
 	}
 	fake.Set(func(f *zpltest.Fake) { f.NoHQES, f.Errors = true, 0 })
-	_, err = d.Status(context.Background(), tcp.New(fake.Start(t)))
+	_, err = d.Status(context.Background(), quickTCP(fake.Start(t)))
 	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "head open") {
 		t.Errorf("silent printer: %v", err)
 	}
@@ -136,6 +141,7 @@ func TestPrintLengthMismatch(t *testing.T) {
 // The printer's label length includes the gap: a 100 mm roll measures 812 dots (101.5 mm) on the
 // GK420d, and that's the right roll.
 func TestPrintLengthIncludesGap(t *testing.T) {
+	defer zpl.SetTiming(20*time.Millisecond, 500*time.Millisecond)()
 	d, m := gk420d(t)
 	fake := &zpltest.Fake{Hold: 100 * time.Millisecond} // 812 dots loaded
 	tr := tcp.New(fake.Start(t))
@@ -187,7 +193,7 @@ func TestEncodeOffsets(t *testing.T) {
 func TestStatusSilentIsNoReadback(t *testing.T) {
 	d, _ := gk420d(t)
 	fake := &zpltest.Fake{SilentHS: true, NoHQES: true}
-	_, err := d.Status(context.Background(), tcp.New(fake.Start(t)))
+	_, err := d.Status(context.Background(), quickTCP(fake.Start(t)))
 	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "head open") {
 		t.Errorf("%v", err)
 	}

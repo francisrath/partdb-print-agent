@@ -30,6 +30,8 @@ import (
 	"github.com/francisrath/pdb-print/internal/printing"
 	"github.com/francisrath/pdb-print/internal/selfupdate"
 	"github.com/francisrath/pdb-print/internal/telemetry"
+	"github.com/francisrath/pdb-print/internal/transport"
+	"github.com/francisrath/pdb-print/internal/transport/tcp"
 	"github.com/francisrath/pdb-print/internal/update"
 	"github.com/zalando/go-keyring"
 )
@@ -58,6 +60,17 @@ func fakeQL(t *testing.T) (addr string, jobs chan int) {
 		}
 	}()
 	return ln.Addr().String(), jobs
+}
+
+// quietTCP is the TCP transport with a short read timeout: the fake QL never answers, so the
+// 2 s default only makes every status check wait.
+type quietTCP struct{ *tcp.Transport }
+
+func (q quietTCP) Read(p []byte) (int, error) {
+	if q.ReadTimeout == 0 || q.ReadTimeout > 50*time.Millisecond {
+		q.ReadTimeout = 50 * time.Millisecond
+	}
+	return q.Transport.Read(p)
 }
 
 func fakePartDB(t *testing.T) *httptest.Server {
@@ -107,7 +120,17 @@ func newHarness(t *testing.T) *harness {
 	cfg := &config.Config{Printers: []config.Printer{{ID: "ql", Model: "QL-810W", Media: "dk-22210", NoSNMP: true,
 		Transport: config.Transport{Kind: "tcp", Host: qlHost, Port: port}}}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := &printing.Service{Log: log}
+	svc := &printing.Service{Log: log, OpenTransport: func(p *config.Printer) driver.Transport {
+		if p.Transport.Kind == "tcp" && net.JoinHostPort(p.Transport.Host, strconv.Itoa(p.Transport.Port)) == qlAddr {
+			return quietTCP{tcp.New(qlAddr)}
+		}
+		m, _ := p.DeviceModel()
+		tr, err := transport.New(p.Transport, m)
+		if err != nil {
+			t.Error(err)
+		}
+		return tr
+	}}
 	t.Cleanup(svc.Close)
 	s := New(cfg, filepath.Join(t.TempDir(), "config.yaml"), svc, log, "127.0.0.1:8631", "test")
 	s.LANAddrs = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("192.168.1.23")} } // lanReq's address
