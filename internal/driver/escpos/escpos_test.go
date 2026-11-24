@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +370,125 @@ func TestPrintSplitASBFrameIsNotTheAnswer(t *testing.T) {
 	res, err := newDriver(t, false).Print(context.Background(), f, job(okStatus))
 	if err != nil || res.Confirmed {
 		t.Errorf("%+v %v", res, err)
+	}
+}
+
+func pagesJob(n int) *driver.Job {
+	j := job(okStatus)
+	for len(j.Pages) < n {
+		j.Pages = append(j.Pages, j.Pages[0])
+	}
+	return j
+}
+
+var gsr = []byte{0x1D, 0x72, 0x01}
+
+// Labels go one at a time: each is confirmed (GS r answered) before the next is sent, so a printer
+// that stops (cover, paper) holds one label at most.
+func TestPrintPagesOneAtATime(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, {0x00}, {0x00}}}
+	res, err := newDriver(t, false).Print(context.Background(), f, pagesJob(3))
+	if err != nil || !res.Confirmed || res.Message != "printed" || res.Pages != 3 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	var order []string
+	for _, w := range f.written {
+		switch {
+		case bytes.Equal(w, gsr):
+			order = append(order, "gsr")
+		case len(w) > 3:
+			order = append(order, "page")
+		}
+	}
+	if got := strings.Join(order, " "); got != "page gsr page gsr page gsr" {
+		t.Errorf("order %q", got)
+	}
+}
+
+// The cover opened while a label printed and closed again: the printer finishes it, so the job goes
+// on, with a warning naming the label that may show a seam.
+func TestPrintCoverOpenedAndClosed(t *testing.T) {
+	// GS r: silence; poll 1: cover open; poll 2: closed, then the GS r answer
+	f := &fake{replies: [][]byte{nil, {0x16}, {0x12, 0x00}, {0x00}}}
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "label 1 of 2") }) {
+		t.Errorf("warnings %q", res.Warnings)
+	}
+}
+
+// A cover left open stops the job before the next label, saying how many printed.
+func TestPrintCoverLeftOpen(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, nil}}
+	for range 200 {
+		f.replies = append(f.replies, []byte{0x16})
+	}
+	d := newDriver(t, false)
+	d.poll, d.coverWait = time.Millisecond, 20*time.Millisecond
+	_, err := d.Print(context.Background(), f, pagesJob(3))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CoverOpen || !strings.Contains(de.Detail, "1 of 3 labels printed") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := slices.IndexFunc(f.written, func(w []byte) bool { return len(w) > 3 }); n < 0 {
+		t.Fatal("nothing sent")
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 2 {
+		t.Errorf("sent %d labels, want 2 (the third waits for the cover)", pages)
+	}
+}
+
+// Paper running out between labels stops the job with the count.
+func TestPrintPaperOutBetweenLabels(t *testing.T) {
+	f := &fake{replies: [][]byte{nil, {0x32}}} // GS r: silence; poll: paper end stopped printing
+	d := newDriver(t, false)
+	d.poll = time.Millisecond
+	_, err := d.Print(context.Background(), f, pagesJob(2))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.NoMedia || !strings.Contains(de.Detail, "0 of 2 labels printed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A printer that answers DLE EOT but never GS r still gets the whole job, unconfirmed.
+func TestPrintNoGSRStillSendsAll(t *testing.T) {
+	f := &fake{}
+	for range 500 {
+		f.replies = append(f.replies, nil)
+	}
+	f.replies[1] = []byte{0x12} // a poll answer: fine
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || res.Confirmed || !strings.Contains(res.Message, "unconfirmed") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 2 {
+		t.Errorf("sent %d labels, want 2", pages)
+	}
+}
+
+// A silent printer is still ErrNoReadback (generic printers that ignore DLE EOT print blind), but
+// the error says what silence usually means here: stuck mid-label after a cut-off job.
+func TestStatusSilentSaysPowerCycle(t *testing.T) {
+	_, err := newDriver(t, false).Status(context.Background(), &fake{})
+	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "off and on") {
+		t.Fatalf("err = %v", err)
 	}
 }
