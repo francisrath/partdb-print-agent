@@ -31,7 +31,7 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
   untested; `pt-cbp`: PT-9500PC; `pt-raster`: PT-E550W/P750W/P710BT/P700/E500 and PT-P900 series, untested),
   `zpl` (Zebra desktop ZPL printers; industrial ZT and mobile ZQ series untested),
   `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MLP80B, generic 58/80 mm).
-- **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux), `ble` (Linux/Windows
+- **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux usblp, Windows usbprint.sys), `ble` (Linux/Windows
   in-process, macOS via the helper), `bt` (Bluetooth Classic RFCOMM: Linux/Windows sockets, macOS via the helper).
 - **Sources**: CLI `print`, local HTTP API + web UI and setup wizard on `127.0.0.1:8631` (`/v1/handoff` for the
   bookmarklet), hot folder (`internal/source/hotfolder`), server-side agent jobs (`internal/source/agentjobs`).

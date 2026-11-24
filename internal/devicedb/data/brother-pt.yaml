@@ -29,7 +29,7 @@ models:
         half: [0x00, 0x04]
     defaults: {cut: chain}
     tested: maintainer
-    tested_note: USB on a Raspberry Pi, 2026-11
+    tested_note: USB on a Raspberry Pi and on Windows 11, 2026-11
   # untested: added from "Raster Command Reference PT-E550W/P750W/P710BT" v1.02, 2026-11-20.
   # 128 pins, 180 dpi; 31–7086 dots long, 14-dot (2 mm) minimum feed (p.17–18); TIFF on all three.
   # ESC i ! not on the PT-E550W/P750W; no ESC i A and no half cut on the PT-P710BT (p.5, 33).
