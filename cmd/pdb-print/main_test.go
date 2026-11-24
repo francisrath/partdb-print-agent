@@ -328,14 +328,14 @@ func TestDiscoverNoAdapter(t *testing.T) {
 func TestDiscoverBT(t *testing.T) {
 	noBLE := func(context.Context, time.Duration) ([]blecore.Advert, error) { return nil, nil }
 	rego := func(context.Context, time.Duration) ([]bt.Device, error) {
-		return []bt.Device{{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:01"}, {Name: "Phone", Address: "AA:BB:CC:DD:EE:02", Class: 0x5a020c}}, nil
+		return []bt.Device{{Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:01"}, {Name: "Phone", Address: "AA:BB:CC:DD:EE:02", Class: 0x5a020c}}, nil
 	}
 	var out bytes.Buffer
 	if err := discover(context.Background(), []string{"--no-usb", "--no-network"}, &out, discovery.Options{ScanBLE: noBLE, ScanBT: rego}); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"bt   AA:BB:CC:DD:EE:01", `transport: {kind: bt, name: "RG-MLP80B", address: "AA:BB:CC:DD:EE:01"}`} {
+	for _, want := range []string{"bt   AA:BB:CC:DD:EE:01", `transport: {kind: bt, name: "RG-MTP80B", address: "AA:BB:CC:DD:EE:01"}`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)
 		}
@@ -588,7 +588,7 @@ func TestWhere(t *testing.T) {
 		{config.Transport{Kind: "usb", Device: "/dev/usb/lp0"}, "/dev/usb/lp0"},
 		{config.Transport{Kind: "serial", Device: "COM3"}, "COM3"},
 		{config.Transport{Kind: "ble", Name: "MX10"}, "Bluetooth MX10"},
-		{config.Transport{Kind: "bt", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF"}, "Bluetooth AA:BB:CC:DD:EE:FF"},
+		{config.Transport{Kind: "bt", Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:FF"}, "Bluetooth AA:BB:CC:DD:EE:FF"},
 	} {
 		if got := where(c.t); got != c.want {
 			t.Errorf("%+v: %q, want %q", c.t, got, c.want)

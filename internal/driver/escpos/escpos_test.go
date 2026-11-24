@@ -62,9 +62,9 @@ func (f *fake) Read(p []byte) (int, error) {
 
 func newDriver(t *testing.T, cutter bool) *escpos {
 	t.Helper()
-	m, ok := devicedb.Default().Model("RG-MLP80B")
+	m, ok := devicedb.Default().Model("RG-MTP80B")
 	if !ok {
-		t.Fatal("no RG-MLP80B")
+		t.Fatal("no RG-MTP80B")
 	}
 	c := *m
 	c.Quirks = map[string]any{"feed_lines": 80, "confirm_timeout_ms": 20000}
@@ -107,7 +107,7 @@ func TestEncodeGolden(t *testing.T) {
 	// 16x3: row 0 all black, row 1 left byte black, row 2 white
 	g := img(16, 3, func(x, y int) bool { return y == 0 || y == 1 && x < 8 })
 	want := []byte{0x1B, 0x40, 0x1D, 0x76, 0x30, 0x00, 0x02, 0x00, 0x03, 0x00,
-		0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x1B, 0x64, 0x50}
+		0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x1B, 0x4A, 0x50}
 	if got := encode(t, newDriver(t, false), g); !bytes.Equal(got, want) {
 		t.Errorf("got % x\nwant % x", got, want)
 	}
@@ -134,7 +134,7 @@ func TestEncodeBandsPaddingCutter(t *testing.T) {
 	if got[10] != 0x00 || got[11] != 0x40 {
 		t.Errorf("row bytes % x", got[10:12])
 	}
-	if want := []byte{0x1B, 0x64, 0x50, 0x1D, 0x56, 0x01}; !bytes.HasSuffix(got, want) {
+	if want := []byte{0x1B, 0x4A, 0x50, 0x1D, 0x56, 0x01}; !bytes.HasSuffix(got, want) {
 		t.Errorf("tail % x, want % x", got[len(got)-6:], want)
 	}
 }
@@ -143,7 +143,7 @@ func TestFeedOver255(t *testing.T) {
 	d := newDriver(t, false)
 	d.model.Quirks["feed_lines"] = 300
 	got := encode(t, d, img(8, 1, func(int, int) bool { return false }))
-	if want := []byte{0x1B, 0x64, 0xFF, 0x1B, 0x64, 0x2D}; !bytes.HasSuffix(got, want) {
+	if want := []byte{0x1B, 0x4A, 0xFF, 0x1B, 0x4A, 0x2D}; !bytes.HasSuffix(got, want) {
 		t.Errorf("tail % x", got)
 	}
 }

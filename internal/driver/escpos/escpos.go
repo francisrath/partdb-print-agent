@@ -1,4 +1,4 @@
-// Package escpos drives ESC/POS receipt printers (Bluetooth Classic SPP, e.g. REGO RG-MLP80B) with
+// Package escpos drives ESC/POS receipt printers (Bluetooth Classic SPP, e.g. REGO RG-MTP80B) with
 // GS v 0 raster bitmaps. Commands follow Epson's public ESC/POS reference.
 package escpos
 
@@ -56,7 +56,7 @@ func (d *escpos) Encode(w io.Writer, job *driver.Job) error {
 		b = append(b, 0x1B, 0x40)
 		b = appendRaster(b, pg, d.model.HeadPins)
 		for n := feed; n > 0; n -= 255 {
-			b = append(b, 0x1B, 0x64, byte(min(n, 255)))
+			b = append(b, 0x1B, 0x4A, byte(min(n, 255))) // ESC J: n dot rows (ESC d counts text lines, ~4 mm each)
 		}
 		if cut {
 			b = append(b, 0x1D, 0x56, 0x01)

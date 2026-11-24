@@ -630,6 +630,9 @@ func (s *Service) pickMedia(p *config.Printer, model *devicedb.Model, st *driver
 	if hasFallback {
 		return fallback, FromFallback, nil
 	}
+	if m, ok := onlyMedia(p, model); ok {
+		return m, FromFallback, nil
+	}
 	return devicedb.Media{}, "", errors.New("media unknown: the printer doesn't report its roll; set `media:` for this printer as a fallback")
 }
 
@@ -677,7 +680,20 @@ func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *devicedb
 			return &fm, f + " (config fallback)", true
 		}
 	}
+	if om, ok := onlyMedia(p, model); ok {
+		return &om, om.ID + " (the only paper this model takes)", true
+	}
 	return nil, MediaName(loaded) + " reported; jobs will fail: set media for this printer as a fallback", false
+}
+
+// onlyMedia is the medium of a model that takes just one, like a receipt printer's paper width: it
+// needs no `media:`. The model's list, not media_allowed: a one-entry allow-list says what may be
+// loaded, not what is.
+func onlyMedia(p *config.Printer, model *devicedb.Model) (devicedb.Media, bool) {
+	if len(model.Media) == 1 {
+		return LookupMedia(p, model.Media[0])
+	}
+	return devicedb.Media{}, false
 }
 
 // FittingProfiles lists the label profiles of the config's Part-DB instance whose labels fit m,

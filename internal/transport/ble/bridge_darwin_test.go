@@ -80,7 +80,7 @@ func fakeHelper(mode string, args []string) error {
 		if strings.Join(args, " ") != "scan-classic --timeout 8s" {
 			return fmt.Errorf("args %q", args)
 		}
-		fmt.Println(`{"address":"AA:BB:CC:DD:EE:FF","name":"RG-MLP80B","class":1664}`)
+		fmt.Println(`{"address":"AA:BB:CC:DD:EE:FF","name":"RG-MTP80B","class":1664}`)
 		fmt.Println(`{"address":"11:22:33:44:55:66","name":"","class":0}`)
 		return nil
 	}
@@ -95,7 +95,7 @@ func fakeHelper(mode string, args []string) error {
 		time.Sleep(time.Hour)
 	}
 	if mode == "bt-off" {
-		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("RG-MLP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"))
+		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("RG-MTP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"))
 	}
 	if mode == "fail" {
 		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("no Bluetooth adapter: bluetooth is not authorized for this app"))
@@ -474,9 +474,9 @@ func TestBridgeScanEndsWhileEnabling(t *testing.T) {
 func newBT(t *testing.T, c config.Transport) *Transport {
 	t.Helper()
 	c.Kind = "bt"
-	m, ok := devicedb.Default().ModelByBTName("RG-MLP80B")
+	m, ok := devicedb.Default().ModelByBTName("RG-MTP80B")
 	if !ok {
-		t.Fatal("no escpos model for RG-MLP80B")
+		t.Fatal("no escpos model for RG-MTP80B")
 	}
 	tr, err := transport.New(c, m)
 	if err != nil {
@@ -493,7 +493,7 @@ func newBT(t *testing.T, c config.Transport) *Transport {
 // os.ErrDeadlineExceeded and a dropped link to be a real error.
 func TestBridgeRFCOMM(t *testing.T) {
 	useFake(t, "ok")
-	tr := newBT(t, config.Transport{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1})
+	tr := newBT(t, config.Transport{Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1})
 	if tr.Kind() != "bt" {
 		t.Errorf("Kind %q", tr.Kind())
 	}
@@ -504,7 +504,7 @@ func TestBridgeRFCOMM(t *testing.T) {
 	if err := json.Unmarshal([]byte(readAll(t, tr)), &req); err != nil {
 		t.Fatal(err)
 	}
-	want := blebridge.OpenRequest{Kind: "rfcomm", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1}
+	want := blebridge.OpenRequest{Kind: "rfcomm", Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1}
 	if req != want {
 		t.Errorf("open request %+v, want %+v", req, want)
 	}
@@ -531,22 +531,22 @@ func TestBridgeRFCOMM(t *testing.T) {
 func TestBridgeRFCOMMErrors(t *testing.T) {
 	t.Run("open", func(t *testing.T) {
 		useFake(t, "bt-off")
-		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		tr := newBT(t, config.Transport{Name: "RG-MTP80B"})
 		err := tr.Open(context.Background())
-		if want := "bt: RG-MLP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"; err == nil || err.Error() != want {
+		if want := "bt: RG-MTP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"; err == nil || err.Error() != want {
 			t.Errorf("Open: %v, want %q", err, want)
 		}
 	})
 	t.Run("no bluetooth", func(t *testing.T) {
 		useFake(t, "fail")
-		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		tr := newBT(t, config.Transport{Name: "RG-MTP80B"})
 		if err := tr.Open(context.Background()); !errors.Is(err, blecore.ErrNoBluetooth) || !strings.HasPrefix(err.Error(), "bt: ") {
 			t.Errorf("Open: %v, want bt: … ErrNoBluetooth", err)
 		}
 	})
 	t.Run("link dropped", func(t *testing.T) {
 		useFake(t, "drop")
-		tr := newBT(t, config.Transport{Name: "RG-MLP80B"})
+		tr := newBT(t, config.Transport{Name: "RG-MTP80B"})
 		if err := tr.Open(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -568,7 +568,7 @@ func TestBridgeRFCOMMErrors(t *testing.T) {
 func TestScanClassic(t *testing.T) {
 	useFake(t, "scan-classic")
 	devs, err := ScanClassic(context.Background(), 8*time.Second)
-	want := []blebridge.ClassicDevice{{Address: "AA:BB:CC:DD:EE:FF", Name: "RG-MLP80B", Class: 1664}, {Address: "11:22:33:44:55:66"}}
+	want := []blebridge.ClassicDevice{{Address: "AA:BB:CC:DD:EE:FF", Name: "RG-MTP80B", Class: 1664}, {Address: "11:22:33:44:55:66"}}
 	if err != nil || !slices.Equal(devs, want) {
 		t.Errorf("ScanClassic: %+v %v, want %+v", devs, err, want)
 	}

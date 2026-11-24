@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/francisrath/pdb-print/internal/config"
+	"github.com/francisrath/pdb-print/internal/devicedb"
 	"github.com/francisrath/pdb-print/internal/driver"
 	"github.com/francisrath/pdb-print/internal/pdfgen"
 )
@@ -221,5 +222,24 @@ func TestMediaCacheFollowsObservations(t *testing.T) {
 	p.MediaAllowed = []string{"dk-22210"} // allow-list edited: the cached roll no longer counts
 	if _, _, ok := s.MediaStatus(p, &driver.Status{Code: driver.OK}); ok {
 		t.Error("cached roll outside media_allowed still offered")
+	}
+}
+
+// A model that takes one medium only needs no `media:`: it prints on that one.
+func TestMediaOnlyOne(t *testing.T) {
+	s := service(t, nil)
+	m, _ := devicedb.Default().Model("ESCPOS-80")
+	got, from, err := s.pickMedia(&config.Printer{ID: "p", Model: "ESCPOS-80"}, m, nil)
+	if err != nil || got.ID != "paper-80" || from != FromFallback {
+		t.Fatalf("got %q from %q, %v", got.ID, from, err)
+	}
+}
+
+// The status line agrees with pickMedia: a one-paper model needs no `media:`.
+func TestMediaStatusOnlyOne(t *testing.T) {
+	s := service(t, nil)
+	m, text, ok := s.MediaStatus(&config.Printer{ID: "p", Model: "ESCPOS-80"}, nil)
+	if !ok || m == nil || m.ID != "paper-80" || !strings.Contains(text, "only paper") {
+		t.Fatalf("got %v %q %v", m, text, ok)
 	}
 }

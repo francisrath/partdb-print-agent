@@ -17,7 +17,7 @@ import (
 
 func TestResolve(t *testing.T) {
 	devs := []Device{
-		{Name: "RG-MLP80B", Address: "AA:BB:CC:00:00:01"},
+		{Name: "RG-MTP80B", Address: "AA:BB:CC:00:00:01"},
 		{Name: "MLP", Address: "AA:BB:CC:00:00:01"}, // the alias of the same device
 		{Name: "Twin", Address: "AA:BB:CC:00:00:02"},
 		{Name: "Twin", Address: "aa:bb:cc:00:00:03"},
@@ -27,7 +27,7 @@ func TestResolve(t *testing.T) {
 	tests := []struct {
 		name, want, errHas string
 	}{
-		{"RG-MLP80B", "AA:BB:CC:00:00:01", ""},
+		{"RG-MTP80B", "AA:BB:CC:00:00:01", ""},
 		{"MLP", "AA:BB:CC:00:00:01", ""},
 		{"Solo", "AA:BB:CC:00:00:04", ""},
 		{"Twin", "", `two Bluetooth devices are called "Twin"; set address`},
@@ -67,7 +67,7 @@ func TestMapErr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := mapErr("RG-MLP80B (AA:BB:CC:DD:EE:FF)", tt.err, tab)
+			err := mapErr("RG-MTP80B (AA:BB:CC:DD:EE:FF)", tt.err, tab)
 			msg := err.Error()
 			if got := strings.Contains(msg, "did not answer – is it switched on and paired with this computer?"); got != tt.off {
 				t.Errorf("off message %v: %q", got, msg)

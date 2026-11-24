@@ -264,7 +264,7 @@ func TestBadBLEName(t *testing.T) {
 func TestModelByBTName(t *testing.T) {
 	db := devicedb.Default()
 	for _, tc := range []struct{ name, want string }{
-		{"RG-MLP80B", "RG-MLP80B"}, {"RG-MLP80B-1234", "RG-MLP80B"}, {"MX10", ""}, {"", ""},
+		{"RG-MTP80B", "RG-MTP80B"}, {"RG-MTP80B-1234", "RG-MTP80B"}, {"MX10", ""}, {"", ""},
 	} {
 		got := ""
 		if m, ok := db.ModelByBTName(tc.name); ok {
@@ -282,14 +282,14 @@ func TestEscposModels(t *testing.T) {
 		pins  int
 		media string
 		dots  int
-	}{"RG-MLP80B": {576, "paper-80", 576}, "ESCPOS-80": {576, "paper-80", 576}, "ESCPOS-58": {384, "paper-57", 384}} {
+	}{"RG-MTP80B": {576, "paper-80", 576}, "ESCPOS-80": {576, "paper-80", 576}, "ESCPOS-58": {384, "paper-57", 384}} {
 		m, ok := db.Model(id)
 		if !ok {
 			t.Errorf("%s missing", id)
 			continue
 		}
 		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt"}) ||
-			m.Quirk("feed_lines", 0) != 80 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
+			m.Quirk("feed_lines", 0) != 128 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
 			t.Errorf("%s: %+v", id, m)
 		}
 		md := db.MediaFor(m)

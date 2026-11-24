@@ -53,7 +53,7 @@ real hardware, and which are implemented from the documentation only, is in [doc
 | DYMO LabelWriter | USB, Serial (330) | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | Niimbot, Phomemo | Bluetooth LE, USB serial (B21S) | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | ✅ B21S |
-| ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
+| ESC/POS receipt printers | Bluetooth Classic | REGO RG-MTP80B, generic 58/80 mm | ✅ RG-MTP80B |
 
 ✅ tested on real hardware, 🟡 implemented from the documentation but not tested yet, ⏳ not supported
 yet, ❌ can't be supported. Every model with its status, the printers that aren't supported, and how to
@@ -508,16 +508,16 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
 
 ### Bluetooth Classic receipt printers (`kind: bt`)
 
-ESC/POS printers over Bluetooth Classic: `RG-MLP80B` (REGO, 80 mm paper, 576 dots; recognised by its
+ESC/POS printers over Bluetooth Classic: `RG-MTP80B` (REGO, 80 mm paper, 576 dots; recognised by its
 Bluetooth name), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
-raster driver (`GS v 0`); `media:` is `paper-80` or `paper-57`.
+raster driver (`GS v 0`). A model that takes one paper width needs no `media:`; set `paper-80` or `paper-57`
+for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands.
 
 ```yaml
 - id: rego
   name: REGO
-  model: RG-MLP80B
-  transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MLP80B", channel: 1}
-  media: paper-80
+  model: RG-MTP80B
+  transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
 ```
 
 The address wins; with only `name`, pdb-print picks among the paired or known devices and refuses two

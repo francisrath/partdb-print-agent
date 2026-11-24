@@ -1,18 +1,20 @@
 # Bluetooth Classic (SPP) ESC/POS receipt printers (driver escpos, dialect raster): GS v 0 raster
-# bitmaps at 203 dpi. RG-MLP80B (REGO) is recognised by its paired name; the generic models are picked by
-# hand. feed_lines is the paper fed after a label, confirm_timeout_ms how long to wait for the
-# printer's completion byte.
+# bitmaps at 203 dpi. RG-MTP80B (REGO) is recognised by its paired name; the generic models are picked by
+# hand. feed_lines is the paper fed after a label in dot rows (8 per mm; 128 puts the label past the
+# RG-MTP80B's tear bar), confirm_timeout_ms how long to wait for the printer's completion byte.
 models:
   - &escpos
-    id: RG-MLP80B
+    id: RG-MTP80B
     vendor: REGO
     driver: escpos
     dialect: raster
     dpi: 203
     head_pins: 576
     transports: [bt]
-    match: {bt_name: "^RG-MLP80B"}
-    quirks: {feed_lines: 80, confirm_timeout_ms: 20000}
+    match: {bt_name: "^RG-MTP80B"}
+    quirks: {feed_lines: 128, confirm_timeout_ms: 20000}
     media: [paper-80]
-  - {<<: *escpos, id: ESCPOS-80, vendor: Generic, match: {}}
-  - {<<: *escpos, id: ESCPOS-58, vendor: Generic, match: {}, head_pins: 384, media: [paper-57]}
+    tested: maintainer
+    tested_note: "Bluetooth Classic on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands"
+  - {<<: *escpos, id: ESCPOS-80, vendor: Generic, match: {}, tested: "", tested_note: ""}
+  - {<<: *escpos, id: ESCPOS-58, vendor: Generic, match: {}, head_pins: 384, media: [paper-57], tested: "", tested_note: ""}
