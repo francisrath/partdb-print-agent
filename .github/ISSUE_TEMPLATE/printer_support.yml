@@ -41,7 +41,7 @@ body:
       label: pdb-print report --identify
       description: |
         Run `pdb-print report --identify` with the printer connected and attach the file it writes (drag it here).
-        It asks before sending each identify query, since a printer that doesn't understand one may print it as text.
+        It asks before sending identify queries to each printer, since a printer that doesn't understand one may print it as text.
         Addresses and serial numbers are masked; check the file before posting.
     validations:
       required: true
