@@ -3,9 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', '*.md']
   pull_request:
-    paths-ignore: ['docs/**', '*.md']
 
 permissions:
   contents: read
@@ -15,7 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # docs-only PRs (docs/, top-level Markdown) skip the jobs below; skipped jobs still let `ci` pass
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR" ]; then echo code=true >>"$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          if grep -qvE '^docs/|^[^/]+\.md$' <<<"$files"; then echo code=true; else echo code=false; fi >>"$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -47,6 +63,8 @@ jobs:
         run: CGO_ENABLED=1 go build -o /dev/null ./cmd/pdb-print-ble
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -75,6 +93,8 @@ jobs:
           done
 
   packaging:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -118,6 +138,8 @@ jobs:
   # the Windows release half (.goreleaser-windows.yaml plus setup.exe), as release.yml's release-windows
   # job runs it
   packaging-windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04 # as release-windows: setup.exe builds with the image's Wine
     timeout-minutes: 15
     steps:
@@ -158,6 +180,8 @@ jobs:
 
   # the macOS release half (.goreleaser-darwin.yaml), as release.yml's release-darwin job runs it
   packaging-darwin:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -198,3 +222,16 @@ jobs:
           grep -qx pdb-print-ble <<<"$files"
           grep -q ' pdb-print_.*_darwin_universal.tar.gz$' dist/checksums-darwin.txt
           grep -q 'binary "pdb-print-ble"' dist/homebrew/Casks/pdb-print.rb
+
+  # the one required status check: fails if any job above failed or was cancelled (skipped is fine)
+  ci:
+    if: always()
+    needs: [changes, test, lint, packaging, packaging-windows, packaging-darwin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          ! grep -qE 'failure|cancelled' <<<"$RESULTS"
