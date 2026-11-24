@@ -293,9 +293,13 @@ func TestEscposModels(t *testing.T) {
 			t.Errorf("%s: %+v", id, m)
 		}
 		md := db.MediaFor(m)
-		if len(md) != 1 || md[0].ID != want.media || md[0].PrintableWidthDots != want.dots || md[0].Kind != devicedb.Continuous {
+		if len(md) == 0 || md[0].ID != want.media || md[0].PrintableWidthDots != want.dots || md[0].Kind != devicedb.Continuous {
 			t.Errorf("%s media: %+v", id, md)
 		}
+	}
+	// the REGO also takes a 57 mm roll (centred), 80 mm unless set
+	if m, _ := db.Model("RG-MTP80B"); !slices.Equal(m.Media, []string{"paper-80", "paper-57"}) || m.Defaults["media"] != "paper-80" {
+		t.Errorf("RG-MTP80B media %v, defaults %v", m.Media, m.Defaults)
 	}
 }
 

@@ -58,16 +58,25 @@ type escpos struct {
 func (d *escpos) Encode(w io.Writer, job *driver.Job) error {
 	var b []byte
 	for _, pg := range job.Pages {
-		b = d.appendPage(b, pg)
+		b = d.appendPage(b, pg, d.left(job.Media))
 	}
 	_, err := w.Write(b)
 	return err
 }
 
-// appendPage adds one label: reset, raster, feed past the tear bar, cut.
-func (d *escpos) appendPage(b []byte, pg *image.Gray) []byte {
+// left is the margin that centres paper narrower than the head (a 57 mm roll in an 80 mm printer
+// sits in the middle of the holder), in dots.
+func (d *escpos) left(m *devicedb.Media) int {
+	if m == nil || m.PrintableWidthDots <= 0 {
+		return 0
+	}
+	return max(d.model.HeadPins-m.PrintableWidthDots, 0) / 2
+}
+
+// appendPage adds one label, left dots in: reset, raster, feed past the tear bar, cut.
+func (d *escpos) appendPage(b []byte, pg *image.Gray, left int) []byte {
 	b = append(b, 0x1B, 0x40)
-	b = appendRaster(b, pg, d.model.HeadPins)
+	b = appendRaster(b, pg, left, d.model.HeadPins)
 	for n := d.feed; n > 0; n -= 255 {
 		b = append(b, 0x1B, 0x4A, byte(min(n, 255))) // ESC J: n dot rows (ESC d counts text lines, ~4 mm each)
 	}
@@ -77,11 +86,12 @@ func (d *escpos) appendPage(b []byte, pg *image.Gray) []byte {
 	return b
 }
 
-// appendRaster adds img, cropped to dots (the head), as GS v 0 bands, 1 = black, MSB first, rows padded to whole bytes.
-func appendRaster(b []byte, img *image.Gray, dots int) []byte {
+// appendRaster adds img, left dots in and cropped to dots (the head), as GS v 0 bands, 1 = black, MSB
+// first, rows padded to whole bytes.
+func appendRaster(b []byte, img *image.Gray, left, dots int) []byte {
 	r := img.Bounds()
-	dx := min(r.Dx(), dots)
-	wb := (dx + 7) / 8
+	dx := min(r.Dx(), dots-left)
+	wb := (left + dx + 7) / 8
 	for y0 := r.Min.Y; y0 < r.Max.Y; y0 += maxBand {
 		n := min(maxBand, r.Max.Y-y0)
 		b = append(b, 0x1D, 0x76, 0x30, 0x00, byte(wb), byte(wb>>8), byte(n), byte(n>>8))
@@ -90,7 +100,7 @@ func appendRaster(b []byte, img *image.Gray, dots int) []byte {
 			b = append(b, make([]byte, wb)...)
 			for x := 0; x < dx; x++ {
 				if img.GrayAt(r.Min.X+x, y).Y < 128 {
-					b[row+x/8] |= 0x80 >> (x % 8)
+					b[row+(left+x)/8] |= 0x80 >> ((left + x) % 8)
 				}
 			}
 		}
@@ -224,7 +234,7 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 	pages := make([][]byte, len(job.Pages))
 	res := &driver.Result{Pages: len(job.Pages)}
 	for i, pg := range job.Pages {
-		pages[i] = d.appendPage(nil, pg)
+		pages[i] = d.appendPage(nil, pg, d.left(job.Media))
 		res.Bytes += len(pages[i])
 	}
 	if job.Media != nil {

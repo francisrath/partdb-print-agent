@@ -239,7 +239,21 @@ func TestMediaOnlyOne(t *testing.T) {
 func TestMediaStatusOnlyOne(t *testing.T) {
 	s := service(t, nil)
 	m, text, ok := s.MediaStatus(&config.Printer{ID: "p", Model: "ESCPOS-80"}, nil)
-	if !ok || m == nil || m.ID != "paper-80" || !strings.Contains(text, "only paper") {
+	if !ok || m == nil || m.ID != "paper-80" || !strings.Contains(text, "usual paper") {
 		t.Fatalf("got %v %q %v", m, text, ok)
+	}
+}
+
+// A model that takes several media can name its usual one (RG-MTP80B: 80 mm, 57 mm when set).
+func TestMediaModelDefault(t *testing.T) {
+	s := service(t, nil)
+	m, _ := devicedb.Default().Model("RG-MTP80B")
+	got, _, err := s.pickMedia(&config.Printer{ID: "p", Model: "RG-MTP80B"}, m, nil)
+	if err != nil || got.ID != "paper-80" {
+		t.Fatalf("got %q, %v", got.ID, err)
+	}
+	got, _, err = s.pickMedia(&config.Printer{ID: "p", Model: "RG-MTP80B", Media: "paper-57"}, m, nil)
+	if err != nil || got.ID != "paper-57" {
+		t.Fatalf("configured: got %q, %v", got.ID, err)
 	}
 }

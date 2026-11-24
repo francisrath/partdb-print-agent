@@ -681,15 +681,18 @@ func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *devicedb
 		}
 	}
 	if om, ok := onlyMedia(p, model); ok {
-		return &om, om.ID + " (the only paper this model takes)", true
+		return &om, om.ID + " (this model's usual paper)", true
 	}
 	return nil, MediaName(loaded) + " reported; jobs will fail: set media for this printer as a fallback", false
 }
 
-// onlyMedia is the medium of a model that takes just one, like a receipt printer's paper width: it
-// needs no `media:`. The model's list, not media_allowed: a one-entry allow-list says what may be
-// loaded, not what is.
+// onlyMedia is the medium a model takes when nothing says otherwise: its defaults' media (a receipt
+// printer's usual paper), or the only one it takes. Then it needs no `media:`. The model's list, not
+// media_allowed: a one-entry allow-list says what may be loaded, not what is.
 func onlyMedia(p *config.Printer, model *devicedb.Model) (devicedb.Media, bool) {
+	if id := model.Defaults["media"]; id != "" {
+		return LookupMedia(p, id)
+	}
 	if len(model.Media) == 1 {
 		return LookupMedia(p, model.Media[0])
 	}

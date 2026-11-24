@@ -515,3 +515,22 @@ func TestFeedMM(t *testing.T) {
 		t.Errorf("tail % x", got[len(got)-6:])
 	}
 }
+
+// Paper narrower than the head sits centred in the holder (RG-MTP80B with a 57 mm roll): the label
+// is shifted right by half the difference, 96 dots for 384 on 576.
+func TestEncodeCentresNarrowPaper(t *testing.T) {
+	d := newDriver(t, false)
+	m57, _ := devicedb.Default().Media("paper-57")
+	var b bytes.Buffer
+	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{img(384, 1, func(int, int) bool { return true })}, Media: &m57}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.Bytes()
+	if xb := int(got[6]) | int(got[7])<<8; xb != 60 { // 96 + 384 dots = 60 bytes
+		t.Fatalf("row is %d bytes, want 60", xb)
+	}
+	row := got[10:70]
+	if !bytes.Equal(row[:12], make([]byte, 12)) || !bytes.Equal(row[12:], bytes.Repeat([]byte{0xFF}, 48)) {
+		t.Errorf("row % x", row)
+	}
+}
