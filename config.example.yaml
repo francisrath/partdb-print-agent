@@ -22,8 +22,8 @@ printers:
     name: Brother QL-810W
     model: QL-810W              # QL-800 (USB only) | QL-810W | QL-820NWB
     transport: {kind: tcp, host: 192.168.1.50, port: 9100}
-    # over USB (Linux) instead: {kind: usb, usb_id: "04f9:209c"} – add serial: … to tell two
-    # identical printers apart; or a fixed path: {kind: usb, device: /dev/usb/lp0}
+    # over USB (Linux, Windows) instead: {kind: usb, usb_id: "04f9:209c"} – add serial: … to tell two
+    # identical printers apart; or a fixed path: {kind: usb, device: /dev/usb/lp0} (Linux)
     # serial (models with an RS-232 port): {kind: serial, device: /dev/ttyUSB0, baud: 9600, framing: 8N1,
     # flow: none} – flow none | xonxoff | rtscts; Windows: device: COM3
     media: auto                 # the roll the printer reports decides; a media id (dk-22210, see
@@ -51,7 +51,7 @@ printers:
   #   darkness: normal          # light | normal | dark
   #   black_mark_mm: 4          # black-mark media instead of gaps (0 = gaps)
   # TSC or another TSPL printer (TE200, XP-420B, …). They don't report the label: set media to the loaded roll
-  # (label-102x152, continuous-102, …). Over USB (Linux) {kind: usb, device: /dev/usb/lp0}, Bluetooth {kind: bt, address: …}.
+  # (label-102x152, continuous-102, …). Over USB (Linux, Windows) {kind: usb, usb_id: …}, Bluetooth {kind: bt, address: …}.
   # - id: xprinter
   #   name: Xprinter XP-420B
   #   model: XP-420B
@@ -85,7 +85,7 @@ printers:
   #   transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
   #   feed_mm: 18               # paper fed after each label (receipt and cat printers); default per model
   #   media: paper-80           # paper-57 for ESCPOS-58
-  # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
+  # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi, where the user needs group `lp`; Windows)
   # - id: pt9500
   #   name: Brother PT-9500PC
   #   model: PT-9500PC
@@ -95,7 +95,7 @@ printers:
   #                             # the last label waits in the printer until the next print or the
   #                             # cut button, so no blank leader is wasted. per_label: feed and cut
   #                             # at once (wastes ~25 mm per job); none: no cuts
-  # DYMO LabelWriter 400/450/4XL (and 330) over USB (Linux usblp, group `lp`). Untested on hardware.
+  # DYMO LabelWriter 400/450/4XL (and 330) over USB (Linux usblp, group `lp`; Windows). Untested on hardware.
   # DYMOs don't report the loaded labels: set media to the roll's part number (`pdb-print media`).
   # - id: dymo
   #   name: LabelWriter 450

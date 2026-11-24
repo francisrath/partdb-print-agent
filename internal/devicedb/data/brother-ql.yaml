@@ -28,7 +28,7 @@ models:
     media: *dk
     quirks: &ql {min_lines: 150, max_lines: 11811, feed_margin: 35}
     tested: maintainer
-    tested_note: TCP and SNMP status, 2026-10
+    tested_note: TCP and SNMP status, 2026-10; USB on Linux and Windows 11, 2026-11
   - id: QL-820NWB
     vendor: Brother
     driver: brother
