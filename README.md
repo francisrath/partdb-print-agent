@@ -9,6 +9,17 @@ rasterises them at the printer's native resolution and sends them straight to yo
 the network, USB, serial or Bluetooth – crisp QR codes, exact sizes, no printer drivers or OS print dialogs.
 It runs on Linux, macOS and Windows.
 
+## TL;DR
+
+1. **Install** pdb-print on the computer you work at ([Windows installer, Homebrew](#install)) or on a
+   Raspberry Pi or server next to the printer ([install script or Docker](#install)).
+2. **Set up** in the browser: the [wizard](#set-up) connects Part-DB with a read-only API token, finds your
+   printer and prints a test label.
+3. **Drag the [bookmarklet](#web-ui-and-bookmarklet)** to your bookmarks bar (until Part-DB gets its own
+   Print button).
+4. **Print:** on a part or storage location in Part-DB, click the bookmarklet. The label comes out at the
+   right size with sharp QR codes, no printer drivers involved.
+
 <p align="center"><img src="docs/images/flow.svg" width="880" alt="Part-DB sends a label PDF over HTTPS to pdb-print, which renders it at the print head's dots and sends it over the network, USB, serial or Bluetooth to the label printer"></p>
 
 ## How it works
