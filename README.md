@@ -9,7 +9,7 @@ rasterises them at the printer's native resolution and sends them straight to yo
 the network, USB, serial or Bluetooth – crisp QR codes, exact sizes, no printer drivers or OS print dialogs.
 It runs on Linux, macOS and Windows.
 
-<p align="center"><img src="docs/images/flow.svg" width="880" alt="Part-DB sends a label PDF over HTTPS to pdb-print, which renders it at the print head's dots and sends it over the network, USB or Bluetooth to the label printer"></p>
+<p align="center"><img src="docs/images/flow.svg" width="880" alt="Part-DB sends a label PDF over HTTPS to pdb-print, which renders it at the print head's dots and sends it over the network, USB, serial or Bluetooth to the label printer"></p>
 
 ## How it works
 
@@ -189,7 +189,7 @@ out mirrored or upside down.
 
 ## Web UI and bookmarklet
 
-<p align="center"><img src="docs/images/web-ui.png" width="700" alt="The pdb-print web UI: the Part-DB connection and one Zebra GK420d printer with its media, status and a Test print button"></p>
+<p align="center"><img src="docs/images/web-ui.png" width="700" alt="The pdb-print web UI: Part-DB connected with a read-only token; three printers (a Brother QL-810W and a Zebra GK420d on the network, both OK with their media, and a Niimbot B21S on a serial port that is not plugged in), each with a Test print button; two label profiles mapped to printers, each with a bookmarklet to drag to the bookmarks bar"></p>
 
 In the web UI (`pdb-print serve`, `http://127.0.0.1:8631`): connect Part-DB, add printers, map label
 profiles to printers, then drag the generated bookmarklet to your bookmarks bar. On a part or
