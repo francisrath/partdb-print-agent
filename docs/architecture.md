@@ -1,55 +1,72 @@
-# Part-DB Print Agent: end-to-end architecture proposal
+# pdb-print: architecture
 
-*Name: **pdb-print** (repository, CLI and daemon; working title was partdb-print-agent)*
-*Status: draft for internal review, 2026-10-27. Target Part-DB: v2.20.x (verified against 2.20.4 source).*
+*Label print agent for Part-DB. This document describes the design as built (v0.4.1, 2026-11-24) and the
+upstream Part-DB changes it is waiting for. Target Part-DB: v2.20.x.*
 
-Legend used throughout: **[MVP]** = first release, no Part-DB changes needed · **[P2]** = phase 2 (first upstream PRs + broader hardware) · **[P3]** = phase 3 (push transport, polish) · **[Later]** = designed for, not scheduled.
+Which printers are tested on real hardware is in [printers.md](printers.md); how releases are made is in
+[releasing.md](releasing.md); the usage report is in [telemetry.md](telemetry.md).
 
 ---
 
 ## 0. TL;DR
 
-* A **separate, MIT-licensed, single-binary agent written in Go** runs next to the printers (desktop tray app, Windows service, LaunchAgent, systemd unit, or Docker container on a Pi/NAS). It owns *everything* printer-specific: rasterising Part-DB's PDF to native printhead dots, media/cut/colour handling, vendor protocols (Brother QL/PT raster, ZPL, EPL2, TSPL, ESC/POS, DYMO, Niimbot, Phomemo) and transports (USB, TCP 9100, IPP, BLE, serial/SPP, OS print queue).
-* **Works today with zero Part-DB changes** [MVP]: the agent fetches PDFs through the existing `POST /api/labels/generate` (needs only a **read-only** API token). Jobs reach it via (a) a userscript button in the label dialog, (b) a bookmarklet / link that does a *top-level navigation* to the local agent (sidesteps Part-DB's CSP and Chrome's Local Network Access fetch gating), (c) a "hot folder" that prints `label_*.pdf` downloads, and (d) a CLI. These work with a remote Part-DB too, because the agent fetches labels outbound; only printing from a phone to an agent at home (through NAT) needs the upstream additions below.
-* **Instant printing through NAT** [P2/P3] needs a small, opt-in upstream addition in four sequential PRs: (1) a "Send to print agent" button + setting, (2) a `PrintJob` API resource + agent/printer registration (polling works from here on), (3) push via **Mercure** (the FrankenPHP image already ships a hub; the Apache image needs a sidecar hub), falling back to short polling, with an opt-in long-poll, (4) an opaque `print_hints` JSON field on label profiles. **No printer-specific code or schema lands in Part-DB.** The agent always connects *outbound*.
-* Rendering uses **PDFium compiled to WebAssembly (go-pdfium + wazero)**. It is BSD/Apache-licensed, needs no cgo and runs sandboxed. MuPDF (AGPL) and Poppler (GPL) are avoided. GPL vendor libraries (brother_ql, phomemo-tools) are not linked; their protocols are re-implemented from vendor specs, or they can be used as optional *external* exec plugins.
+* A **separate, MIT-licensed, single-binary agent written in Go** (`CGO_ENABLED=0`) runs next to the
+  printers: on a desktop (Windows per-user install or service, macOS, Linux), or headless on a Pi/NAS
+  (`.deb` with a systemd service, or Docker). It owns *everything* printer-specific: rasterising Part-DB's
+  PDF to native printhead dots, media checks, vendor protocols (Brother QL/PT raster, ZPL, EPL2, TSPL,
+  ESC/POS, DYMO LabelWriter, Niimbot, Phomemo, BLE "cat printers") and transports (TCP 9100, USB, serial,
+  Bluetooth LE, Bluetooth Classic RFCOMM).
+* **Works with Part-DB as it is today:** the agent fetches PDFs through the existing
+  `POST /api/labels/generate`, which a **read-only** API token is enough for. Jobs reach it via a signed
+  bookmarklet (a *top-level navigation* to the local agent, so Part-DB's CSP and Chrome's Local Network
+  Access don't apply), a hot folder that prints `label_*.pdf` downloads, or the CLI. This works with a
+  remote Part-DB too, because the agent fetches outbound.
+* **Upstream:** proposal [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) with
+  four draft PRs from us: a Print button that hands labels to the local agent (#1626), server-side agent
+  jobs that an agent polls outbound, so printing works from any device and through NAT (#1627), instant
+  delivery via Mercure (#1628) and MCP print tools (#1653). The agent already speaks the job API and the
+  Mercure subscription; with an unpatched Part-DB that part stays off. **No printer-specific code lands in
+  Part-DB.**
+* Rendering uses **PDFium compiled to WebAssembly (go-pdfium + wazero)**: BSD/Apache-licensed, no cgo,
+  sandboxed. On 32-bit ARM it runs poppler's `pdftoppm` as a separate process when installed (much faster
+  there). MuPDF (AGPL) and GPL printer libraries are never linked; protocols are implemented clean-room
+  from vendor references and permissively licensed projects.
 
 ---
 
 ## 1. Context and verified facts
 
-| Topic | Fact (verified in Part-DB 2.20.4 source unless noted) | Design consequence |
+| Topic | Fact (verified in Part-DB 2.20.4 source) | Design consequence |
 |---|---|---|
-| Label model | `LabelOptions` (embedded in `LabelProfile`) = `width`, `height` (mm, float), `barcode_type`, `picture_type`, `supported_element`, `additional_css`, `process_mode`, `lines`. No DPI, rotation, cut, printer, media. | The agent must infer orientation/media from page size + its own media profile. Optional upstream `print_hints` blob (PR4). |
-| PDF API | `POST /api/labels/generate {profileId, elementIds:"1,5-10", elementType?}` → PDF (`src/ApiResource/LabelGenerationRequest.php`, `src/State/LabelGenerationProcessor.php`). The processor checks `@labels.create_labels`, `read` on the profile and `read` on each element. | |
-| Token scope | In `config/permissions.yaml`, `labels.create_labels` and `labels.read_profiles` have `apiTokenRole: ROLE_API_READ_ONLY`. | **A Read-Only API token is enough** for the agent in the MVP. |
-| Other API | `GET /api/tokens/current` (token introspection), `GET /api/info` (version), `GET /api/label_profiles` (filterable by `options.supported_element`, `show_in_dropdown`). | Pairing validation, capability detection, profile picker in the agent UI. |
-| OAuth2 | Part-DB is now an OAuth2 AS (league/oauth2-server-bundle), **off by default** (`OAUTH_SERVER_ENABLED`). Auth-code + PKCE; **loopback redirect URIs (127.0.0.1/localhost/::1, any port) explicitly allowed**. Device-code grant disabled. DCR is optional and capped at the `edit` scope. | A nicer pairing path [P2] with no upstream change when the admin has OAuth enabled. Device code would need a config flip (question for the maintainer). |
-| Docker | Documented image `jbtronics/part-db1` = Debian + **Apache + php-fpm** (default pool, no tuned `pm.max_children` → Debian default 5). A second image **`partdborg/part-db`** is built from `Dockerfile-frankenphp` (worker mode). Its Caddyfile **already enables the `mercure` directive** (bolt transport, `anonymous`, `subscriptions`, JWT keys from env). | Push is nearly free on FrankenPHP and needs a sidecar hub on Apache. **Long-polling on php-fpm ties up one of about 5 workers per agent**, so it is opt-in only. |
-| Push deps | composer.json: no `symfony/mercure-bundle`, no messenger; has `symfony/ux-turbo`, `api-platform/*` 4.x, `api-platform/mcp`, `symfony/mcp-bundle`. | PR3 adds `symfony/mercure-bundle` (or a ~50-line HttpClient publisher if the maintainer prefers fewer deps). |
-| CSP | `nelmio_security.yaml`: `default-src 'self'` (so `connect-src` is `'self'`), `block-all-mixed-content`, referrer policy `no-referrer`. | A page-context `fetch()` from Part-DB to `http://127.0.0.1:…` is **blocked by CSP**. Use top-level navigation, a userscript `GM_xmlhttpRequest`, or server-side jobs. No `Referer`, so it can't be used for origin checks. |
-| Label dialog | `templates/label_system/dialog.html.twig` embeds the generated PDF as `<object id="pdf_preview" data="data:application/pdf;base64,…">`. Download filename is `label_<Type><id>.pdf`. | The userscript can grab the exact PDF, including ad-hoc dialog options that aren't saved in a profile. The hot folder matches `label_*.pdf`. |
-| Companion precedent | `BrowserPluginController` (`/tools/info_providers/browser_info`, `/browser_html`), gated by `BrowserPluginSettings::$enabled` (default **false**, env `BROWSER_PLUGIN_ENABLED`), returns HTTP 451 when disabled. | Copy this pattern exactly for PR1/PR2: a settings class, default off, env override. |
-| Maintainer stance | #489: direct printing needs "a browser plugin or companion app". ZPL is limited vs HTML/PDF. #1195: he uses a Brother QL with an exact-size PDF via the driver. | The agent keeps Part-DB's HTML/PDF as the single source of truth and adds no template language. ZPL/EPL/TSPL are used only as **bitmap carriers**. |
-| Community | #946 (EPL2 labeller because QR in PDF unscannable at 203 dpi), #746 (CUPS, ptouch-driver, labelle), Tampermonkey + local Python server in #1195. | Validates demand. Unscannable QR is a *rasterisation* problem (anti-aliasing + resampling), which §6 solves. |
-| Proven pipeline | QL-810W + DK-22210 (29 mm continuous). The PDF is 29×46 mm portrait with CSS-rotated content. `pdftoppm -scale-to-x 306` gives exact head dots, then the `brother_ql` raster goes to TCP 9100. AirPrint mangles scaling. About 3 mm feed margin at each end. | Golden test case #1. Render at native dots, never let a driver scale. |
+| Label model | `LabelOptions` (embedded in `LabelProfile`) = `width`, `height` (mm), `barcode_type`, `picture_type`, `supported_element`, `additional_css`, `process_mode`, `lines`. No DPI, rotation, cut, printer or media. | The agent infers orientation and media from the page size and the printer's loaded media (§5.2). |
+| PDF API | `POST /api/labels/generate {profileId, elementIds:"1,5-10", elementType?}` → PDF. Checks `@labels.create_labels`, `read` on the profile and on each element. | The one Part-DB call the agent needs. |
+| Token scope | `labels.create_labels` and `labels.read_profiles` have `apiTokenRole: ROLE_API_READ_ONLY`. | **A read-only API token is enough.** |
+| Other API | `GET /api/tokens/current`, `GET /api/info`, `GET /api/label_profiles`. | Token check and profile picker in the web UI. |
+| CSP | `default-src 'self'`, `block-all-mixed-content`, referrer policy `no-referrer`. | A page `fetch()` from Part-DB to `http://127.0.0.1:…` is blocked. Use top-level navigation or server-side jobs. No `Referer` for origin checks. |
+| Label dialog | Download filenames start with `label_` (`label_<Type><id>…pdf`). | The hot folder matches `label_*.pdf`. |
+| Companion precedent | `BrowserPluginSettings`: a settings class, default off, env override, HTTP 451 when disabled. | The upstream PRs follow the same pattern. |
+| Maintainer stance | #489: direct printing needs "a browser plugin or companion app". #1195: a Brother QL with an exact-size PDF. | Part-DB's HTML/PDF stays the single source of truth; ZPL/EPL/TSPL are only bitmap carriers. |
+| Proven pipeline | QL-810W + DK-22210 (29 mm continuous): a 29×46 mm portrait PDF with CSS-rotated content, rendered to exactly 306 head dots, sent as Brother raster to TCP 9100. AirPrint mangles the scaling. | Render at native dots and never let a driver scale. |
 
 ---
 
 ## 2. Goals and non-goals
 
 **Goals**
-1. Click "Print" anywhere (desktop, phone, remote Part-DB) and get a crisp, correctly sized label within about 1–3 s.
-2. One agent for many brands, transports and media types, including A4/Letter sheets.
-3. Installable by non-technical hobbyists on Windows, macOS and Linux. Headless on a Pi/NAS.
-4. Minimal, opt-in, vendor-neutral footprint in Part-DB, with PRs written and maintained by us.
-5. Permissive licence for the agent (MIT). No AGPL/GPL code linked in.
+1. Click "Print" (bookmarklet now, Part-DB's own button with the upstream PRs) and get a crisp, correctly
+   sized label within a few seconds, also with a remote Part-DB.
+2. One agent for many brands, transports and media; a new model of a known family is data, not code.
+3. Installable by non-technical hobbyists on Windows, macOS and Linux; headless on a Pi/NAS.
+4. A minimal, opt-in, vendor-neutral footprint in Part-DB, with PRs written and maintained by us.
+5. MIT licence; no AGPL/GPL code linked in.
 
 **Non-goals**
-* No new label design language. Part-DB's HTML/Twig → PDF stays the only template system.
-* No printer drivers inside Part-DB, and no printing from the Part-DB server process itself. (A server-side "agent" is still possible: run the agent's Docker image next to Part-DB on the same LAN.)
-* No cloud relay operated by us (PrintNode style). The relay *is* the user's own Part-DB instance.
-* No exposure of the agent to the internet. The one network-facing surface is the setup window (§10), protected by a code and a time limit; where untrusted machines can reach the host (the internet, or untrusted LAN devices), TCP port 8631 must be limited to trusted sources or setup kept on loopback.
+* No label design language. Part-DB's HTML/Twig → PDF stays the only template system.
+* No printer drivers in Part-DB, and no printing from the Part-DB server process itself (run the agent's
+  Docker image next to Part-DB instead).
+* No cloud relay operated by us. The relay is the user's own Part-DB instance.
+* No exposure of the agent to the internet. The one network-facing surface is the setup window (§10).
+* Office printers, A4 label sheets and the OS print queue are out of scope for now: label printers only.
 
 ---
 
@@ -61,875 +78,654 @@ Legend used throughout: **[MVP]** = first release, no Part-DB changes needed · 
 flowchart LR
   subgraph Browser["Browser / phone"]
     UI["Part-DB UI<br/>label dialog / part page"]
-    US["Userscript / bookmarklet<br/>[MVP]"]
+    BM["Bookmarklet"]
   end
 
-  subgraph PDB["Part-DB server (AGPL, unchanged in MVP)"]
-    API["REST API (API Platform)<br/>/api/labels/generate"]
-    PJ["PrintJob / PrintAgent / Printer<br/>resources [P2, PR2]"]
-    HUB["Mercure hub [P3, PR3]<br/>FrankenPHP built-in or sidecar"]
-    BTN["'Send to printer' button<br/>+ settings [P2, PR1]"]
+  subgraph PDB["Part-DB server (AGPL)"]
+    API["REST API<br/>/api/labels/generate"]
+    BTN["Print button<br/>(draft PR #1626)"]
+    AJ["Agent API: agents, jobs<br/>(draft PR #1627)"]
+    HUB["Mercure hub<br/>(draft PR #1628)"]
   end
 
   subgraph Agent["pdb-print (MIT, Go, single binary)"]
     direction TB
-    SRC["Job sources<br/>local HTTP · hot folder · CLI ·<br/>PrintJob client"]
-    Q["Durable job queue<br/>(bbolt) + retry/backoff"]
-    ROUTE["Router<br/>profile → printer + media"]
-    REND["Render pipeline<br/>PDFium-wasm → raster at native dots<br/>rotate · threshold · 2-colour · impose"]
-    DRV["Driver plugins<br/>brother-ql · brother-pt · zpl · epl ·<br/>tspl · escpos · dymo-lw · dymo-lm ·<br/>niimbot · phomemo · ipp · os-queue · exec"]
-    TR["Transports<br/>USB · TCP 9100 · IPP · BLE · serial/SPP · OS spooler"]
-    DISC["Discovery<br/>mDNS · USB · BLE · SNMP · OS queues"]
-    WEB["Local web UI + API<br/>127.0.0.1:8631"]
-    DB[("devices/*.yaml<br/>model database")]
-    SRC --> Q --> ROUTE --> REND --> DRV --> TR
+    SRC["Job sources<br/>handoff · hot folder · CLI ·<br/>agent jobs"]
+    SVC["Printing service<br/>per-printer lock · media check"]
+    REND["Renderer<br/>PDFium-wasm or pdftoppm<br/>→ 1-bit raster at head dots"]
+    DRV["Drivers<br/>brother · zpl · epl · tspl · escpos ·<br/>dymo · cat · niimbot · phomemo"]
+    TR["Transports<br/>tcp · usb · serial · ble · bt"]
+    DISC["Discovery<br/>USB · network + SNMP · BLE · BT"]
+    WEB["Web UI + setup wizard<br/>127.0.0.1:8631"]
+    DB[("Device database<br/>devicedb/data/*.yaml")]
+    SRC --> SVC --> REND --> DRV --> TR
     DISC --> WEB
     DB --> DRV
     DB --> DISC
   end
 
-  subgraph HW["Printers"]
-    P1["Brother QL/PT"]
-    P2["Zebra ZPL/EPL"]
-    P3["TSPL (TSC, Xprinter…)"]
-    P4["ESC/POS label"]
-    P5["DYMO LW/LM"]
-    P6["Niimbot / Phomemo (BLE)"]
-    P7["Office printer (CUPS/IPP/Win spooler)"]
-  end
+  P["Label printers"]
 
-  UI -- "MVP: top-level nav<br/>to agent URL" --> WEB
-  US -- "GM_xmlhttpRequest PDF<br/>+ pairing key" --> WEB
-  BTN -. "P2: create PrintJob" .-> PJ
+  BM -- "top-level navigation<br/>/v1/handoff, signed" --> WEB
+  BTN -- "same handoff" --> WEB
+  UI --> BTN
+  UI -. "creates job" .-> AJ
   Agent -- "outbound HTTPS<br/>Bearer token" --> API
-  Agent -- "outbound poll / claim / status" --> PJ
-  HUB -- "SSE (outbound from agent)" --> Agent
-  PJ -- publish --> HUB
-  TR --> HW
+  Agent -- "heartbeat, poll, claim, result" --> AJ
+  HUB -- "SSE wake-up" --> Agent
+  AJ -- publish --> HUB
+  TR --> P
 ```
 
 ### 3.2 Components
 
-| # | Component | Phase | Responsibility |
-|---|---|---|---|
-| A1 | **Core daemon** `pdb-print serve` | MVP | Lifecycle, config, logging, metrics, queue, router. |
-| A2 | **Part-DB client** | MVP | Base URL + token; `/api/info` and `/api/tokens/current` checks; `/api/labels/generate`; label profiles; TLS with custom CA support. |
-| A3 | **Local HTTP API + web UI** | MVP | Config UI, pairing, printer setup, media profiles, test print, job history; `/v1/print` endpoints for userscript/bookmarklet. |
-| A4 | **Job sources** | MVP / P2 | Local push, hot folder, CLI [MVP]; PrintJob client (poll [P2], Mercure SSE [P3], long-poll [P3]). |
-| A5 | **Queue** | MVP | Durable (bbolt), per-printer FIFO, retries with backoff, idempotency by job UUID, cancellation. |
-| A6 | **Router** | MVP | Picks printer + media + render options from (Part-DB instance, label profile id, element type, explicit printer). |
-| A7 | **Renderer** | MVP | PDF → 1-bit (or 2-plane) raster at native dots. Imposition onto sheets. |
-| A8 | **Driver plugins** | MVP→Later | Encode raster + job options into a printer language; parse status. |
-| A9 | **Transports** | MVP→P3 | Byte pipes with optional read-back: USB, TCP raw, IPP, BLE GATT, serial (incl. SPP), OS spooler. |
-| A10 | **Discovery** | P2 | mDNS/DNS-SD, USB enumeration + IEEE-1284 device ID, BLE scan, OS queue listing, SNMP [P3]. |
-| A11 | **Model database** `devices/*.yaml` | MVP | Community-maintained data: VID/PID, name patterns, DPI, head width, offsets, supported media, quirks. Can be updated separately from code [P3]. |
-| A12 | **Tray app** | P2 | Status icon, "open settings", pause queue, last error. Talks to the daemon over the local API. |
-| A13 | **Updater** | P2 | Signed self-update (stable/beta channels), disabled under package managers. |
-| A14 | **Userscript + bookmarklet** | MVP | Generated by the agent UI with the pairing key baked in. |
-| U1–U4 | **Upstream PRs** | P2/P3 | See §12. |
+| Component | Package | Responsibility |
+|---|---|---|
+| CLI and daemon | `cmd/pdb-print` | `serve`, `print`, `render`, `printers`, `media`, `discover`, `report`, `try`, `pair`, `telemetry`, Windows `install`/`uninstall`. |
+| Config | `internal/config` | YAML config (§5.1); token in the OS keychain where there is one. |
+| Part-DB client | `internal/partdb` | `/api/labels/generate`, label profiles, token check; agent job API and Mercure subscriber. |
+| Web UI + local API | `internal/server` | Connect Part-DB, printers, profile routes, test print, bookmarklet, `/v1/handoff`, setup wizard and setup window. |
+| Job sources | `internal/source/hotfolder`, `internal/source/agentjobs` | Hot folder; server-side agent jobs. |
+| Printing service | `internal/printing` | Per-printer lock, model and media resolution, rendering, dispatch to the driver, online state. |
+| Renderer | `internal/render` | PDF → 1-bit raster at native dots (§6). |
+| Drivers | `internal/driver/<family>` | Encode, send, pace and confirm; parse status (§7). |
+| Transports | `internal/transport/<kind>` | Byte pipes with read-back where the link has one. |
+| Bluetooth | `internal/blecore`, `bleradio`, `blebridge`, `cmd/pdb-print-ble` | Shared BLE/Classic code; the macOS cgo helper and its stdin/stdout protocol. |
+| Device database | `internal/devicedb` | Models and media as embedded YAML; generates the tables in `docs/printers.md`. |
+| Discovery | `internal/discovery`, `internal/snmp` | Passive printer search (§8); SNMP status for network Brother QLs. |
+| Support tools | `internal/report`, `internal/try`, `internal/pdfgen` | Redacted printer report for issues; guided first print; generated test labels. |
+| Updates | `internal/update`, `internal/selfupdate`, `internal/wininstall` | Daily release check; Windows self-update; Windows install and service. |
+| Usage report | `internal/telemetry`, `cmd/pdb-print-stats` | Opt-in weekly anonymous report and its collector (§14). |
 
 ---
 
 ## 4. Job flows
 
-### 4.1 "Now" flows (no Part-DB changes) [MVP]
+### 4.1 Local flows (Part-DB unchanged)
 
-Four entry points, all ending in the same queue:
-
-1. **Navigation handoff (bookmarklet / link / future PR1 button).** A top-level `window.open("http://127.0.0.1:8631/v1/handoff?…")` with `src` (Part-DB origin), `type`, `ids`, `profile`, `ts` and `sig = HMAC-SHA256(pairingKey, canonical params)`. The agent verifies the signature (±120 s) and calls `/api/labels/generate` with *its own* token. Its tiny page shows a preview and auto-prints if the signature is valid ("Print" button otherwise), then closes itself. This works against **remote** Part-DB too, because the agent fetches outbound. It isn't affected by Part-DB's CSP (`connect-src` doesn't govern top-level navigation) or by Chrome's Local Network Access fetch prompt (which gates fetch/subresources/subframes, not top-level navigation).
-   *Limitation:* it prints a *saved profile*. Ad-hoc dialog edits aren't included.
-2. **Userscript (Tampermonkey/Violentmonkey).** It adds a "Print via agent" button next to *Download* in the label dialog, reads the `data:` URI from `#pdf_preview`, and POSTs the PDF with `GM_xmlhttpRequest` (which bypasses page CSP) to `http://127.0.0.1:8631/v1/print` with `X-Agent-Key`. Profile id/width come from the form fields so the router can choose media. This covers ad-hoc options, and it's exactly what users already built by hand in #1195.
-3. **Hot folder.** The agent watches a folder (default `~/Downloads`, pattern `label_*.pdf`, only files younger than 60 s and stable for 500 ms) and prints to the "default for unknown PDFs" printer, matching media by page size. It moves printed files to `printed/`. No browser integration at all.
-4. **CLI.** `pdb-print print --profile 3 --part 12,15-20 [--printer ql810]`, plus `pdb-print print file.pdf`.
+1. **Navigation handoff (bookmarklet; Part-DB's Print button with #1626).** A top-level window on
+   `http://127.0.0.1:8631/v1/handoff` with `src` (Part-DB origin), `type`, `ids`, `profile`, `ts` and
+   `sig` = HMAC-SHA256 with the per-install pairing key. The agent checks the signature and the time
+   (±120 s) and calls `/api/labels/generate` with *its own* token. The small page prints right away when
+   the signature is valid and asks for a click otherwise. It works against a **remote** Part-DB, and isn't
+   affected by Part-DB's CSP (`connect-src` doesn't govern navigation) or by Chrome's Local Network Access
+   prompt (which gates fetches and subresources, not top-level navigation). It prints a *saved profile*;
+   unsaved dialog edits aren't included.
+2. **Hot folder.** With `hot_folder.enabled`, `serve` watches a folder (default `~/Downloads`, pattern
+   `label_*.pdf`; files older than 60 s are ignored), prints to the configured printer and moves the file
+   to `printed/` or `failed/`.
+3. **CLI.** `pdb-print print --profile 2 --ids 32,112-125 [--printer ql810]`, or
+   `pdb-print print label.pdf --printer ql810`.
 
 ```mermaid
 sequenceDiagram
   autonumber
   actor U as User (browser)
   participant P as Part-DB (unchanged)
-  participant A as Agent @127.0.0.1:8631
+  participant A as Agent at 127.0.0.1:8631
   participant PR as Printer
 
-  rect rgb(235,245,255)
-  note over U,A: Path 1: bookmarklet / link handoff (saved profile)
-  U->>U: click bookmarklet on /part/123
-  U->>A: top-level GET /v1/handoff?src=…&type=part&ids=123&profile=3&ts&sig
-  A->>A: verify HMAC + ts + src ∈ paired instances
-  A->>P: POST /api/labels/generate {profileId:3, elementIds:"123"}<br/>Authorization: Bearer (read-only)
-  P-->>A: application/pdf
-  A-->>U: tiny page: preview + "printing…" (auto-closes)
-  end
-
-  rect rgb(240,255,240)
-  note over U,A: Path 2: userscript (exact dialog PDF)
-  U->>P: open label dialog, Generate
-  P-->>U: HTML with <object data="data:application/pdf;base64,…">
-  U->>A: GM_xmlhttpRequest POST /v1/print (PDF, X-Agent-Key, profileId, width/height)
-  end
-
-  A->>A: enqueue → route → render (PDFium-wasm, native dots)
-  A->>PR: driver bytes (e.g. Brother raster over TCP 9100 / USB)
-  PR-->>A: status (ok / no media / cover open)
-  A-->>U: (path 2) JSON result → userscript toast
+  U->>U: click bookmarklet on a part page
+  U->>A: top-level GET /v1/handoff (src, type, ids, profile, ts, sig)
+  A->>A: check HMAC, time and paired origin
+  A->>P: POST /api/labels/generate (profile and element ids)<br/>Bearer token (read-only)
+  P-->>A: label PDF
+  A->>PR: status check, then driver bytes
+  PR-->>A: status (printed, no media, cover open)
+  A-->>U: small result page
 ```
 
-### 4.2 Instant / NAT flow (upstream PR2 + PR3) [P2/P3]
+### 4.2 Server-side agent jobs (draft PRs #1627 and #1628)
+
+With a Part-DB that has the agent API (under `/<locale>/agent-api/v1`, like the KiCad API), Part-DB's
+Print buttons create a job for a printer the agent reported, from any device. The agent only connects
+outbound. Without the API (a 404 on the heartbeat) the loop stays idle and checks again every 5 minutes.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  actor U as User (any browser/phone, anywhere)
+  actor U as User (any device)
   participant P as Part-DB (remote)
   participant H as Mercure hub
-  participant A as Agent (home LAN, behind NAT)
+  participant A as Agent (behind NAT)
   participant PR as Printer
 
-  note over A,P: Startup: outbound only
-  A->>P: PUT /api/print_agents/{id}  (heartbeat, version, capabilities)
-  A->>P: PUT /api/print_agents/{id}/printers  (printers + loaded media + status)
-  P-->>A: 200 + Link: <https://…/.well-known/mercure>; rel="mercure"<br/>+ subscriber JWT for topic /print_agents/{id}
-  A->>H: GET /.well-known/mercure?topic=…/print_agents/{id}  (SSE, Bearer sub-JWT)
-  note over A,H: If hub missing/unreachable → short-poll GET /api/print_jobs?agent={id}&status=queued every 3 s (ETag)
-
-  U->>P: click "Print" (printer picker defaults from profile/user)
-  P->>P: authorize (print.submit + printer visible)<br/>render PDF as the *creator* → store blob (TTL 24 h)
-  P->>H: publish private update {jobId} on topic /print_agents/{id}
-  P-->>U: 202 job queued (UI polls job status / Turbo stream)
-  H-->>A: SSE event {jobId}
-  A->>P: POST /api/print_jobs/{jobId}/claim  (atomic; 409 if already claimed)
-  A->>P: GET /api/print_jobs/{jobId}/document  → PDF
-  A->>A: route → render → encode
+  A->>P: POST agents/(uuid)/heartbeat with name, version, printers
+  P-->>A: poll_seconds, pending count, optional mercure offer
+  A->>H: subscribe (SSE, match the agent topic, subscriber token)
+  U->>P: click Print (printer from profile default or picker)
+  P->>P: store job (type print, profile and element ids)
+  P->>H: private update on the agent topic
+  H-->>A: event (wake-up only)
+  A->>P: GET agents/(uuid)/jobs
+  A->>P: POST jobs/(id)/claim (409 if taken)
+  A->>P: POST /api/labels/generate with the agent token
   A->>PR: print
-  PR-->>A: status
-  A->>P: POST /api/print_jobs/{jobId}/status {state: done | failed, code: NO_MEDIA, …}
-  P-->>U: job status shown (toast / job list)
+  A->>P: POST jobs/(id)/result (done or failed, message)
 ```
 
-**Why render in Part-DB at job creation (not in the agent)?** The job then prints with the **creator's** permissions and exact dialog options, the agent token stays read-only and per-agent, and nothing has to be impersonated later. The PDF is small (typically 5–50 kB) and is deleted on completion or expiry. *Alternative (open question for the maintainer):* store only `{profileId, elementIds, elementType}` and let the agent call `/api/labels/generate` itself. That needs no blob storage, but it mixes permissions (it renders as the agent owner).
+* The heartbeat runs every `poll_seconds` (default 30 s, clamped to 5 s–10 min; once a minute at most while a
+  push subscription works, which keeps the agent shown online). It carries each printer's id, name, model,
+  media and `online` state.
+* A job holds `{profile_id, element_type, element_ids}`, not a PDF: the agent renders it through
+  `/api/labels/generate` with its owner's token. Only the owner (or, for an agent its owner shared, users
+  with `labels.create_labels`) can send jobs to it.
+* A job is claimed right before printing, and a claimed job is finished even during shutdown. Results
+  Part-DB didn't accept are retried every round (in memory only).
+* Mercure is a wake-up signal only: every event, and every reconnect, starts a normal poll round, so a
+  missed event can't lose a job. A subscription silent for 2 minutes is dropped and retried.
 
-### 4.3 Job state machine
+### 4.3 Job states (Part-DB side)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> queued: created (UI/API)
-  queued --> claimed: agent claim (atomic)
-  queued --> cancelled: user cancel / expiry
-  claimed --> printing: agent started
-  claimed --> queued: claim lease expired (agent died, 60 s)
-  printing --> done
-  printing --> failed: non-retryable (MEDIA_MISMATCH, UNSUPPORTED, RENDER_ERROR)
-  printing --> retry_wait: retryable (OFFLINE, BUSY, COMMS_ERROR)
-  retry_wait --> printing: backoff (2s, 5s, 15s, 60s… max 10 min)
-  retry_wait --> failed: attempts exhausted / user cancel
-  failed --> queued: user "retry"
+  [*] --> pending: Print clicked
+  pending --> claimed: agent claim (atomic)
+  pending --> cancelled: user cancel
+  claimed --> done: result ok
+  claimed --> failed: result failed
+  failed --> pending: Send again (new job)
   done --> [*]
   cancelled --> [*]
 ```
 
-The same machine is used locally in the agent's queue (for local sources) and mirrored upstream for PrintJobs.
+A claimed job without a result after 10 minutes shows as "unknown"; it is never re-queued automatically,
+so a label is never printed twice. Finished jobs older than 30 days are pruned.
 
 ---
 
 ## 5. Data model
 
-### 5.1 Agent-side model (owned by the agent, YAML/JSON + bbolt)
+### 5.1 Agent config
+
+YAML in `<OS config dir>/pdb-print/config.yaml` (the `.deb` service: `/var/lib/pdb-print/config.yaml`;
+Windows service: `%ProgramData%\pdb-print`). The web UI writes it; `config.example.yaml` documents every
+key.
 
 ```yaml
-# ~/.config/pdb-print/config.yaml   (secrets in OS keychain, see §10)
-instances:
+instances:                         # the Part-DB to fetch labels from
   - id: home
-    base_url: https://parts.example.no
-    auth: { kind: api_token, keychain_ref: "pdb-print/home" }   # or oauth (P2)
-    agent_id: 7            # set after PR2 registration
-    sources:
-      printjobs: { enabled: true, transport: auto }   # auto = mercure > poll ; long-poll opt-in
+    base_url: https://partdb.example.org
+    # token: kept in the OS keychain; in the file (0600) only where there is none (Docker, headless)
+    # pairing_key: signs bookmarklet handoffs
+agent_id: 3f0c…                    # random UUID for the agent job API, stable across token changes
 
 printers:
-  - id: ql810                      # stable local id, reported upstream as (agent_id, local_id)
-    name: "Brother QL-810W (verksted)"
-    driver: brother-ql
-    model: QL-810W                 # → devices/brother-ql.yaml
-    transport: { kind: tcp, host: 192.168.1.50, port: 9100 }
-    status_transport: { kind: snmp, host: 192.168.1.50 }   # optional
-    media: auto                    # the loaded roll the printer reports decides; an id is a fallback
-    media_allowed: [dk-22210, dk-22214, dk-11204]   # optional
-    defaults: { cut: per_label, copies: 1 }
+  - id: ql810
+    name: Brother QL-810W
+    model: QL-810W                 # device database id; picks the driver
+    transport: {kind: tcp, host: 192.168.1.50, port: 9100}
+    media: auto                    # the roll the printer reports decides; an id is a fallback
+    media_allowed: [dk-22210, dk-22214, dk-11204]
+    rotate: auto                   # auto | 0 | 90 | 180 | 270
+    cut: per_label
 
-  - id: office
-    name: "HP LaserJet (A4 sheets)"
-    driver: os-queue
-    transport: { kind: os_queue, queue: "HP_LaserJet_M404" }
-    media: herma-4201-a4
-
-media:
-  - id: dk-22210
-    kind: continuous               # continuous | die_cut | fanfold | sheet
-    width_mm: 29
-    printable_width_dots: 306      # model-specific; from devices db
-    feed_margin_mm: 3              # printer-imposed lead/trail on continuous
-    colour: mono                   # mono | black_red
-    sensing: none                  # none | gap | black_mark | continuous
-  - id: dk-11201                   # die-cut 29x90
-    kind: die_cut
-    width_mm: 29
-    length_mm: 90.3
-    gap_mm: 3
-    sensing: gap
-  - id: herma-4201-a4
-    kind: sheet
-    sheet: { size: A4, cols: 4, rows: 16, label_w_mm: 45.7, label_h_mm: 16.9,
-             origin_x_mm: 9.7, origin_y_mm: 13.1, pitch_x_mm: 48.3, pitch_y_mm: 16.9 }
-    calibration: { dx_mm: 0.4, dy_mm: -0.6, scale_x: 1.000, scale_y: 0.998 }
-
-routes:                            # first match wins
-  - match: { instance: home, profile_id: 3 }          # Part-DB label profile "Lot 29mm"
+routes:                            # Part-DB label profile → printer
+  - profile: 2
     printer: ql810
-    media: dk-22210
-    render: { rotate: auto, threshold: 0.5, dither: images_only }
-  - match: { instance: home, page_mm: [45.7, 16.9] }  # any profile of that size
-    printer: office
-  - match: { any: true }
-    printer: ask                   # local UI prompt, or fail with NO_ROUTE upstream
+
+hot_folder: {enabled: false, dir: ~/Downloads, pattern: "label_*.pdf", printer: ql810}
+# update_check, self_update, telemetry, pdftoppm, log_level: see config.example.yaml
 ```
 
-Core types (Go):
+Transport kinds and their keys: `tcp` (`host`, `port`), `usb` (`usb_id` + `serial`, looked up at every job,
+or `device`), `serial` (`device`, `baud`, `framing`, `flow`), `ble` (`address`, `name`), `bt` (`address`,
+`name`, `channel`). Which kinds a printer allows comes from its model.
 
-```go
-type MediaKind string // continuous, die_cut, fanfold, sheet
+Media and models are not in the config: they live in the device database (`internal/devicedb/data/*.yaml`).
+A model has its driver family, dialect, dpi, head pins, allowed transports, how to recognise it (USB id,
+IEEE 1284 model, SNMP description, Bluetooth name), quirks and a `tested` note. A media entry has its
+geometry, print area and offsets, unprintable edges and the models that take it.
 
-type Media struct {
-    ID, Name            string
-    Kind                MediaKind
-    WidthMM, LengthMM   float64     // LengthMM = 0 for continuous
-    GapMM, MarkMM       float64
-    Sensing             string      // none|gap|black_mark
-    Colour              string      // mono|black_red
-    PrintableWidthDots  int         // overrides model default
-    MarginsMM           Box         // non-printable area / safety margins
-    Sheet               *SheetLayout
-    Calibration         Calibration
-}
-
-type JobOptions struct {
-    Copies       int
-    Cut          string  // none|per_label|last|every_n
-    CutEveryN    int
-    HalfCut      bool    // Brother PT laminated tape
-    ChainPrint   bool    // Brother: don't feed after last label
-    Rotate       string  // auto|0|90|180|270
-    Mirror       bool
-    Darkness     *int    // driver-normalised 0..100
-    Speed        *int
-    StartIndex   int     // sheets: first free position (0-based)
-    SkipMask     []int   // sheets: individually used positions
-}
-```
-
-### 5.2 Mapping a Part-DB label profile to agent media
+### 5.2 Mapping a Part-DB label profile to media
 
 | Part-DB (`LabelOptions`) | Agent use |
 |---|---|
-| `width`, `height` (mm) = PDF page size | Primary key for matching media. The agent decides **cross-feed vs feed axis**: if one page dimension ≈ media width (±0.6 mm), that axis becomes cross-feed and the page is rotated if necessary (`rotate: auto`). Continuous media: label length = the other dimension. Die-cut: must ≈ `length_mm` (±1 mm), otherwise `MEDIA_MISMATCH`. Sheet: must ≈ cell size (warning only). |
-| `supported_element` | Used in routes and in handoff validation. |
-| `barcode_type`, `picture_type` | Hints for the threshold policy: never dither barcode regions. Dither only when `picture_type ≠ none` and `dither: images_only`. |
-| `lines`, `additional_css` | Opaque; rendered by Part-DB. |
-| *(PR4, optional)* `print_hints` JSON | e.g. `{"media":"dk-22210","cut":"per_label","rotate":90,"printer":"agent:7/ql810","copies":1}`. Part-DB stores and passes it through **without interpreting it**. The agent's router gives it priority over local routes (configurable). |
+| `width`, `height` (mm) = PDF page size | Matched against the loaded media. Continuous: one side must be the tape width (±0.6 mm); that side becomes cross-feed and the page is turned if needed (`rotate: auto`), the other side is the length. Die-cut: width ±0.6 mm and length ±1 mm. A label that doesn't fit is refused with `MEDIA_MISMATCH`, unless `allow_scaling: true`. |
+| `supported_element` | Validates the handoff's element type. |
+| `lines`, `additional_css`, barcode and picture types | Opaque; rendered by Part-DB. |
 
-The proven case: the QL profile is 29 × 46 mm portrait with CSS-rotated content. The 29 mm side matches DK-22210, so the 29 mm axis is cross-feed (306 dots) and 46 mm is the feed length. No rotation is needed because Part-DB's CSS already rotated the content. With `rotate: auto` a 46 × 29 landscape profile would also work (the agent rotates 90°).
+The loaded media comes, in order, from the printer's status (Brother QL/PT report the roll), from the roll
+it reported in the last 30 s, or from the config's `media` fallback; it is checked against `media_allowed`.
+The proven case: a 29 × 46 mm portrait profile with CSS-rotated content on DK-22210 gives 306 cross-feed dots
+and 46 mm feed length, with no rotation needed.
 
-### 5.3 Upstream model (PR2) [P2]
+### 5.3 Upstream model (draft PR #1627)
 
-Kept deliberately generic. No vendor, DPI or protocol fields.
+Kept generic: no vendor, DPI or protocol fields. Printer data is stored as reported, without interpretation.
 
 ```mermaid
 erDiagram
-  USER ||--o{ PRINT_AGENT : owns
-  PRINT_AGENT ||--o{ PRINTER : exposes
-  PRINTER ||--o{ PRINT_JOB : receives
-  USER ||--o{ PRINT_JOB : creates
-  LABEL_PROFILE ||--o{ PRINT_JOB : "rendered with"
-  PRINTER }o--o{ GROUP : "shared with (P3)"
+  USER ||--o{ AGENT : owns
+  AGENT ||--o{ AGENT_JOB : receives
+  USER ||--o{ AGENT_JOB : creates
+  LABEL_PROFILE ||--o{ AGENT_JOB : "rendered with"
 
-  PRINT_AGENT {
+  AGENT {
     int id
-    string name
+    string uuid "generated by the agent"
     int owner_id
-    int api_token_id "token the agent authenticates with"
+    string name
     string version
-    json capabilities "transports, push support"
+    json printers "as reported, opaque"
+    bool shared "usable by others with create_labels"
     datetime last_seen_at
-    bool enabled
   }
-  PRINTER {
+  AGENT_JOB {
     int id
     int agent_id
-    string local_id "stable id inside the agent"
-    string name
-    string state "idle|printing|error|offline"
-    string state_code "NO_MEDIA, COVER_OPEN…"
-    json media "{kind, width_mm, length_mm, colour} opaque"
-    datetime status_at
-    bool shared "visible to other users (P3: groups)"
-  }
-  PRINT_JOB {
-    uuid id
-    int printer_id
+    string printer "printer id as reported"
+    string type "print"
+    json payload "profile_id, element_type, element_ids"
+    string status "pending, claimed, done, failed, cancelled"
+    string message
     int created_by
-    int label_profile_id "nullable (ad-hoc)"
-    string element_type
-    string element_ids
-    int copies
-    blob document "PDF, nullable after completion"
-    json options "opaque print_hints overrides"
-    string state
-    string error_code
-    string error_message
-    int attempts
     datetime created_at
-    datetime claimed_until "lease"
-    datetime finished_at
-    datetime expires_at
+  }
+  LABEL_PROFILE {
+    string default_printer "printer id, optional"
   }
 ```
+
+No new permissions: registering an agent and sending it jobs needs `@labels.create_labels`, which a
+read-only token has. Agents and jobs are visible to their owner (and the sender, for shared agents).
 
 ---
 
 ## 6. Rendering pipeline
 
 ```
-PDF ──► PDFium (wasm, sandboxed) ──► RGBA @ native dots ──► orient ──► colour split ──► threshold ──► crop/pad to head ──► driver
-                                         ▲                                                             │
-                              sheet media: impose (vector, pdfcpu) ──► OS queue / IPP (PDF or raster)  ┘
+PDF ──► PDFium (wasm) or pdftoppm ──► page at exact head dots ──► threshold ──► rotate / mirror ──► trim to print area ──► driver
 ```
 
-1. **Size the target precisely.** `dots_x = round(cross_feed_mm / 25.4 * dpi)`, clamped to the model's printable dots (QL 29 mm → 306, 62 mm → 696). The feed axis is computed the same way. Use model-specific DPI (Brother QL 300, PT 180/360, Zebra 203/300/600, TSPL 203/300, Niimbot B1 203, D11 203, DYMO LW 300). **Render straight to that pixel size.** Never render big and resample, because resampling smears QR modules. This is the `pdftoppm -scale-to-x 306` trick, generalised.
-2. **Disable anti-aliasing** (`FPDF_RENDER_NO_SMOOTHTEXT | NO_SMOOTHIMAGE | NO_SMOOTHPATH`, plus `FPDF_PRINTING` for print annotations). This gives hard-edged barcodes and the best result at 203 dpi (the #946 problem).
-3. **Orientation**: `auto` per §5.2, otherwise explicit. Brother raster lines run cross-feed, so drivers state their preferred scan order and the renderer delivers it.
-4. **Two-colour** (Brother DK-22251 on QL-8xx) [P2]: classify each pixel in HSV. Red plane = high saturation and hue within ±25° of red. Black plane = luminance below threshold and not red. Each plane is thresholded separately, then sent with the QL two-colour raster command (`0x77` lines). Mono media prints red as black (luminance) with a warning.
-5. **Threshold**: fixed 50 % luminance by default (configurable 0.3–0.7). Dithering (Floyd–Steinberg / Atkinson) is opt-in and only for photo areas: `dither: images_only` uses PDFium's per-object rendering to separate image objects from vector/text, otherwise it's applied page-wide only on request. **Barcodes are never dithered.**
-6. **Crop/pad**: center or left-align on the head per the model's offset table (Brother: 29 mm tape starts at dot offset 6 within a 720-dot line, etc., from the devices DB). Continuous media: trim trailing white rows only if `trim: true`, and add nothing because the printer adds its ~3 mm feed margin.
-7. **Quality gate (optional, default on in test print)**: decode the rendered raster with a pure-Go barcode reader (gozxing, Apache-2.0). If a QR/DataMatrix that is present in the PDF doesn't decode at native DPI, warn "barcode too dense for 203 dpi, increase size in profile". [P2]
-8. **Sheets (A4/Letter, Avery/Herma)** [MVP basic, P2 calibration wizard]:
-   * **Vector imposition** with pdfcpu (Apache-2.0). Each label page is placed as a Form XObject at `origin + (col·pitch_x, row·pitch_y) + calibration`, scale 1:1 (× calibration scale), starting at `StartIndex` and skipping `SkipMask`. Overflow continues on the next sheet.
-   * Output goes to the OS queue/IPP **as PDF with scaling disabled**: CUPS `print-scaling=none` (IPP), Windows GDI with the page origin compensated by `PHYSICALOFFSETX/Y`, macOS through CUPS.
-   * **Calibration page**: crosshairs at the 4 corner cells plus a 100 mm ruler. The user measures and enters dx/dy and the scale is computed. Saved per (printer, media) pair, because each printer has its own offset.
-   * Raster fallback (600 dpi page bitmap) for drivers that ignore print-scaling flags.
-9. **Fan-fold**: same as die-cut with `sensing: gap|black_mark`. TSPL `GAP`/`BLINE`, ZPL `^MNY`/`^MNM`. Tear-off vs peel vs cut via the driver mode.
+1. **Size the target exactly.** Cross-feed dots = media width × model dpi, clamped to the printable dots
+   (QL 29 mm → 306); the feed axis likewise, or the page's aspect ratio on continuous media. The page is
+   rendered straight to that size, never rendered large and resampled, because resampling smears QR
+   modules.
+2. **No anti-aliasing** (PDFium's no-smooth text/image/path flags, plus print mode), so barcodes stay
+   hard-edged at 203 dpi.
+3. **Threshold** to pure black/white (configurable `threshold`). No dithering.
+4. **Orientation:** `rotate: auto` per §5.2, else explicit; `mirror` and `upside_down` on top (set by the
+   setup wizard's test print).
+5. **Print area:** on tape with unprintable edges the label is rendered at full width and the edges are
+   trimmed, with a warning in the job result when ink was lost.
+6. **Limits:** 10 MB per PDF, 500 pages, 256 MiB of raster per call.
+7. **Engines:** PDFium runs in wazero, compiled once and cached on amd64/arm64. On 32-bit ARM wazero only
+   interprets (minutes per label on a Pi 1), so `pdftoppm: auto` runs poppler's `pdftoppm` as a process
+   when it is installed (`install.sh` installs it there); it is never linked.
+
+Golden PNGs in `internal/render/testdata` pin the output of the sample PDFs.
 
 ---
 
 ## 7. Drivers and transports
 
-### 7.0 How it is wired today
+### 7.0 How it is wired
 
-The sketch in 7.1 was the starting point; the code now works like this:
-
-* **Device database** (`internal/devicedb`, YAML embedded in the binary): models (driver family,
-  dialect, dpi, head pins, allowed transports, how to recognise them, quirks such as cut bytes or pin
-  order) and media (geometry, print area, offset pins, unprintable edges). A model an existing family
-  can print is a data change only.
+* **Device database** (`internal/devicedb`, YAML embedded in the binary): models and media (§5.1). A model
+  an existing family can print is a data change only.
 * **Driver registry** (`internal/driver`): families register in `init`; a driver is built per printer
   from its model and options and owns the whole flow after rendering: `Status`, `Print` (encode, send,
-  pace, confirm) and `Encode` (for `--dry-run`). `internal/driver/brother` covers the QL (`ql`) and
-  PT-9500PC (`pt-cbp`) dialects.
-* **Transport registry** (`internal/transport`): connection kinds (`tcp`, `usb`, `ble`, `bt`) register in `init`.
-  The printing service hands drivers a connection that opens on first use, so a QL that answers over
-  SNMP never gets a TCP connection just for a status check.
-* **Printing service** (`internal/printing`): per-printer lock, model and media resolution (the roll the
-  printer reports, else the one it reported in the last 30 s, else the config's fallback; checked
-  against `media_allowed` and, per page, against the label size via `devicedb.Media.Fits`), rendering
-  (tape: full width, edges trimmed with a warning in the job result), dispatch to the driver.
+  pace, confirm) and `Encode` (for `--dry-run`).
+* **Transport registry** (`internal/transport`): kinds register in `init`. The printing service hands
+  drivers a connection that opens on first use, so a QL that answers over SNMP never gets a TCP
+  connection just for a status check. Registration only runs when the binary imports the package (blank
+  imports in `internal/printing/printing.go`).
+* **Printing service** (`internal/printing`): per-printer lock, model and media resolution (§5.2),
+  rendering, dispatch to the driver. The heartbeat's `online` state is checked at most every 30 s, never
+  while a printer prints.
+* Jobs end as *printed* (confirmed by the printer), *sent (unconfirmed)* (no read-back, or the printer
+  stayed silent), or an error with a status code (§9).
 
-* **`bt` transport** (Bluetooth Classic SPP over RFCOMM): `transport: {kind: bt, address, name, channel}`.
-  Linux opens an RFCOMM socket (channel 1 unless set; BlueZ over D-Bus only for name lookup and scan),
-  Windows a Winsock Bluetooth socket (SDP lookup of the SPP service), macOS goes through the
-  `pdb-print-ble` helper (IOBluetooth; SDP lookup, channel 1 after 10 s without an answer). One
-  connection at a time; scans list Classic devices whose name matches a model or whose class says printer (on Linux also an imaging
-  device offering the serial port).
-* **`escpos` driver family** (`internal/driver/escpos`): ESC/POS raster (`GS v 0`) in bands for
-  RG-MLP80B (576 dots) and generic ESCPOS-80/-58; real-time status by `DLE EOT`; after a job `GS r 1`
-  confirms the paper state, and a printer that stays silent gives "sent (unconfirmed)" after 20 s.
-* **`epl` driver family** (`internal/driver/epl`, models in `zebra-epl.yaml`): Zebra/Eltron desktops
-  that speak only EPL2 (LP/TLP 2824, 2844, 3842 …; ZPL-capable "-Z"/"Plus" models stay in `zpl`).
-  Clean-room from Zebra's EPL Programming Guide 14245L-003. Per job `ZT`, `q` (width, centred on the
-  head), `Q` (gap `Q<len>,<3 mm>`, black mark `Q<len>,B<mm>+0` from `black_mark_mm`, continuous
-  `Q<len>,0`) and `D` (density, `darkness` ±3); per page `N`, one `GW` graphic (0 bit = black), `P1`.
-  Status `^ee` is documented over USB and serial only, so USB jobs are confirmed when seen busy (`50`, then `00`);
-  never seen busy, silent or stopped = sent unconfirmed. TCP jobs (ZebraNet print server) go blind. Untested on hardware.
-
-* **`niimbot` and `phomemo` driver families** (`internal/driver/niimbot`, `internal/driver/phomemo`; Niimbot
-  B21S tested over BLE and USB serial in 2026-11, the rest untested): Bluetooth LE label makers on the `ble` transport, whose `ble_service`/`ble_write`/
-  `ble_notify` quirks take a 16-bit number or a 128-bit UUID string, and may name one characteristic for
-  both (Niimbot). Niimbot frames requests `55 55 cmd len data xor AA AA`, one per write with 10 ms between
-  them, waits for each answer, sends rows across the head (bitmap, blank and repeated rows), and confirms
-  by status poll, page count or print end depending on the dialect (niimbluelib's print tasks: `d11`,
-  `d110`, `b1`, `b21`, `v4`); the status comes from the heartbeat (cover, labels, battery) and the roll's
-  RFID tag. Phomemo sends `GS v 0` raster framed per family (`m02` pocket printers, `m110` label printers,
-  `d30` 12 mm label makers), padded to the head (centred or right-aligned per model), and counts the
-  `1A 0F 0C` it sends per printed page; `1A 06`/`1A 05` replies give paper and cover. Sources (MIT/Apache
-  code, CC-BY-SA prose, GPL never read) are listed in the design note.
-* **`dymo` driver family** (`internal/driver/dymo`): LabelWriter 400/450 series, 4XL (dialect `lw400`) and
-  330 (`lw300`) over USB (usblp: they are printer-class devices), clean-room from DYMO's LabelWriter 400 and
-  450 Series Technical Reference Manuals. Per job: ≥ head-bytes+1 `ESC` to resync, `ESC B 0`, `ESC D` bytes
-  per line, `ESC L` label length (+5 mm slack; 0xFFFF = continuous), `ESC h` and density (`lw400`), one
-  `SYN` (raw) or `ETB` (run-length, when shorter; `lw400` only) line per dot row, `ESC G` between labels and
-  `ESC E` after the last. `ESC @` is never sent (it drops a previous job still in the buffer). `ESC A`
-  returns one status byte (no paper, jam, error) before and after a job; no completion report, no media
-  report. The Duo is a composite device (two lpN for one USB id): configure it by `device`. Untested on
-  hardware.
-* **`tspl` driver family** (`internal/driver/tspl`): TSC printers and TSPL clones (Xprinter, Munbyn, iDPRT,
-  HPRT), from TSC's public TSPL/TSPL2 Programming Manual. Every page is `SIZE`/`GAP` (`GAP 0,0` for continuous
-  media)/`DIRECTION 0,0`/`REFERENCE 0,0`/`CLS`/one `BITMAP` (width in bytes, 0 = black)/`PRINT 1,1`; `SET CUTTER`
-  only when the config asks (it persists in the printer). Status is the `<ESC>!?` byte; completion waits for its
-  "printing" bit to clear. No answer means print blind, unconfirmed. Models are data only (`tspl.yaml`), all untested.
-
-* **Discovery** (`internal/discovery`, `pdb-print discover`): usblp printers from sysfs (USB id, serial,
-  IEEE 1284 id) and network printers by a connect to port 9100 plus SNMP `sysDescr`, named from the
-  device database. Passive: nothing is written to a printer. `pdb-print report` (`internal/report`)
-  adds confirmed identify queries and test prints and writes a redacted JSON file for an issue.
-* **Config**: a printer names its `model` (which picks the driver) and a `transport`; USB printers by
-  `usb_id` (+ `serial`) are looked up in sysfs at every job. The heartbeat reports each printer's
-  `online` state (checked at most every 30 s, never while it prints).
-
-### 7.1 Driver plugin interface
+### 7.1 Interfaces
 
 ```go
-// A Driver turns rendered pages + options into a byte stream for one printer family.
+// internal/driver/driver.go
 type Driver interface {
-    ID() string                                  // "brother-ql"
-    Probe(ctx context.Context, t Transport) (*DeviceInfo, error)          // identify model, loaded media
-    Capabilities(model string) Capabilities      // dpi, head dots, colour, cutter, half-cut, media kinds
-    Validate(job *Job, media *Media) error       // MEDIA_MISMATCH, UNSUPPORTED…
-    Encode(ctx context.Context, w io.Writer, pages []Raster, job *Job, media *Media) error
-    Status(ctx context.Context, t Transport) (*Status, error)              // optional; ErrNotSupported
+    Status(ctx context.Context, t Transport) (*Status, error)  // ErrNoReadback if it can't say anything
+    Print(ctx context.Context, t Transport, job *Job) (*Result, error) // validate, encode, send, confirm
+    Encode(w io.Writer, job *Job) error                        // the bytes Print would send (--dry-run)
 }
 
-type Raster struct {           // 1 bit per dot, row-major in the driver's preferred scan order
-    W, H   int
-    Planes [][]byte            // [black] or [black, red]
-    DPI    int
-}
-
-// Transport is a bidirectional (where possible) byte pipe.
 type Transport interface {
     Open(ctx context.Context) error
     Write(p []byte) (int, error)
-    Read(p []byte) (int, error)   // may return ErrNoReadback
+    Read(p []byte) (int, error) // ErrNoReadback (or a timeout) if nothing comes back
     Close() error
-    Kind() string                 // usb, tcp, ipp, ble, serial, osqueue
+    Kind() string
 }
 ```
 
-* **Built-in drivers** are compiled in and registered by `init()`.
-* **Exec plugins** [P2]: `driver: exec` runs `command` with a JSON job on stdin plus PNG/PBM pages as files, and reads a JSON status from stdout. This lets the community plug in GPL tools (`brother_ql`, `labelle`, `phomemo-tools`, `ptouch-print`) **as separate processes**, so they are aggregated rather than linked and the agent's MIT licence is unaffected. It's also a quick way to support odd printers.
-* **OS-queue driver** sends a PDF (or raster) to CUPS/IPP/Windows spooler. It's for office printers, and it's also a last resort for label printers with vendor drivers (with the scaling caveat).
+### 7.2 Drivers
 
-### 7.2 Driver matrix
+Every model with its test status: [printers.md](printers.md).
 
-| Driver | Families | Transports | Media/features | Status read-back | Phase | Implementation source (licence note) |
-|---|---|---|---|---|---|---|
-| `brother-ql` | QL-500…1110, QL-8xx two-colour | USB, TCP 9100, (BT on QL-820NWB/1115NWB via SPP) | continuous, die-cut, auto-cut per N, chain, 2-colour (62 mm red/black), high-res 600 dpi mode | 32-byte status (media width/type/errors). Network: SNMP | **MVP** | Brother "Raster Command Reference" (public PDF). *Do not copy brother_ql (GPLv3).* |
-| `brother-pt` | **PT-9500PC (done)**; PT-P700/P750W/P900/E550W, PT-P300BT later | USB (Linux usblp; empty reads return 0 bytes, so poll), TCP, BT SPP / BLE (P300BT) | TZe/HG tapes 6–36 mm, half-cut, chain, mirror | 32-byte status, like QL but no model byte on the PT-9500PC | P2 | PT-9500PC: Brother "PT-9500PC Command Reference, CBP-RASTER Mode" (2003): older dialect, `ESC i c` print info, 384 pins, no compression, pages sent one at a time. PT-P900: Brother "Raster Command Reference" (`ESC i z`, 560 pins, TIFF) |
-| `zpl` | Zebra ZPL II, many clones | USB, TCP 9100, serial | `^PW ^LL ^LH ^MN{N,Y,M} ^MM{T,P,C}` cutter/peel, darkness `~SD`, speed `^PR`; image via `^GFA` (hex/Z64) | `~HS`, `~HQES` | **MVP** | public ZPL manual |
-| `epl` | **Zebra EPL2-only (LP/TLP 2824, 2844, 3842 …; done, untested)** | USB, TCP (serial needs a transport) | `q`, `Q` gap/black mark/continuous, `D`, `GW` bitmap (0 = black), `P1` | `^ee` over USB only | P2 | Zebra EPL Programming Guide 14245L-003 |
-| `tspl` | TSC, Xprinter, HPRT, Munbyn, most AliExpress 4" | USB, TCP, serial, BT SPP | `SIZE`, `GAP`/`BLINE`, `DENSITY`, `SPEED`, `DIRECTION`, `BITMAP` (note: inverted bit sense, 0 = black), `CUT`, `PRINT n` | `<ESC>!?` status byte | **MVP** | TSPL/TSPL2 manual (public) |
-| `escpos` | ESC/POS label/receipt (Xprinter XP-T…, Rongta, some Munbyn) | USB, TCP, serial, BT SPP | `GS v 0` raster, `GS V` cut; label mode varies by vendor (quirks in devices DB) | `DLE EOT n` | P2 | Epson ESC/POS reference |
-| `dymo` | **LabelWriter 330/400/450/4XL (done, untested)** | USB (usblp) | die-cut (`ESC L`), continuous, density | `ESC A` status byte (paper, jam) | P2 | DYMO LabelWriter 400 and 450 Series Technical Reference Manuals. **LW 550/5XL: chip-locked labels, not supported.** |
-| `dymo-lm` | LabelManager PnP/280/420P | USB (HID-like bulk) | D1 tape 6–24 mm | limited | P3 | protocol notes; labelle (check licence before porting) |
-| `niimbot` | **B1, B21, B21S, B21/B1 Pro, B18, D11, D11S, D11-H, D110, D101 (done; B21S tested)** | BLE (GATT); USB serial (B21S); SPP later | die-cut with RFID media info | heartbeat: cover, paper, battery; RFID labels left | P2 | own implementation from niimbluelib (MIT) and printers.niim.blue (CC-BY-SA, facts only) |
-| `phomemo` | **M02/M02S/M02 Pro/T02, M110/M120/M200/M220/M221, Q30, D30/D35 (done, untested)** | BLE; BT SPP later | continuous/die-cut | paper, cover, heat; `1A 0F 0C` per page | P2 | own implementation from MIT/Apache projects; phomemo-tools is GPL, never read |
-| `ipp` | IPP Everywhere / AirPrint printers, LPrint | IPP/IPPS | PDF/PWG-raster/URF, `media-col`, `print-scaling` | `printer-state-reasons` | P2 | RFC 8011, PWG 5100.14 |
-| `os-queue` | anything with an OS driver | CUPS (Linux/macOS), Windows spooler | sheets, office printers | job state only | **MVP** | OS APIs |
-| `file` / `virtual` | testing | file | writes PNG + .bin | simulated | **MVP** | — |
-| `exec` | anything | external process | per plugin | per plugin | P2 | — |
+| Family | Dialects / models | Transports | Status and confirmation | Source |
+|---|---|---|---|---|
+| `brother` | `ql`: QL-5xx…8xx and wide QL-10xx/11xx (QL-810W tested); `pt-cbp`: PT-9500PC (tested); `pt-raster`: PT-E550W, P750W, P710BT, P700, E500, P900 series | tcp, usb, bt (PT-P710BT/P910BT) | 32-byte status (media width/type, errors); network QLs over SNMP, since they don't answer status on 9100 | Brother Raster Command Reference; PT-9500PC CBP-RASTER reference |
+| `zpl` | Zebra desktops (GK420d community-tested), ZT industrial, ZQ mobile | tcp, usb, serial, bt (ZQ) | `~HS`; waits for the buffer to empty | Zebra ZPL II guide |
+| `epl` | EPL2-only LP/TLP 2824, 2844, 3842, 2722/2742 … | usb, tcp, serial | `^ee` over USB/serial; TCP is blind | Zebra EPL Programming Guide |
+| `tspl` | TSC and clones (Xprinter, Munbyn, iDPRT, HPRT) | usb, tcp, bt | `<ESC>!?` byte; waits for "printing" to clear | TSC TSPL/TSPL2 manual |
+| `escpos` | REGO RG-MLP80B, generic 58/80 mm | bt | `DLE EOT`; `GS r 1` after a job | Epson ESC/POS reference |
+| `dymo` | `lw400`: LabelWriter 400/450 series, 4XL; `lw300`: 330 | usb, serial (330) | `ESC A` byte; never confirms a finished label | DYMO LabelWriter 400/450 Technical Reference |
+| `cat` | `gb`: GB01–03, GT01, YT01, MX05–MX10 (MX10 tested) | ble | none | public cat-printer write-ups |
+| `niimbot` | `b1`, `b21`, `d11`, `d110`, `v4`: B1, B21, B21S (tested), B18, D11, D110, D101, Pro models | ble, serial (B21S USB) | heartbeat (cover, paper, battery), RFID roll info; print-end confirmation | niimbluelib (MIT), printers.niim.blue (facts only) |
+| `phomemo` | `m02`, `m110`, `d30`: M02/T02, M110–M221, Q30, D30/D35 | ble | paper and cover replies; counts printed pages | MIT/Apache projects; phomemo-tools (GPL) never read |
+
+Not supported: DYMO LabelWriter 5xx (chip-locked labels), DYMO LabelManager, office printers and the OS
+print queue, IPP. Exec plugins for external GPL tools were considered and not built.
 
 ### 7.3 Transports per OS
 
-| Transport | Linux | macOS | Windows | Library / approach | Phase |
-|---|---|---|---|---|---|
-| TCP raw 9100 | ✓ | ✓ | ✓ | stdlib `net` | MVP |
-| IPP/IPPS | ✓ | ✓ | ✓ | small own client (IPP is simple) or phin1x/go-ipp (Apache-2.0) | P2 |
-| OS queue | CUPS via IPP to `localhost:631` (or `lp`) | CUPS | Win32 spooler: `OpenPrinter/StartDocPrinter("RAW" or XPS/PDF)/WritePrinter`, GDI for sheet imposition | `golang.org/x/sys/windows` (no cgo) | MVP |
-| USB printer class | `/dev/usb/lpN` (usblp, read-back works) → no libusb needed. libusb fallback for devices without usblp | IOKit (cgo) or libusb (dynamic) | `usbprint.sys` interface `GUID_DEVINTERFACE_USBPRINT` via SetupAPI + `CreateFile/WriteFile/ReadFile`, **no Zadig/WinUSB swap needed** | own thin wrappers; google/gousb (Apache-2.0 wrapper, libusb LGPL-2.1, dynamic) only as fallback | MVP (Linux/Win), P2 (macOS) |
-| USB vendor-class/HID (DYMO LM, some Niimbot) | libusb / hidraw | IOKit HID | HID API (x/sys) | per device | P3 |
-| BLE GATT | BlueZ D-Bus | CoreBluetooth in the cgo helper `pdb-print-ble` (embedded Info.plist with `NSBluetoothAlwaysUsageDescription`; `pdb-print` stays cgo-free and talks to it over pipes) | WinRT | tinygo.org/x/bluetooth (BSD-3; scan/connect/write/notify on all three) | Phase 6 |
-| Serial / RS-232 | ✓ | ✓ | ✓ | go.bug.st/serial (BSD-3) | P2 |
-| Bluetooth classic SPP | OS-paired → `/dev/rfcommN` (or BlueZ Profile API [P3]) | paired → `/dev/tty.*` | paired → virtual COM | treated as serial | P2 |
+| Kind | Linux | macOS | Windows |
+|---|---|---|---|
+| `tcp` (raw 9100) | ✓ | ✓ | ✓ |
+| `usb` | usblp `/dev/usb/lpN`, found by `usb_id` in sysfs | – | – |
+| `serial` | `/dev/serial/by-id/…`, `/dev/ttyUSB0`, Pi UART | `/dev/cu.*` | `COMn` |
+| `ble` | BlueZ over D-Bus | CoreBluetooth in the helper `pdb-print-ble` | WinRT, in-process (BLE adapter needed) |
+| `bt` (Classic RFCOMM) | RFCOMM socket; BlueZ for name lookup and scan | IOBluetooth in the helper | Winsock Bluetooth socket, SDP lookup |
+
+USB is Linux only for now. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
+binary: `pdb-print` starts it on demand and talks to it over stdin/stdout (`internal/blebridge`), so only
+the helper asks for Bluetooth permission. Docker has no Bluetooth. A Bluetooth printer takes one connection
+at a time.
 
 ---
 
-## 8. Discovery [P2]
+## 8. Discovery
 
-| Method | What it finds | Notes |
-|---|---|---|
-| mDNS/DNS-SD | `_ipp._tcp`, `_ipps._tcp`, `_pdl-datastream._tcp` (raw 9100), `_printer._tcp`. TXT `ty`, `product`, `usb_MFG/usb_MDL`, `pdl` | Brother QL/PT network models advertise `_pdl-datastream` with `ty=Brother QL-810W`. Lib: grandcat/zeroconf (MIT) or hashicorp/mdns (MPL-2.0). |
-| USB enumeration | VID/PID plus **IEEE-1284 device ID** (`MFG:…;MDL:…;CMD:ZPL,EPL…;`) | `CMD:` reveals the language, so generic TSPL/ZPL clones get the right driver automatically. |
-| BLE scan | advertised names/services (Niimbot `B1-…`, `D110-…`; Phomemo `M110`, `Q…`) | Patterns live in the devices DB. Scanning only on user request (battery/privacy). |
-| OS queues | CUPS `CUPS-Get-Printers`, Windows `EnumPrinters` | Lists office printers and vendor-driver queues. |
-| SNMP [P3] | Printer-MIB `hrDeviceDescr`, `prtMarkerSuppliesLevel`, `hrPrinterDetectedErrorState` | Opt-in subnet sweep. Lib: gosnmp (BSD-2). |
-| Manual | host/port, COM port, CUPS queue | always available |
+`pdb-print discover`, the setup wizard and `pdb-print report` use `internal/discovery`. It is passive:
+nothing printable is sent.
 
-Every discovered device is matched against `devices/*.yaml` → suggested driver + model + default media, and the user confirms.
+| Method | What it finds |
+|---|---|
+| USB (Linux sysfs) | usblp printers: USB id, serial, IEEE 1284 device id |
+| Network | hosts on the local subnets (each at most a /24) with port 9100 open, named from SNMP `sysDescr` |
+| Bluetooth LE | advertised names matching a model, and unknown devices with the cat printers' service `ae30` |
+| Bluetooth Classic | paired/known devices and an inquiry: names matching a model, or a printer class of device |
+| Serial | the ports present (what is plugged in can't be told) |
+
+Each candidate is matched against the device database and shown with the exact `model:` and `transport:`
+lines. Asking a printer what it is (a few bytes a printer of another language might print) is left to
+`pdb-print try`, the setup wizard and `report --identify`, which ask first.
 
 ---
 
-## 9. Status, errors, queue
+## 9. Status and errors
 
-**Normalised status codes** (stable keys, so Part-DB can translate them):
-`OK`, `BUSY`, `OFFLINE`, `NO_MEDIA`, `MEDIA_MISMATCH` (with expected/actual width), `MEDIA_END_SOON`, `COVER_OPEN`, `CUTTER_JAM`, `PAPER_JAM`, `OVERHEAT`, `LOW_BATTERY`, `RIBBON_OUT`, `COMMS_ERROR`, `UNSUPPORTED`, `RENDER_ERROR`, `NO_ROUTE`, `AUTH_ERROR`, `UNKNOWN`.
+**Status codes** (`internal/driver`, stable keys so Part-DB can show them): `OK`, `BUSY`, `NO_MEDIA`,
+`MEDIA_MISMATCH`, `MEDIA_END_SOON`, `COVER_OPEN`, `CUTTER_JAM`, `PAPER_JAM`, `OVERHEAT`, `LOW_BATTERY`,
+`PAUSED`, `RIBBON_OUT`, `COMMS_ERROR`, `UNSUPPORTED`, `RENDER_ERROR`, `UNKNOWN`.
 
-* Sources: Brother 32-byte status (error bits, media width/type, so it auto-detects the loaded DK roll), Zebra `~HS`, TSPL `<ESC>!?`, ESC/POS `DLE EOT`, IPP `printer-state-reasons` (`media-empty`, `cover-open`, …), SNMP, Niimbot heartbeat.
-* **Pre-flight**: before encoding, the agent compares the job's page size with the *reported* loaded media and fails fast with `MEDIA_MISMATCH`, so no wasted labels.
-* **Reporting upstream** [P2]: `POST /api/print_jobs/{id}/status` per job, and `PUT /api/print_agents/{id}/printers` on change plus every 60 s (heartbeat). Part-DB shows printer state in the picker ("QL-810W – 29 mm loaded – ready") and job failures as a toast/flash.
-* **Queue**: bbolt (MIT) file DB. Per-printer worker (serialised), global concurrency across printers. Retry policy per code (retryable: `BUSY`, `OFFLINE`, `COMMS_ERROR`). Exponential backoff with jitter. Upstream claim lease of 60 s, renewed while printing. Idempotent on job UUID, so a re-delivered Mercure event or poll result never double-prints. A **pause queue** switch is available (tray/UI). History is kept for 7 days (configurable).
+* **Pre-flight:** before encoding, the agent reads the printer's status and compares the job's page size
+  with the loaded media, so a wrong roll fails fast without wasting labels.
+* **No local queue:** a job runs while its caller waits; the per-printer lock serialises jobs. Retrying is
+  the caller's business (the bookmarklet page, Part-DB's "Send again", the hot folder's `failed/`). During
+  a self-update, pending agent jobs are left unclaimed until the new version runs.
+* **Reporting upstream:** the job result message (e.g. `MEDIA_MISMATCH: label is 29×46 mm (needs 29 mm
+  tape), printer has dk-22214 (12 mm tape) loaded`) and each printer's media and online state in the
+  heartbeat.
 
 ---
 
 ## 10. Security
 
-**Agent local surface** [MVP]
-* Binds **127.0.0.1:8631** by default, and the docs say "never port-forward". Outside the setup window the agent is never reachable from another machine.
-* **Setup window** (phase 3): `serve --setup-window` (systemd unit, Docker) and `pdb-print pair` open the setup wizard to the LAN: a second HTTP server listens on each LAN address of port 8631 and serves only `/setup/*` and static files. A 6-digit code (logged, printed by `pair`) gives the browser an HttpOnly SameSite=Strict session cookie with its own CSRF token. The code is single-use: it pairs one browser, and another browser needs a new window (`pdb-print pair`); once it is used, further tries neither pair nor count, so nobody on the LAN can close the window on the paired browser. The window closes after 15 minutes without use (each request extends it to at least 5 more, never beyond 30), after 5 wrong codes before the code is used, or on Finish; closing stops the listeners and drops their connections. `/v1/pair` answers only loopback requests without an `Origin`. A source-address filter turns away obviously remote clients: it answers only private, unique-local, link-local and loopback addresses and the IPv6 /64 of one of the host's interfaces (a home LAN's public prefix), never public IPv4 subnets (on a WAN interface they hold other customers). It is not a trust boundary: routed private networks and a provider's /64 pass it, and so does every device on the LAN. The code and the time limit are the protection; limiting TCP port 8631 to trusted sources is the operator's job. Requests must also name one of the host's addresses or `<hostname>.local` (DNS rebinding). Limit: pdb-print can't tell a home LAN's public IPv6 /64 from a provider's /64 on a WAN interface, nor a trusted LAN device from an untrusted one; wherever untrusted machines can reach the host, TCP port 8631 must be limited to trusted sources before installing, or setup kept on loopback only: run `serve` without `--setup-window`, don't run `pdb-print pair` (it always opens the LAN window), and use the "Add a printer" page at http://127.0.0.1:8631 on the host. The token travels over plain HTTP on the LAN during the window; the pairing page says to use it on a trusted network.
-* **Host header allowlist** (`127.0.0.1`, `localhost`, configured names) against DNS rebinding.
-* **CORS**: `Access-Control-Allow-Origin` only for paired Part-DB origins. It answers legacy PNA preflights (`Access-Control-Allow-Private-Network: true`) for older Chromium builds. Chrome ≥ 142 **Local Network Access** shows a one-time permission prompt for fetches from public sites to loopback/LAN, so prefer navigation handoff or userscript, which aren't fetch-gated.
-* **Pairing key** (256-bit, per paired instance): the `X-Agent-Key` header for userscript POSTs, and HMAC for handoff URLs (`ts` ±120 s). The UI can rotate it, which also regenerates the bookmarklet/userscript.
-* The local UI uses CSRF tokens and `SameSite=Strict` cookies.
-* **PDF parsing runs inside PDFium-wasm (wazero)**, so a malicious PDF can't escape the wasm sandbox. Size limit 10 MB, page limit 500.
-* The agent only fetches documents from paired instance origins. TLS is always verified, with a custom CA bundle option for homelab CAs.
+**Agent local surface**
+* `serve` binds **loopback only** (`127.0.0.1:8631`, also `[::1]`); other addresses are refused. Foreign
+  `Host` headers are rejected (DNS rebinding), every POST needs a CSRF token, and session cookies are
+  HttpOnly and `SameSite=Strict`.
+* **Setup window:** `serve --setup-window` (systemd unit, Docker; only while no Part-DB is set up) and
+  `pdb-print pair` open the setup wizard to the LAN: a second HTTP server listens on each LAN address of
+  port 8631 and serves only `/setup/*` and static files. A 6-digit code (logged, printed by `pair`) gives
+  the browser an HttpOnly SameSite=Strict session cookie with its own CSRF token. The code is single-use:
+  it pairs one browser, and another browser needs a new window (`pdb-print pair`); once it is used, further
+  tries neither pair nor count, so nobody on the LAN can close the window on the paired browser. The window
+  closes after 15 minutes without use (each request extends it to at least 5 more, never beyond 30), after
+  5 wrong codes before the code is used, or on Finish; closing stops the listeners and drops their
+  connections. `/v1/pair` answers only loopback requests without an `Origin`. A source-address filter turns
+  away obviously remote clients: it answers only private, unique-local, link-local and loopback addresses
+  and the IPv6 /64 of one of the host's interfaces, never public IPv4 subnets. It is not a trust boundary:
+  routed private networks and a provider's /64 pass it, and so does every device on the LAN. The code and
+  the time limit are the protection; limiting TCP port 8631 to trusted sources is the operator's job.
+  Requests must also name one of the host's addresses or `<hostname>.local` (DNS rebinding). Wherever
+  untrusted machines can reach the host, port 8631 must be limited to trusted sources before installing, or
+  setup kept on loopback: run `serve` without `--setup-window`, don't run `pdb-print pair`, and use the web
+  UI at http://127.0.0.1:8631 on the host. The token travels over plain HTTP on the LAN during the window.
+* **Windows service:** the web UI asks every browser for a code from `pdb-print pair`; a paired browser
+  stays signed in for 30 days, and "Sign out all browsers" (or reinstalling the service) ends every session.
+  This keeps other users of the PC from casually changing settings; it doesn't stop a determined local user.
+* **Pairing key** (256-bit, per Part-DB instance) signs handoffs (HMAC, `ts` ±120 s); unsigned or stale
+  handoffs need a click on the agent's page. The web UI can rotate it, which regenerates the bookmarklet.
+* **PDF parsing runs inside PDFium-wasm**, so a malicious PDF can't leave the wasm sandbox. (`pdftoppm`
+  on 32-bit ARM parses natively; `pdftoppm: off` turns it off.)
+* The agent fetches documents only from its configured Part-DB, over verified TLS (plain HTTP only with
+  `allow_http` or for loopback); the same rule applies to the Mercure hub.
 
 **Credentials**
-* MVP: a **Read-Only** API token (enough for `/api/labels/generate`).
-* Stored in the OS keychain (zalando/go-keyring, MIT: Windows Credential Manager, macOS Keychain, Secret Service). Docker/headless: a 0600 file or a Docker secret.
-* P2: **OAuth2 auth-code + PKCE with a loopback redirect** when the instance has `OAUTH_SERVER_ENABLED=1`. The agent opens the browser to `/oauth/authorize`, receives the code on `http://127.0.0.1:<random>/cb`, and stores the refresh token. No upstream change is needed. The client is registered via DCR or manually by an admin.
-* P3: headless pairing via a **device-code style** flow (RFC 8628 grant if the maintainer enables it in league config, or a minimal PrintAgent pairing code shown in Part-DB and typed into the agent).
+* A **read-only** Part-DB API token. Stored in the OS keychain (zalando/go-keyring: Windows Credential
+  Manager, macOS Keychain, Secret Service); without one (Docker, headless, service) in the config file
+  (0600) or `PDB_PRINT_TOKEN`.
 
-**Upstream (PR2+)**
-* New permission group `print` (`submit`, `manage_own_agents`, `manage_all_agents`). Agent-operation endpoints accept a **Read-Only** token but act only on the agent bound to that token (voter check `agent.api_token == current token`). That's least privilege without adding a new token level. Alternative: a dedicated `print_agent` scope (question for the maintainer).
-* Job creation checks `print.submit` **and** printer visibility (owner, or `shared`; P3: groups). Rate limit per user (e.g. 60 jobs/min) via symfony/rate-limiter if present, else a simple DB count.
-* Mercure: **private** updates on topic `…/print_agents/{id}`. The subscriber JWT is issued per agent, short-lived (1 h, refreshed on heartbeat) and scoped to that topic only. **The payload carries only the job id**. The document is fetched with the agent token. The FrankenPHP Caddyfile currently sets `anonymous` on the hub; private updates are still protected because anonymous subscribers never receive private updates (to be confirmed in the PR and docs).
-* Jobs expire (default 24 h). Documents are deleted on completion. The audit log uses Part-DB's existing EventLogger (job created/failed).
-
----
-
-## 11. Transport choice for push (PR3) and its fallbacks
-
-| Option | Upstream cost | php-fpm (Apache image) | FrankenPHP image | Through NAT/Traefik | Verdict |
-|---|---|---|---|---|---|
-| **Short polling** `GET /api/print_jobs?agent=…&state=queued` every 3 s with ETag/304 | none beyond PR2 | cheap (one indexed query, no held worker) | cheap | ✓ | **Default fallback.** About 1.5 s average latency. |
-| **Long-poll** `…&wait=20` (server loops 1 s DB checks) | ~40 LOC | **holds one of about 5 fpm workers per agent**, so DoS-prone | holds a worker thread | ✓ | **Opt-in setting only**, capped wait, off by default. |
-| **SSE endpoint in PHP** | medium | same problem as long-poll, worse | same | ✓ | Rejected. |
-| **Mercure** (API Platform native `mercure:` attribute + `symfony/mercure-bundle`) | ~150–250 LOC + config + docs | needs a **sidecar hub** (`dunglas/mercure` container) or an external hub. PHP just POSTs the publish | **hub already in the Caddyfile**, so it just needs JWT env vars | ✓ (SSE outbound. Traefik passes `text/event-stream`. Don't buffer, and compression middleware excludes event-stream by default) | **Recommended push.** Off unless `MERCURE_URL` is configured. |
-| WebSocket | new server component | no | no native | ✓ | Rejected (no benefit over SSE here). |
-| Turbo Streams over Mercure | reuses the same hub | | | | Bonus: live job status in the Part-DB UI for free [Later]. |
-
-The agent's transport ladder is `auto`: Mercure if a `rel="mercure"` Link header plus subscriber JWT are offered, else long-poll if the server advertises `print.longpoll=true` in `/api/info`, else short-poll. On SSE disconnect it reconnects with `Last-Event-ID` and **always does one catch-up poll after reconnect**, so missed events can't lose jobs. Polling stays the source of truth and push is only a wake-up signal.
+**Upstream (draft PRs)**
+* No new permission group: agent endpoints need `@labels.create_labels` and act only on agents owned by the
+  token's user. An agent sees only its own jobs.
+* Mercure: **private** updates on a per-agent topic carrying no document data; the subscriber token comes
+  with the heartbeat, is short-lived and limited to that topic.
 
 ---
 
-## 12. Upstream changes (sequential, small, opt-in PRs)
+## 11. Push transport and its fallback
 
-All PRs follow the `BrowserPluginSettings` pattern: a Settings class, **default disabled**, env override (`PRINT_AGENT_ENABLED`), and HTTP 451 when disabled. Each PR is useful on its own, comes with tests and docs, and is written and maintained by us.
-
-| PR | Content | Approx. size | Value on its own |
-|---|---|---|---|
-| **PR1** Send-to-agent button [P2] | `PrintAgentSettings` (enabled, agent URL template default `http://127.0.0.1:8631`). Per-user override of the agent URL in user settings. A "Send to print agent" button in the label dialog and in the part/lot/location label dropdown, which does a **top-level navigation** (new small window) to `{agentUrl}/v1/handoff?src=…&type=…&ids=…&profile=…`. No HMAC in Part-DB: the agent shows a confirm click for unsigned requests and the user can enable "trust this instance". CSP unchanged. | ~150–250 LOC (settings, twig, stimulus controller, translations) | Replaces the bookmarklet. Works for LAN-local agents. |
-| **PR2** PrintJob API + agent registration [P2] | Entities `PrintAgent`, `Printer`, `PrintJob` + migration. API Platform resources (agent self-registration bound to the token, printer sync, job create/list/claim/document/status/cancel). Voters + `print` permission group. Simple admin/user page "Print agents & printers" (list, rename, disable, share). The PR1 button gains a printer picker and creates a job server-side when a registered printer exists. Short polling works from here. A cron/console command purges expired jobs. | ~900–1300 LOC incl. tests | **NAT-friendly printing from any device**, polling latency of 1–3 s. |
-| **PR3** Push transport [P3] | Mercure publishing for `PrintJob` (private, per-agent topic). Subscriber JWT issuance on heartbeat. `rel="mercure"` discovery. Docs for the FrankenPHP image (set `MERCURE_*_JWT_KEY`) and an Apache-image sidecar compose snippet. Optional capped long-poll behind a setting. | ~200–350 LOC + docs | Instant (<300 ms) delivery. |
-| **PR4** Printer hints on label profiles [P3] | A nullable JSON column `print_hints` on `LabelOptions` (free-form key/value editor in the profile form, documented as "interpreted by external print agents"). Optional `default_printer` FK on `LabelProfile` (nullable) for routing. Passed through in PrintJob and the label profile API. | ~150 LOC + migration | Per-profile printer/media/cut defaults without Part-DB knowing what they mean. |
-
-**Proposed generic shape (2026-10-27, not agreed upstream yet).** Printing is the first user of the channel, not the only one, so the proposal (§21) words PR2/PR3 generically: an *agent* with *agent jobs* that carry a `type` (`print` first), and Mercure as a general event channel rather than a print-only push. *If* the job payload stays opaque JSON and the lifecycle (queued → claimed → done/failed) and permission checks are defined per job rather than per printer, further job types (e.g. pick-by-light, Part-DB issues #948/#274) need no new endpoints, only a new `type` and a button that creates it. The print-specific model in §5.3 and the PR table above stay the concrete MVP of that design. The same hub could also give Part-DB live UI updates via Turbo Streams (`symfony/ux-turbo` is already a dependency) and NAT-friendly event subscriptions (issue #1339); those need their own topics and authorisation, see "Event topics" below.
-
-**Event topics (sketch, to agree with the maintainer before any code).** Kept separate from the agent job channel until authorisation is defined:
-* *Agent topic* `…/agents/{id}`: private Mercure updates carrying only a job id; the subscriber JWT is issued to the agent's own token and scoped to that one topic (as in §10).
-* *Entity topics* `…/parts/{id}`, `…/part_lots/{id}`, `…/storage_locations/{id}` (and collection topics such as `…/parts`): private updates; payload = id + change type only, never entity data, so a subscriber re-fetches through the normal API with its own permissions.
-* *Subscriber JWTs* are issued per user session or per API token and list only the topics whose entities that user/token may **read** (Part-DB's existing `read` voter per entity type); no wildcard topics for users without the corresponding list permission.
-* *Revocation:* Mercure has no revoke call, but the hub closes a subscription at or before its token's `exp` (Mercure 1.x docs, "Authorization"). So subscriber JWTs are short-lived (≈10 min) and every refresh re-runs the permission check against the *current* session/token: a logged-out session, deleted API token or removed permission gets no new JWT, and its stream ends within one token lifetime. Until then it can still see entity ids and change types (never entity data, which is always refetched through the permission-checked API). Agent topics follow the same rule: deleting an agent's token stops its JWT refresh.
-* Event types map to Part-DB permissions (`config/permissions.yaml`, v2.20.4): part and lot changes are published only to subscribers allowed `parts.read` (lots are read as part of their part; `parts_stock` only has write operations), location changes to `storelocations.read`. Turbo Streams in the Part-DB UI use the same rules.
-
-**What stays out of Part-DB:** drivers, DPI, media catalogues, rasterisation, vendor names, Bluetooth/USB, discovery, installers.
+| Option | Verdict |
+|---|---|
+| **Short polling** of `agents/{uuid}/jobs` every `poll_seconds` (default 30 s); the heartbeat's `pending` count skips the listing when there is nothing | **Default.** Cheap on php-fpm: no held worker. |
+| **Mercure** (draft PR #1628): Part-DB publishes a private update per job; the agent subscribes with `?match=` (Mercure 1.x) | **Instant delivery** (under a second) when a hub is configured. The FrankenPHP image has a hub built in (the PR fixes its Caddyfile for Mercure 1.x); the Apache image needs a `dunglas/mercure` sidecar. |
+| Long-poll or SSE in PHP | Rejected: holds one of about 5 php-fpm workers per agent. |
+| WebSocket | Rejected: no benefit over SSE here. |
 
 ---
 
-## 13. Language and library evaluation
+## 12. Upstream changes
 
-| Criterion | **Go** | Rust | Python | .NET 8 | Node/Electron |
-|---|---|---|---|---|---|
-| Single binary / cross-compile | ✓✓ (`CGO_ENABLED=0` for Linux/Windows; cgo only for macOS BLE) | ✓ (cross-compiling needs `cross`/zig; OK) | ✗ (PyInstaller/Nuitka bundles, AV false positives) | ✓ (self-contained, ~70 MB) | ✗ (~100 MB+) |
-| PDF raster, permissive | **go-pdfium wasm** (MIT wrapper, PDFium BSD/Apache, no cgo, sandboxed) | pdfium-render (MIT/Apache), dynamic pdfium binary (bblanchon/pdfium-binaries) | pypdfium2 (Apache/BSD) | PDFium via PdfiumViewer forks / Docnet (MIT) | pdf.js (Apache) in node-canvas (native deps) |
-| USB | own OS-native paths + gousb fallback (libusb LGPL, dynamic) | **nusb** (pure Rust, MIT/Apache, no libusb) ✓✓ | pyusb + libusb | LibUsbDotNet (LGPL) | node-usb (libusb) |
-| BLE all 3 OSes | tinygo bluetooth (BSD-3), all three central | **btleplug** (MIT/Apache), mature | **bleak** (MIT), best-in-class | WinRT good, Linux/mac weak | noble (flaky) |
-| OS print APIs | x/sys/windows (no cgo), IPP for CUPS | windows-rs, IPP | pywin32, pycups (GPL) | ✓✓ Windows, weak elsewhere | mixed |
-| Service/tray/updater | kardianos/service (zlib), fyne systray (Apache-2.0), minio/selfupdate (Apache) | tray-icon/Tauri, self_update | ok-ish | ✓ | ✓ |
-| Packaging | **GoReleaser**: deb/rpm/apk (nfpm), Homebrew, winget, MSI (WiX), Docker, cosign/notarisation | cargo-dist (good), less turnkey | painful | ok | electron-builder |
-| Existing printer libs | few (we write them; protocols are small) | few | **many, but mostly GPL** (brother_ql, labelle, phomemo-tools) | few | niimbluelib (MIT, TS) |
-| Contributor accessibility | high, easy to read | medium (steeper) | very high | medium | high |
-| Memory/footprint on a Pi Zero 2 | ~20–40 MB | ~10–20 MB | ~60 MB+ | ~60 MB+ | ✗ |
+Proposal: [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625) (posted 2026-10-27).
+Stacked draft PRs from `francisrath/Part-DB-server`, awaiting the maintainer's review. All follow the
+`BrowserPluginSettings` pattern (settings class, default off, env override).
 
-**Recommendation: Go.** It gives effortless cross-compilation and a turnkey release pipeline (GoReleaser), cgo-free PDF rendering via wasm PDFium (a sandboxing bonus), no-cgo Windows USB/spooler access, workable BLE on all three OSes, and a low contributor barrier. Python's ecosystem advantage mostly consists of GPL libraries we couldn't link anyway. **Rust is a credible alternative** (nusb + btleplug + pdfium-render are excellent). Choose it only if the core team prefers Rust. The design (driver/transport interfaces, exec plugins) is language-agnostic.
+| PR | Content |
+|---|---|
+| [#1626](https://github.com/Part-DB/Part-DB-server/pull/1626) Print button | A browser is connected once to the local agent (URL and pairing key in `localStorage`, via a fragment link from the agent's web UI). A Print button in the label dialog and printer icons in the "Label" menus open the agent's `/v1/handoff`, signed with WebCrypto. No CSP change. |
+| [#1627](https://github.com/Part-DB/Part-DB-server/pull/1627) Agent jobs | `Agent` and `AgentJob` entities, the agent API (§4.2), a "Print agents" page (printers, state, jobs, Send again, share), a default printer per label profile, and a printer picker in the label dialog. Works through NAT with polling. |
+| [#1628](https://github.com/Part-DB/Part-DB-server/pull/1628) Mercure | Private per-agent updates and subscriber tokens in the heartbeat; fixes the FrankenPHP Caddyfile for Mercure 1.x. |
+| [#1653](https://github.com/Part-DB/Part-DB-server/pull/1653) MCP | MCP tools `print_labels` and `get_label_printing_options`, which create agent jobs. |
 
-Caveats with Go: macOS BLE requires cgo, so the macOS build is done on a macOS runner (GitHub Actions has these). Wazero has a compiler only for amd64/arm64. On armv7 (Pi 2/3 32-bit OS) PDFium-wasm runs in the interpreter, which is **much slower**, so offer a cgo PDFium build for linux/armv7 (dynamic `libpdfium.so`), or document 64-bit Pi OS as the requirement.
+**What stays out of Part-DB:** drivers, DPI, media catalogues, rasterisation, vendor names, Bluetooth/USB,
+discovery, installers.
+
+---
+
+## 13. Language and libraries
+
+**Go**, for a single static binary from one cross-compiling build (GoReleaser), cgo-free PDF rendering via
+wasm PDFium (a sandboxing bonus), cgo-free Windows APIs through `x/sys/windows`, BLE on all three OSes, and
+a low contributor barrier. Rust was the credible alternative; Python's printer ecosystem is mostly GPL,
+which we couldn't link anyway. The only cgo is the macOS Bluetooth helper, built on a macOS runner.
 
 ### 13.1 Licensing
 
 | Component | Licence | Use |
 |---|---|---|
-| **Agent** | **MIT** (default; Apache-2.0 if a patent grant is wanted, see open questions) | — |
-| PDFium | BSD-3 (Google) | ✓ embedded wasm |
-| go-pdfium | MIT | ✓ |
-| wazero | Apache-2.0 | ✓ |
-| pdfcpu (imposition) | Apache-2.0 | ✓ |
-| tinygo bluetooth | BSD-3 | ✓ |
-| go.bug.st/serial | BSD-3 | ✓ |
-| kardianos/service | zlib | ✓ |
-| fyne.io/systray | Apache-2.0 | ✓ |
-| bbolt | MIT | ✓ |
-| zalando/go-keyring | MIT | ✓ |
-| gozxing | Apache-2.0 | ✓ (QR self-check) |
-| grandcat/zeroconf | MIT | ✓ |
-| libusb | LGPL-2.1 | only dynamically, as a fallback. Avoid static linking |
-| **MuPDF** | **AGPL-3.0** (or commercial from Artifex) | ✗ Linking would make the agent AGPL. Avoid |
-| Poppler (`pdftoppm`) | GPL-2/3 | ✗ Not linked. OK only as an optional external `exec` renderer |
-| brother_ql / brother-label | GPL-3.0 | ✗ Don't copy. Implement from Brother's public spec. Optional via `exec` |
-| phomemo-tools | GPL-3.0 (verify) | ✗ Reimplement from protocol notes |
-| labelle | verify before porting (believed Apache-2.0) | port only if permissive |
-| niimbluelib | MIT | ✓ Port with attribution |
-| Part-DB | AGPL-3.0 | The agent talks over HTTP to a separate program, so it is not a derivative work. The upstream PRs are AGPL as part of Part-DB |
+| **pdb-print** | **MIT** | — |
+| PDFium / go-pdfium / wazero | BSD-3 / MIT / Apache-2.0 | embedded wasm renderer |
+| tinygo bluetooth, godbus | BSD-3, BSD-2 | BLE; BlueZ over D-Bus |
+| gosnmp | BSD-2 | Brother QL status over SNMP |
+| zalando/go-keyring | MIT | token storage |
+| boombuler/barcode | MIT | QR and Code 128 on generated test labels |
+| Poppler (`pdftoppm`) | GPL-2/3 | only run as an external program, never linked or shipped |
+| MuPDF | AGPL-3.0 | ✗ not used |
+| brother_ql, phomemo-tools, GPL cat-printer projects | GPL | ✗ not copied or read; protocols from vendor references |
+| niimbluelib | MIT | protocol reference |
+| Part-DB | AGPL-3.0 | separate program over HTTP; the upstream PRs are AGPL as part of Part-DB |
 
 ---
 
 ## 14. Installation, updates, runtime modes
 
-| Platform | Package | Runs as | Notes | Phase |
-|---|---|---|---|---|
-| Windows 10/11 x64/arm64 | **MSI** (WiX via GoReleaser) + **winget** manifest; zip for portable | Windows **service** (queue, printing) + per-user **tray** app (UI, notifications) | Authenticode signing: **SignPath Foundation** (free for OSS) or Azure Trusted Signing (~USD 10/month). Unsigned = SmartScreen pain | MVP: zip; P2: MSI/winget signed |
-| macOS 12+ universal | **.pkg** (notarised) or `.app` in DMG + **Homebrew cask** | **LaunchAgent** (user session, required for Bluetooth TCC prompts) inside an `.app` bundle with `NSBluetoothAlwaysUsageDescription`. Menu-bar item | Apple Developer ID (USD 99/yr) for signing + notarisation (rcodesign/quill can do it from Linux CI) | MVP: brew tap (unsigned binary); P2: notarised pkg |
-| Linux desktop | **deb/rpm** (nfpm) + APT/YUM repo (Cloudsmith OSS or GitHub Pages), **AppImage**; Flatpak [Later] (USB/BLE sandbox holes make it a poor fit) | **systemd** unit (system or `--user`). Tray via StatusNotifier | udev rule (`/etc/udev/rules.d/60-pdb-print.rules`) granting `lp`/`plugdev` access to known VIDs. `lp` group for `/dev/usb/lp*` | MVP: deb + tarball |
-| Headless Pi / NAS | **Docker** multi-arch (amd64, arm64, armv7) `ghcr.io/<org>/pdb-print` | container, web UI on LAN (opt-in bind + password) | USB: `--device /dev/usb/lp0` or `/dev/bus/usb`. BLE: `--net=host -v /run/dbus:/run/dbus`. TrueNAS/Unraid templates [P3] | MVP |
-| All | `install.sh` / `install.ps1` one-liners | — | — | P2 |
+| Platform | Package | Runs as |
+|---|---|---|
+| Windows x64 | `setup.exe` (Inno Setup) or zip + `pdb-print install` | per-user: login autostart without a window (`pdb-printw.exe`); or the Windows service `pdb-print` for all users. Unsigned for now (SmartScreen warns). |
+| macOS universal | Homebrew cask (`francisrath/tap`), tar.gz | `pdb-print serve`; `pdb-print-ble` next to it. Developer-ID signed and notarised. |
+| Debian, Ubuntu, Raspberry Pi OS | `.deb` via `install.sh` (checks `checksums.txt`) | systemd service as user `pdb-print` (groups `lp`, `bluetooth`, `dialout`); `--setup-window` until set up. |
+| Headless, any Linux | Docker `ghcr.io/francisrath/pdb-print` (amd64, arm64); archives incl. `linux_armv6` | container with `--network host`, setup window on first start; no Bluetooth. |
 
-**First-run experience** (all platforms): the installer opens `http://127.0.0.1:8631`, where a wizard walks through (1) the Part-DB URL, (2) pairing (paste a token, with a link straight to Part-DB's token page and an explanation of "Read-Only"; or "Sign in with Part-DB" via OAuth if available), (3) printer discovery and pick, (4) media pick (auto-detected on Brother), (5) test print with a Part-DB profile, (6) installing the userscript/bookmarklet (one click, with the key embedded).
+**First run:** a setup wizard (on the host at `http://127.0.0.1:8631`, or through the setup window from
+another machine) connects Part-DB with a read-only token, finds printers, prints a test label, asks how it
+came out (setting `mirror`/`upside_down`), names the printer and asks about the usage report.
 
-**Updates** [P2]: stable/beta channels. The agent checks a signed JSON manifest on GitHub Releases daily. Binaries are verified with an embedded **minisign/ed25519** key (plus cosign signatures for supply-chain transparency) and swapped atomically, with rollback on failed start. Self-update is **disabled when installed via winget/brew/apt/Docker**, and those users get a "new version available" notice. The device database (`devices/*.yaml`) can update independently [P3] (data only, signed).
+**Updates:** `serve` asks GitHub once a day for the latest release (no data sent) and the web UI shows the
+notes and how to update this install. The Windows install updates itself ("Update now": downloads the zip,
+checks `checksums-windows.txt`, swaps the exes once no label is printing, restarts); `self_update: false`
+turns it off. Other installs update through their package manager or image.
+
+**Releases** (`docs/releasing.md`): a `v*` tag runs GoReleaser on Ubuntu (Linux archives, `.deb`, Docker),
+on macOS (signed and notarised binaries, Homebrew cask) and on Windows (`setup.exe`). Each release carries
+`checksums.txt`, an SPDX SBOM and signed build provenance (`gh attestation verify`).
+
+**Usage report:** opt-in (asked in the wizard), weekly, anonymous: version, OS, printer models and
+connection types, job and label counts ([telemetry.md](telemetry.md)). The collector `cmd/pdb-print-stats`
+ships only as a Docker image.
 
 ---
 
 ## 15. Multiple agents, printers, users
 
-* Several agents per Part-DB instance (workshop PC, Pi in the garage, laptop). Each registers with its own token, so revoking one token kills exactly one agent.
-* A printer's identity is `(agent_id, local_id)`. The agent keeps `local_id` stable across restarts and renames.
-* **Selection order** for a print request: explicit printer in request → user's default for this label profile (user setting [P3]) → profile `default_printer` (PR4) → user's global default → only printer visible → ask (picker).
-* Visibility: owner only by default. `shared` = all users with `print.submit` [P2]. Group-based sharing [P3].
-* Fail-over [Later]: printer groups ("any 29 mm QL") so the first idle printer with matching loaded media claims the job, which uses the media reported by status.
+* Several agents per Part-DB instance (workshop PC, Pi in the garage, laptop), each with its own
+  `agent_id`. A printer's identity upstream is (agent, printer id).
+* The Part-DB side picks the printer: the job's printer, else the profile's default printer (an id; each
+  user's own agent reporting it wins, then shared agents), else the picker.
+* Locally, `routes` map a label profile to a printer for the bookmarklet and the CLI.
 
 ---
 
 ## 16. i18n
 
-* The agent UI uses JSON message catalogues (go-i18n, MIT) with English as source. Translations go through Crowdin like Part-DB (`crowdin.yml` exists upstream), or Weblate hosted for OSS. Initial languages: en, de (Part-DB's core audience), nb.
-* Status/error codes are **stable keys** (`NO_MEDIA`…). Part-DB translates them in its own `translations/` (PR2 adds `print.status.*` keys) and the agent never sends localised text upstream. `error_message` is free-form detail only.
-* Units: mm canonical, with inch display toggle. Letter/A4 presets by locale.
+The web UI is English only. Status codes are stable keys (§9), so Part-DB can translate them; the result
+message is free-form detail.
 
 ---
 
 ## 17. Testing strategy
 
-1. **Golden raster tests** [MVP]: a corpus of real Part-DB PDFs (exported from the demo instance and the user's own profiles, e.g. the 29×46 mm QL profile) → render → compare 1-bit PBM against checked-in goldens (exact match, since thresholding is deterministic). This catches PDFium upgrades that change output.
-2. **Protocol golden bytes** [MVP]: each driver encodes fixed rasters, and the output is compared byte-for-byte with goldens. Goldens are cross-checked once against known-good tools (e.g. the proven `brother_ql` output on the user's QL-810W. Comparing *output bytes* is fine licence-wise).
-3. **Scannability test** [MVP]: render every barcode-bearing fixture at each target DPI (203/300) and decode with gozxing. CI fails if a QR that should decode doesn't.
-4. **Virtual printers** [MVP]: `virtual` driver/transport that simulates status (no media, cover open, slow, disconnect mid-job) to test queue/retry/state machine. A fake TCP 9100 server and a fake IPP server (or LPrint/ippeveprinter from CUPS in CI) for transport tests.
-5. **Parser fuzzing** for status responses and the local API (Go native fuzzing).
-6. **Upstream e2e** [P2]: GitHub Actions spins up Part-DB (official Docker image + PR branch) and a Mercure hub with docker compose, seeds via fixtures, and runs agent ↔ API contract tests (register, poll, claim race with two agents, status, expiry). On the Part-DB side, PHPUnit API tests mirror the existing `tests/API` style.
-7. **Hardware-in-the-loop** [P2]: community "certified printer" matrix. A `pdb-print selftest --report` prints a test card and uploads an anonymised capabilities report (opt-in, to a GitHub issue template, not a server). Our own bench: QL-810W first, then a TSPL 4" and a Niimbot B1.
-8. **Platform smoke tests**: Windows/macOS/Linux runners install the package, start the service, call `/v1/info`, and print to `virtual`.
+1. **Golden rasters:** sample Part-DB PDFs rendered and compared with checked-in PNGs (`-update` rewrites).
+2. **Golden bytes:** drivers encode fixed rasters and are compared byte for byte with goldens.
+3. **Fakes, never hardware:** fake TCP printers, pipes, pseudo-terminals for serial, fake BLE/Classic
+   radios and a fake helper process. Hardware status checks sit behind the `hardware` build tag.
+4. **Device database checks:** `go test ./internal/devicedb` validates the YAML and fails when
+   `docs/printers.md` needs regenerating.
+5. **CI** (`.github/workflows/ci.yml`): `go test -race` on Linux, macOS and Windows, coverage, gofmt,
+   staticcheck, govulncheck, `goreleaser check`, and packaging jobs that build and inspect the `.deb`,
+   macOS archive and `setup.exe`. The required check is `ci`; docs-only changes skip the heavy
+   jobs.
+6. **On real printers:** `pdb-print try` (guided test with a report file) and `pdb-print report` for
+   community testers; the author's bench in [printers.md](printers.md).
 
 ---
 
 ## 18. Repository, governance, licence
 
-* **Repo**: `github.com/<org>/pdb-print`, separate from Part-DB. Ideally under the **Part-DB GitHub org** with us as maintainers (more discoverable, signals trust), else under our own org and linked from Part-DB docs. *Ask the maintainer.*
-* Layout:
-
-```
-cmd/pdb-print/            main (serve, print, discover, selftest, pair)
-cmd/pdb-print-tray/       tray app (separate binary on Win/mac)
-internal/core/            jobs, queue (bbolt), router, state machine
-internal/partdb/          API client, PrintJob client, mercure SSE, oauth
-internal/render/          pdfium wasm, orient, threshold, colour split, impose (pdfcpu)
-internal/driver/{brother,zpl,epl,tspl,escpos,dymolw,dymolm,niimbot,phomemo,ipp,osqueue,exec,virtual}
-internal/transport/{tcp,usb,ble,serial,ipp,osqueue}
-internal/discovery/
-internal/localapi/        HTTP API, auth, CORS, handoff HMAC
-web/                      UI (Preact + htm or plain TS, embedded via go:embed; no Node needed at runtime)
-devices/                  model database YAML + JSON schema
-userscript/               generated template (Violentmonkey/Tampermonkey)
-packaging/                goreleaser, wix, nfpm, homebrew, docker, systemd, udev, launchd
-testdata/                 PDFs, golden PBM, golden bytes
-docs/                     user guide, printer guides, protocol notes
-```
-
-* **Governance**: CONTRIBUTING with a "how to add a printer" guide (usually a YAML entry plus a small driver quirk). CODEOWNERS per driver for community maintainers who own hardware. Semver releases. DCO sign-off (lighter than a CLA, keeps relicensing simple within MIT). The protocol notes in `docs/protocols/` are written from public specs, with a clean-room note for GPL-adjacent families.
-* **Licence**: MIT for code. CC-BY-4.0 for `devices/` data and docs (optional, can also just be MIT).
+* **Repo:** [github.com/francisrath/pdb-print](https://github.com/francisrath/pdb-print) (renamed from
+  partdb-print-agent in 2026-11), separate from Part-DB.
+* **Layout:** `cmd/pdb-print`, `cmd/pdb-print-ble`, `cmd/pdb-print-stats`; `internal/…` (§3.2);
+  `packaging/` (deb, docker, windows); `docs/`; `assets/icon/`.
+* **Contributing:** `CONTRIBUTING.md`, issue forms, `SECURITY.md`, `CODEOWNERS`. A new model is a device
+  database entry; a new family a package under `internal/driver/`; a new connection under
+  `internal/transport/`. Printers we don't own get "looking for a tester" issues.
+* **Licence:** MIT.
 
 ---
 
 ## 19. Roadmap
 
-```mermaid
-gantt
-  dateFormat  YYYY-MM-DD
-  title Indicative roadmap (part-time effort)
-  section MVP (no Part-DB changes)
-  Core, queue, render (PDFium wasm), web UI      :m1, 2026-11-01, 30d
-  Drivers brother-ql, zpl, tspl, os-queue(+sheets):m2, after m1, 25d
-  Sources: handoff, userscript, hot folder, CLI :m3, after m1, 20d
-  Releases: Linux deb/tar, Win zip, brew tap, Docker :m4, after m2, 10d
-  section Phase 2
-  Upstream PR1 button                             :p1, after m4, 14d
-  Upstream PR2 PrintJob API                       :p2, after p1, 35d
-  Agent PrintJob client + status                  :p3, after p1, 25d
-  Discovery, tray, signed MSI/pkg, auto-update    :p4, after m4, 40d
-  Drivers brother-pt, epl, escpos, dymo-lw, niimbot, phomemo, ipp, exec :p5, after m4, 60d
-  section Phase 3
-  Upstream PR3 Mercure + long-poll opt-in         :q1, after p2, 21d
-  Upstream PR4 print_hints / default printer      :q2, after q1, 14d
-  OAuth/device pairing, SNMP, dymo-lm, SPP, groups:q3, after p5, 45d
-```
+Done (v0.1–v0.4.1, 2026-10 to 2026-11): renderer, bookmarklet handoff, hot folder, CLI, web UI and setup
+wizard with setup window, discovery, SNMP status, media from the loaded roll; drivers `brother` (QL, PT),
+`zpl`, `epl`, `tspl`, `escpos`, `dymo`, `cat`, `niimbot`, `phomemo`; transports `tcp`, `usb`, `serial`,
+`ble`, `bt`; agent job client with Mercure wake-up; Windows installer, service and self-update; Homebrew
+cask; `.deb`; Docker; usage report; SBOM and build provenance.
 
-**MVP scope (definition of done)**
-* Go agent on Linux (amd64/arm64), Windows x64 and macOS (universal), plus Docker.
-* Pairing by token paste. Read-only token is sufficient.
-* Sources: handoff URL (bookmarklet), userscript, hot folder, CLI.
-* Renderer: PDFium wasm, native-dot sizing, auto-rotate, threshold, no AA. Sheet imposition with start offset + skip mask + manual dx/dy.
-* Drivers: `brother-ql` (USB Linux/Win, TCP; status over USB; auto media detect), `zpl` (TCP/USB), `tspl` (TCP/USB), `os-queue` (CUPS, Windows spooler), `virtual`.
-* Local web UI: instances, printers, media, routes, test print, history.
-* Golden tests + virtual printer CI.
+Next:
+* Upstream: answer the maintainer on #1625 and the draft PRs; adapt the agent to whatever API lands.
+* Hardware: test the untested families as testers or printers turn up (REGO RG-MLP80B, TSPL, EPL2,
+  DYMO, P-touch raster, Phomemo).
+* Windows code signing (SignPath was declined; reapply later).
 
-**Phase 2**: upstream PR1+PR2, PrintJob client with polling, status reporting, discovery (mDNS/USB/BLE/OS), tray app, signed installers + winget/brew/apt, auto-update, two-colour Brother, more drivers (PT, EPL, ESC/POS, DYMO LW 4xx, Niimbot, Phomemo, IPP, exec plugins), macOS USB, BLE/serial/SPP transports, sheet calibration wizard, QR self-check, OAuth loopback pairing.
-
-**Phase 3**: PR3 Mercure push (+ long-poll opt-in), PR4 print hints/default printer, device-code pairing, SNMP, DYMO LabelManager, BlueZ SPP profile, printer sharing by groups, per-user per-profile defaults, devices-DB OTA updates, TrueNAS/Unraid/HA add-on packaging.
-
-**Phase 6 (Bluetooth LE cat printers)**: driver `cat` (dialect `gb`: GB01/02/03, GT01, YT01, MX05/06/08/10, 57 mm, 384 dots at 203 dpi, GATT service 0xae30) and transport `ble`, matched by exact advertised name; `address` is the platform device id and wins over `name`; two printers with one name are refused. Linux talks to BlueZ over D-Bus, Windows uses WinRT in-process (BLE adapter needed). macOS needs cgo for CoreBluetooth, so it lives in a separate helper `pdb-print-ble` that `pdb-print` runs and talks to over pipes: `pdb-print` stays cgo-free and only the helper asks for Bluetooth permission. Docker has no Bluetooth. The macOS release is built on a macOS runner after the Linux job's draft release (see `docs/releasing.md`).
-
-**Later**: agent as **IPP Everywhere printer** (LPrint style, so any app/OS dialog can print through the agent's correct rasteriser) · printer-native barcodes (ZPL `^BQ`/TSPL `QRCODE` from element data, for 203 dpi purists) · live job status in the Part-DB UI via Turbo Streams over the same Mercure hub · agentless WebBluetooth/WebUSB print for Niimbot from the Part-DB page (browser-only, Chrome) · Android agent (phone as BLE bridge) · printer groups with media-aware fail-over · media usage counters/low-stock alerts (tie-in: labels are inventory too) · Home Assistant add-on.
+Not planned for now: A4 sheets and office printers, IPP, exec plugins, USB on macOS/Windows, a tray app,
+OAuth pairing.
 
 ---
 
 ## 20. Risks and mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Maintainer declines upstream PRs or wants a different shape | No instant/NAT path | The MVP is fully useful without upstream changes (handoff, userscript, hot folder). PRs are small, opt-in and default-off. Ask about preferences *before* coding PR2. |
-| Long-poll/SSE in PHP exhausts php-fpm workers | Part-DB outages | No PHP-held connections by default. Mercure hub for push. Long-poll is opt-in and capped. |
-| Mercure in the Apache image needs an extra container | Friction | Polling remains default and good enough (1–3 s). Provide a copy-paste compose snippet. FrankenPHP image works out of the box. |
-| Browser policy changes (LNA, PNA, mixed content, Safari) | Local push breaks | Prefer top-level navigation + userscript (not fetch-gated), and long-term server-side jobs (no browser→agent traffic at all). |
-| Code signing cost/complexity | SmartScreen/Gatekeeper scares hobbyists | SignPath Foundation (free OSS) for Windows. Apple Developer ID budgeted (USD 99/yr). Homebrew/winget for the trust path. |
-| GPL contamination via porting vendor libs | Licence violation | Implement from vendor specs. Clean-room notes. Exec-plugin bridge for GPL tools. CI licence scan (go-licenses). |
-| Printer protocol diversity / clones with quirks | Support load | Data-driven devices DB, IEEE-1284 `CMD:` detection, exec plugins, community driver owners, "unsupported printer report" template. |
-| DYMO LW 550 NFC-locked labels, Niimbot RFID media checks, Brother "Editor Lite" mode | "Doesn't print" bug reports | Known-issues list in the devices DB plus UI hints (e.g. "turn off Editor Lite"). |
-| Raster quality varies with PDFium version | Unscannable codes | Golden tests, pinned PDFium version, QR self-check. |
-| BLE on macOS needs an app bundle + TCC, background limits | Niimbot/Phomemo unusable headless on mac | Run as LaunchAgent in an `.app`. Document. Linux/Pi as the recommended BLE host. |
-| armv7 slow wasm interpreter | Slow renders on 32-bit Pis | cgo PDFium build for armv7, or require a 64-bit OS. |
-| Security: local agent abused by malicious websites | Unwanted prints/DoS | Pairing key/HMAC, Host allowlist, CORS allowlist, confirm-click for unsigned handoffs, rate limit, loopback default. |
-| Bus factor (one maintainer) | Abandonment | Governance (CODEOWNERS, DCO), offer the repo to the Part-DB org, simple Go codebase. |
+| Risk | Mitigation |
+|---|---|
+| Maintainer declines the upstream PRs or wants another shape | The agent is fully useful without them (bookmarklet, hot folder, CLI). PRs are small, opt-in and default-off. |
+| PHP holding connections exhausts php-fpm workers | Polling by default; Mercure for push; no long-poll. |
+| Browser policy changes (Local Network Access, mixed content) | Top-level navigation isn't fetch-gated; server-side jobs need no browser → agent traffic at all. |
+| Unsigned Windows binaries | SmartScreen instructions in the README; signing once a programme accepts the project. |
+| GPL contamination | Implement from vendor references; `pdftoppm` only as an external process. |
+| Printer diversity and clone quirks | Data-driven device database, `pdb-print report` and `try`, tester issues. |
+| Untested families | Marked 🟡 in printers.md; results say "sent (unconfirmed)" rather than guess. |
+| Raster quality changes with PDFium versions | Golden raster tests; pinned go-pdfium. |
+| Slow wasm on 32-bit ARM | `pdftoppm` there; 64-bit OS recommended. |
+| A local agent abused by websites | Loopback bind, Host allowlist, CSRF, signed handoffs with a click otherwise. |
+| Bus factor (one maintainer) | Simple Go codebase, CODEOWNERS, contributor docs. |
 
 ---
 
-## 21. Draft GitHub issue for Part-DB
+## 21. Upstream proposal
 
-*Posted 2026-10-27 as [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625). The text below is what was posted.*
-
-> **Title:** Proposal: an outbound "agent" channel for Part-DB – starting with direct label printing (external app works today; small opt-in API additions)
->
-> Hi @jbtronics, and thanks for Part-DB!
->
-> Direct label printing comes up regularly (#489, discussions #746, #946 and #1195). In #489 you wrote that it would need "a browser plugin or companion app". We built that companion app as a separate project, and it works with Part-DB as it is today:
->
-> **[partdb-print-agent](https://github.com/francisrath/partdb-print-agent)** (MIT, Go, single binary, [v0.1.0](https://github.com/francisrath/partdb-print-agent/releases/tag/v0.1.0)) takes the label PDF that Part-DB already generates, rasterises it at the printer's native resolution (no driver scaling, crisp QR codes) and sends it straight to the printer. It uses the `POST /api/labels/generate` endpoint from #1234 (thanks @MayNiklas, who wrote that he wanted exactly this) with a **read-only** API token. Part-DB's HTML/Twig → PDF stays the only template system.
->
-> What works today, verified on a Brother QL-810W with 29 mm continuous and 29×90 mm die-cut rolls:
-> - a local web UI, plus a signed bookmarklet: one click on a part or storage-location page prints its label;
-> - a hot folder: "Download" in the label dialog prints automatically;
-> - a CLI (`pdb-print print --profile 2 --ids 32`);
-> - printer status over SNMP: the loaded roll is checked before printing, a label whose size doesn't fit the roll is refused, and completion is confirmed;
-> - installs via `brew install --cask pdb-print` (tap `francisrath/tap`), Docker (`ghcr.io/francisrath/partdb-print-agent`) or a download for Windows, macOS and Linux.
->
-> Brother QL is the first printer family; the driver layer is built for Zebra/ZPL, TSPL, DYMO, Niimbot, Phomemo and office printers with A4 label sheets.
->
-> **The gap:** everything above needs the browser and the agent on the same network, or the PDF to pass through the user's machine. Printing from a phone, or from a hosted Part-DB to a printer at home, needs Part-DB to hand work to an agent that connects *outbound*, because Part-DB can't reach into the user's LAN. We'd like to propose a small, opt-in, vendor-neutral way to do that, written and maintained by us, in separate PRs:
->
-> 1. **"Send to agent" button** in the label dialog, plus a setting for the agent URL. It opens the local agent with a normal navigation, so no CSP change is needed (~200 LOC). This alone replaces the bookmarklet.
-> 2. **Agent registration and an `AgentJob` API.** An agent registers with a read-only token and only ever sees its own jobs. Jobs carry a `type`, starting with `print`; printer and media data are opaque JSON, so Part-DB never needs to know printer brands. This works through NAT with plain polling.
-> 3. **Optional push via Mercure**, for instant delivery. The FrankenPHP image already runs a hub; for the Apache image it's an optional sidecar. Polling stays the fallback, and nothing in PHP holds connections open.
-> 4. **Optional `print_hints` / default printer on label profiles**, passed through without Part-DB interpreting them.
->
-> **Why this is more than a print feature.** Printing is the first user of the channel, not the only one:
-> - **Live UI with no agent at all:** Part-DB already depends on `symfony/ux-turbo`, and Turbo Streams over the same Mercure hub could show stock and part changes live to other users (helpful in multi-user setups like #1588), and report progress for long-running tasks such as the bulk info-provider import or the update manager.
-> - **Pick-by-light** (#948, #274): lighting the bin of a storage location from an ESP32 or WLED strip hits exactly the same wall. Part-DB (hosted, or served over HTTPS) can't reliably call a device on the user's LAN, and a link from the browser runs into mixed-content and local-network restrictions. With agent jobs, Part-DB creates a `locate` job and the agent drives WLED locally, with no new server API.
-> - **Event subscriptions that work through NAT** (#1339): webhooks need Part-DB to reach the receiver, which fails for a hosted instance and a home network. A Mercure subscription is opened from the home side instead. #1339's stated goal ("print a label when I add/modify a part") is a direct example.
-> - **Later, bench hardware:** counting a lot by weight on a scale attached to the agent (Part-DB already stores part mass and supports stocktaking), or a scanner station that opens the scanned part in your browser.
->
-> We'd keep every PR small and default-off, following the `BrowserPluginSettings` pattern (settings class, env override, HTTP 451 when disabled), with tests, docs and translations, and maintain them afterwards.
->
-> **Questions before we write any upstream code:**
-> - Are you open to this direction, and to the PR split above? Would you rather stop after (1) or after (2)?
-> - For (2): should a print job store the **rendered PDF** (rendered as the user who clicked, deleted after printing), or just `{profile, element ids}`, with the agent rendering through the existing endpoint?
-> - Is a generic `AgentJob` with a `type` OK, or would you prefer a print-only `PrintJob` to start with?
-> - Is a new permission group (submit jobs / manage agents) OK? Should agent tokens be ordinary read-only API tokens restricted by a voter, or a dedicated token scope?
-> - For (3): is adding `symfony/mercure-bundle` acceptable, or would you prefer a tiny HttpClient publisher? Do you want to promote the FrankenPHP image for this?
-> - Would you like the agent repo under the Part-DB GitHub organisation (we'd maintain it), or linked from the docs as a third-party tool?
->
-> A full architecture write-up (diagrams, data model, security, roadmap) is in the repo's `docs/architecture.md`. We're happy to adjust anything to fit Part-DB's conventions. Thanks!
-
-*Note added after posting:* only the Brother QL family is implemented in v0.1.0; Zebra/ZPL, TSPL, DYMO, Niimbot, Phomemo and A4 label sheets are **planned** – "the driver layer is built for" them means the driver/transport interfaces are designed to take them (§7), not that they ship today.
+Posted 2026-10-27 as [Part-DB-server#1625](https://github.com/Part-DB/Part-DB-server/issues/1625): an
+outbound "agent" channel for Part-DB, starting with direct label printing (Print button, agent jobs with a
+`type`, optional Mercure push), also argued for live UI updates, pick-by-light (#948, #274) and NAT-friendly
+event subscriptions (#1339). Implemented as the draft PRs in §12.
 
 ---
 
-## 22. Open questions / decisions (for us)
-
-Decided 2026-10-27:
+## 22. Decisions
 
 | # | Topic | Decision |
 |---|---|---|
 | 1 | Licence | **MIT** |
-| 2 | Repo home | **github.com/francisrath/pdb-print**; offer hand-over to the Part-DB org later |
-| 3 | PrintJob payload (rendered PDF vs profile + IDs) | **Open** – decide with the maintainer in the issue |
-| 4 | Agent token | **Read-only** (enough for label generation) |
-| 5 | Tag inbox | **Dropped** (2026-10-27): built and tried (closed PR #5), but tagging a part in Part-DB just to print it was too much hassle. Phone/remote printing waits for upstream PR1/PR2 |
-| 6 | Two-colour + A4 calibration | **Phase 2**. MVP driver scope: **Brother QL only** (+ virtual printer for tests) |
-| 7 | Signing | macOS: existing Apple Developer Program membership (Developer ID). Windows: **SignPath Foundation** |
-| 8 | 32-bit Pi | Not supported; 64-bit OS required |
-| 9 | Push on Part-DB | Recommend the **FrankenPHP image** (built-in Mercure); document an optional Mercure sidecar for the Apache image |
-| 10 | When to post the issue | **After the v0.1.0 release** |
-| 11 | Name | `pdb-print` (repository and CLI; renamed from partdb-print-agent in 2026-11) |
+| 2 | Repo home | **github.com/francisrath/pdb-print**; hand-over to the Part-DB org can be offered later |
+| 3 | Agent job payload | **Profile + element ids**, rendered by the agent with its owner's token (no PDF stored in Part-DB) |
+| 4 | Agent token | **Read-only** |
+| 5 | Tag inbox | **Dropped** (2026-10-27): tried (closed PR #5), too much hassle; remote printing goes through agent jobs |
+| 6 | Signing | macOS: Developer ID, notarised. Windows: unsigned for now (SignPath declined 2026-11-22) |
+| 7 | 32-bit ARM | Supported (`linux_armv6`, `.deb`), rendering with `pdftoppm`; 64-bit recommended |
+| 8 | Push on Part-DB | Mercure, off unless configured; FrankenPHP's built-in hub, or a sidecar for the Apache image |
+| 9 | Name | `pdb-print` (repository and CLI; renamed from partdb-print-agent in 2026-11) |
+| 10 | Compatibility | Pre-release: no backwards-compatibility code; breaking config changes go in the release notes |
 
 ---
 
 ## Sources
 
-**Part-DB source (v2.20.4, cloned 2026-10-27)**
-- `src/ApiResource/LabelGenerationRequest.php`, `src/State/LabelGenerationProcessor.php`: label generation endpoint and permission checks
-- `config/permissions.yaml` (`labels.create_labels`, `read_profiles` → `ROLE_API_READ_ONLY`), `src/Entity/UserSystem/ApiTokenLevel.php`, `docs/api/authentication.md`
+**Part-DB source (v2.20.4)**
+- `src/ApiResource/LabelGenerationRequest.php`, `src/State/LabelGenerationProcessor.php`: label generation and permission checks
+- `config/permissions.yaml` (`labels.create_labels`, `read_profiles` → `ROLE_API_READ_ONLY`), `docs/api/authentication.md`
 - `src/Entity/LabelSystem/LabelOptions.php`, `LabelProfile.php`
-- `Dockerfile` (Apache + php-fpm), `Dockerfile-frankenphp`, `.docker/frankenphp/Caddyfile` (Mercure directive), `.github/workflows/docker_build.yml` (`jbtronics/part-db1`), `docker_frankenphp.yml` (`partdborg/part-db`)
-- `composer.json` (no mercure-bundle; ux-turbo, api-platform 4.x, mcp)
-- `config/packages/nelmio_security.yaml` (CSP), `config/packages/league_oauth2_server.yaml`, `docs/api/oauth.md` (loopback redirects)
+- `Dockerfile` (Apache + php-fpm), `Dockerfile-frankenphp`, `.docker/frankenphp/Caddyfile` (Mercure directive)
+- `config/packages/nelmio_security.yaml` (CSP)
 - `src/Controller/BrowserPluginController.php`, `src/Settings/InfoProviderSystem/BrowserPluginSettings.php`
 - `templates/label_system/dialog.html.twig`, `src/Controller/LabelController.php` (filename `label_<Type><id>.pdf`)
-- `src/Entity/Parts/Part.php`, `PartLot.php`, `StorageLocation.php` (API filters)
 - Repo: https://github.com/Part-DB/Part-DB-server
 
-**Part-DB issues/discussions (researched earlier)**: #489, #746, #946, discussion #1195, PR #1234: https://github.com/Part-DB/Part-DB-server/issues
+**Part-DB issues and discussions:** #489, #746, #946, #1195, PR #1234, #1625, Discussion #1664.
 
-**Browser platform**
-- Chrome Local Network Access: https://developer.chrome.com/blog/local-network-access
-- LNA Intent to Ship: https://groups.google.com/a/chromium.org/g/blink-dev/c/cwu_RUmBpzY/m/JWenvGViCAAJ
+**Browser platform:** Chrome Local Network Access: https://developer.chrome.com/blog/local-network-access
 
-**Libraries**
-- go-pdfium (wasm mode, MIT): https://github.com/klippa-app/go-pdfium
-- tinygo bluetooth (support matrix, BSD-3): https://github.com/tinygo-org/bluetooth
-- btleplug: https://docs.rs/crate/btleplug/latest
-- niimbluelib (MIT): https://github.com/MultiMote/niimbluelib
-- LPrint (Brother/DYMO/Zebra/TSC support, v1.4.0): https://www.msweet.org/lprint/
-- API Platform Mercure: https://api-platform.com/docs/core/mercure/ · Mercure hub: https://mercure.rocks/docs/hub/install · FrankenPHP Mercure: https://frankenphp.dev/docs/mercure/
+**Libraries:** go-pdfium (https://github.com/klippa-app/go-pdfium), wazero (https://wazero.io),
+tinygo bluetooth (https://github.com/tinygo-org/bluetooth), niimbluelib (https://github.com/MultiMote/niimbluelib),
+Mercure (https://mercure.rocks/docs/hub/install), FrankenPHP Mercure (https://frankenphp.dev/docs/mercure/).
 
-**Prior art (researched earlier)**: InvenTree machine/label printer plugins (https://docs.inventree.org/), QZ Tray (https://qz.io/), PrintNode (https://www.printnode.com/), Grocy label webhooks, Homebox external label service, brother_ql / brother-label, labelle, phomemo-tools. Vendor protocol references: Brother QL/PT Raster Command Reference, Zebra ZPL II/EPL2 programming guides, TSC TSPL/TSPL2 manual, Epson ESC/POS reference.
+**Vendor references:** Brother QL/PT Raster Command Reference and PT-9500PC CBP-RASTER reference, Zebra ZPL II
+and EPL programming guides, TSC TSPL/TSPL2 manual, Epson ESC/POS reference, DYMO LabelWriter 400/450 Technical
+Reference Manuals.
