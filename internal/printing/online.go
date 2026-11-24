@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"time"
 
@@ -171,7 +170,7 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 		}
 		open, timeout := s.openDevice, s.probeTimeout
 		if open == nil {
-			open = func(path string) (io.Closer, error) { return os.OpenFile(path, os.O_RDWR, 0) }
+			open = func(path string) (io.Closer, error) { return usb.OpenDevice(path) }
 		}
 		if timeout == 0 {
 			timeout = 2 * time.Second

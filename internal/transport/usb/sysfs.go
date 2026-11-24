@@ -5,29 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
 )
 
-// Printer is a USB printer the Linux usblp driver has bound.
+// Printer is a USB printer the OS printer-class driver has bound.
 type Printer struct {
-	Device   string            // /dev/usb/lp0
+	Device   string            // /dev/usb/lp0; Windows: \\?\USB#VID_…#{28d78fad-…} interface path
 	USBID    string            // 04f9:209c
 	Serial   string            // "" if the printer reports none
 	IEEE1284 map[string]string // IEEE 1284 device ID fields: MFG, MDL, CMD, …
 }
 
-// List reads the usblp printers from sysfs ("" = /sys): class/usbmisc/lpN/device is the USB
-// interface (with ieee1284_id); its parent directory is the USB device (idVendor, idProduct, serial).
+// List returns the USB printers the OS driver has bound: Linux usblp, Windows usbprint.sys.
+// A non-empty sysfs reads that tree instead, on any OS (tests use fake trees).
 func List(sysfs string) ([]Printer, error) {
 	if sysfs == "" {
-		if runtime.GOOS != "linux" {
-			return nil, errors.New("USB printers are only supported on Linux for now")
-		}
-		sysfs = "/sys"
+		return listNative()
 	}
+	return listSysfs(sysfs)
+}
+
+// listSysfs reads the usblp printers from sysfs: class/usbmisc/lpN/device is the USB
+// interface (with ieee1284_id); its parent directory is the USB device (idVendor, idProduct, serial).
+func listSysfs(sysfs string) ([]Printer, error) {
 	entries, err := os.ReadDir(filepath.Join(sysfs, "class", "usbmisc"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil // no usblp printer (or usblp not loaded)
