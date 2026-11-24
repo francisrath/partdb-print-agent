@@ -430,9 +430,9 @@ last write before close. USB on Windows is pure Go (`golang.org/x/sys/windows`):
 usbprint interfaces (the serial is on the parent devnode for composite devices), `IOCTL_USBPRINT_GET_1284_ID`
 reads the device id, and reads and writes are overlapped and cancelled with `CancelIoEx` at the read
 deadline or after 30 s without progress on a write chunk. usbprint doesn't lock the device: the Windows
-spooler can print to it at the same time. The QL-810W prints nothing over usbprint (it serves its legacy
-printer interface only while Windows leaves its IPP-over-USB function alone, which Windows 11 doesn't); use it
-over the network on Windows. No USB on macOS yet. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
+spooler can print to it at the same time. The QL-810W prints nothing and answers nothing on its printer interface under
+Windows (it does on Linux, which leaves its second interface, vendor/IPP-over-USB, alone); use it over the
+network on Windows. No USB on macOS yet. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
 binary: `pdb-print` starts it on demand and talks to it over stdin/stdout (`internal/blebridge`), so only
 the helper asks for Bluetooth permission. Docker has no Bluetooth. A Bluetooth printer takes one connection
 at a time.
