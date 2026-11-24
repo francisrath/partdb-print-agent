@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest something pdb-print should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The task or problem, not only the solution. How do you print labels today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could pdb-print help?
+  - type: markdown
+    attributes:
+      value: Features that need Part-DB itself (label profiles, the print button, the API) belong in [Part-DB-server](https://github.com/Part-DB/Part-DB-server/issues).

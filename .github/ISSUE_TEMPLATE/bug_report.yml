@@ -1,0 +1,68 @@
+name: Bug report
+description: pdb-print does something wrong or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before posting anything below, remove your Part-DB address, API token and anything else private.
+        For a printer pdb-print doesn't support yet, use the printer support form instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead. A photo of a wrong label helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: pdb-print version
+      description: Output of `pdb-print version`
+      placeholder: pdb-print v0.4.0 (go1.25.4 linux/arm64)
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options:
+        - Homebrew (macOS)
+        - Windows installer
+        - Windows zip
+        - .deb package
+        - Docker image
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Raspberry Pi OS 12 (64-bit), Windows 11, macOS 26 …
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model and connection
+      description: The `model` from your config and how it is connected (network, USB, serial, Bluetooth LE, Bluetooth Classic). Leave empty if no printer is involved.
+      placeholder: Brother QL-810W over the network, DK-22210 roll
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: The relevant part of `config.yaml`, with the Part-DB token and addresses removed.
+      render: yaml
+  - type: textarea
+    id: report
+    attributes:
+      label: pdb-print report
+      description: For printer problems, run `pdb-print report` and attach the file it writes (drag it here). Check it before posting.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Output of the failing command, or the agent's log, ideally run as `pdb-print --log-level debug …`.
+      render: text

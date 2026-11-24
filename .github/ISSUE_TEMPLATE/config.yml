@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Part-DB server issues
+    url: https://github.com/Part-DB/Part-DB-server/issues
+    about: Label profiles, the Part-DB API and its print button belong to Part-DB itself.
+  - name: Security vulnerability
+    url: https://github.com/francisrath/pdb-print/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.

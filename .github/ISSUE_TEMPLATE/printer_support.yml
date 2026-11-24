@@ -1,0 +1,58 @@
+name: Printer support
+description: My printer isn't supported yet
+title: "Printer support: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/printers.md](https://github.com/francisrath/pdb-print/blob/main/docs/printers.md) first: your printer may be listed as untested (🟡), not supported yet or impossible to support.
+        For a printer we don't own, this issue becomes a "looking for a tester" issue: we add it once someone can test with one.
+  - type: input
+    id: model
+    attributes:
+      label: Exact model
+      placeholder: Brother QL-1110NWB
+    validations:
+      required: true
+  - type: checkboxes
+    id: connections
+    attributes:
+      label: Connections you can use
+      options:
+        - label: Network (Wi-Fi or Ethernet)
+        - label: USB
+        - label: Serial
+        - label: Bluetooth LE
+        - label: Bluetooth Classic
+  - type: input
+    id: labels
+    attributes:
+      label: Label sizes you use
+      placeholder: 62 mm continuous, 29×90 die-cut
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation
+      description: Links to a public command reference or programming manual, or at least the spec sheet. Which printer language it speaks (ZPL, ESC/POS, TSPL, …) if you know.
+  - type: textarea
+    id: report
+    attributes:
+      label: pdb-print report --identify
+      description: |
+        Run `pdb-print report --identify` with the printer connected and attach the file it writes (drag it here).
+        It asks before sending each identify query, since a printer that doesn't understand one may print it as text.
+        Addresses and serial numbers are masked; check the file before posting.
+    validations:
+      required: true
+  - type: dropdown
+    id: test
+    attributes:
+      label: Can you test?
+      description: Untested printers are only added once someone has printed with one.
+      options:
+        - Yes, I can run test prints when support is added
+        - Maybe, ask me
+        - No
+    validations:
+      required: true
