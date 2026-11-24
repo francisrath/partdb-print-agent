@@ -250,7 +250,8 @@ token can also come from `PDB_PRINT_URL` and `PDB_PRINT_TOKEN` (see `.env.exampl
 USB printers on Linux and Windows are found by `usb_id` (and `serial`, for two identical printers) at every
 job, so replugging doesn't matter; `device: /dev/usb/lpN` works too on Linux. On Windows pdb-print uses the
 built-in "USB Printing Support" driver: no driver to install or swap, and the printer keeps its Windows print
-queue, but don't print to it from Windows at the same moment (the two jobs would mix). USB on macOS isn't
+queue: Brother's own driver and software (P-touch Editor) can print between pdb-print jobs, just not at the
+same moment (the two jobs would mix). USB on macOS isn't
 supported yet. `mirror: true` and `upside_down: true` flip
 the printed image.
 
