@@ -209,7 +209,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	}
 	cmd := exec.Command(helper)
 	tail := new(stderrTail)
-	cmd.Stderr = io.MultiWriter(os.Stderr, tail) // the helper logs there; a fatal last line explains an exit
+	cmd.Stderr = io.MultiWriter(&echo{w: os.Stderr}, tail) // the helper logs there; a fatal last line explains an exit
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -415,6 +415,28 @@ func (t *Transport) stop(kill bool) {
 	t.mu.Lock()
 	t.cmd, t.stdin = nil, nil
 	t.mu.Unlock()
+}
+
+// echo passes the helper's log lines on, except its fatal line: that one comes back as the error.
+type echo struct {
+	w   io.Writer
+	buf []byte // a line not finished yet
+}
+
+func (e *echo) Write(p []byte) (int, error) {
+	e.buf = append(e.buf, p...)
+	for {
+		i := bytes.IndexByte(e.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		if line := e.buf[:i+1]; !bytes.HasPrefix(line, []byte(fatalMark)) {
+			if _, err := e.w.Write(line); err != nil {
+				return len(p), err
+			}
+		}
+		e.buf = e.buf[i+1:]
+	}
 }
 
 // stderrTail keeps the end of the helper's stderr (exec copies it from one goroutine; read it after Wait).

@@ -3,6 +3,7 @@
 package ble
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -575,5 +576,19 @@ func TestScanClassic(t *testing.T) {
 	useFake(t, "abort")
 	if _, err := ScanClassic(context.Background(), 8*time.Second); err == nil || !strings.HasPrefix(err.Error(), "bt: "+denied) {
 		t.Errorf("ScanClassic killed by privacy: %v", err)
+	}
+}
+
+// The helper's log lines are echoed, but not its fatal line: that comes back as the job's error.
+func TestEchoSkipsFatalLine(t *testing.T) {
+	var out bytes.Buffer
+	e := &echo{w: &out}
+	for _, p := range []string{"pdb-print-ble: trying ", "once more\nerror: did not", " answer\n", "pdb-print-ble: bye\n"} {
+		if _, err := e.Write([]byte(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, want := out.String(), "pdb-print-ble: trying once more\npdb-print-ble: bye\n"; got != want {
+		t.Errorf("echo %q, want %q", got, want)
 	}
 }
