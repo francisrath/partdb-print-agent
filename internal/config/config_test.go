@@ -235,6 +235,7 @@ func TestValidateModelTransport(t *testing.T) {
 		"serial line":          "printers: [{id: a, model: GK420d, transport: {kind: serial, device: COM3, baud: 115200, framing: 8E2, flow: rtscts}}]",
 		"media auto":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: auto}]",
 		"allow-list":           "printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, media: dk-22210, media_allowed: [dk-22210, dk-22214, dk-11204]}]",
+		"feed_mm":              "printers: [{id: a, model: RG-MTP80B, transport: {kind: bt, address: \"AA:BB:CC:DD:EE:FF\"}, feed_mm: 20}]",
 	} {
 		if _, err := Load(write(y), true); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -256,6 +257,8 @@ func TestValidateModelTransport(t *testing.T) {
 		"printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, darkness: extra}]":                            {"darkness", "extra"},
 		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, black_mark_mm: 3}]":                           {"black mark", "QL-810W"},
 		"printers: [{id: a, model: LP2844, transport: {kind: tcp, host: x}, black_mark_mm: -1}]":                           {"black_mark_mm", "-1"},
+		"printers: [{id: a, model: QL-810W, transport: {kind: tcp, host: x}, feed_mm: 5}]":                                 {"feed_mm", "QL-810W"},
+		"printers: [{id: a, model: MX10, transport: {kind: ble, name: MX10}, feed_mm: -2}]":                                {"feed_mm", "-2"},
 		"printers: [{id: a, model: LP2742, transport: {kind: usb, device: /dev/usb/lp0}}]":                                 {"LP2742", "usb"},
 		"printers: [{id: a, model: LP2844, transport: {kind: serial}}]":                                                    {"serial", "device"},
 		"printers: [{id: a, model: LP2844, transport: {kind: serial, device: /dev/ttyS0, baud: 9601}}]":                    {"baud", "9601"},

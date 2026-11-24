@@ -83,6 +83,7 @@ printers:
   #   name: REGO
   #   model: RG-MTP80B
   #   transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
+  #   feed_mm: 18               # paper fed after each label (receipt and cat printers); default per model
   #   media: paper-80           # paper-57 for ESCPOS-58
   # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi; the user needs group `lp`)
   # - id: pt9500

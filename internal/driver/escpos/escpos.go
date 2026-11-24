@@ -17,8 +17,8 @@ import (
 )
 
 func init() {
-	driver.Register("escpos", func(m *devicedb.Model, _ driver.Options) (driver.Driver, error) {
-		return &escpos{model: m, confirm: time.Duration(m.Quirk("confirm_timeout_ms", 20000)) * time.Millisecond,
+	driver.Register("escpos", func(m *devicedb.Model, o driver.Options) (driver.Driver, error) {
+		return &escpos{model: m, feed: o.FeedDots(m, 80), confirm: time.Duration(m.Quirk("confirm_timeout_ms", 20000)) * time.Millisecond,
 			poll: time.Second, coverWait: 2 * time.Minute}, nil
 	})
 }
@@ -49,6 +49,7 @@ const (
 
 type escpos struct {
 	model     *devicedb.Model
+	feed      int           // dot rows fed after each label
 	confirm   time.Duration // how long to wait for a label's GS r 1 answer; tests shorten these
 	poll      time.Duration // how often to ask DLE EOT 2 (cover, paper) while waiting
 	coverWait time.Duration // how long a label may wait for an open cover to close
@@ -67,7 +68,7 @@ func (d *escpos) Encode(w io.Writer, job *driver.Job) error {
 func (d *escpos) appendPage(b []byte, pg *image.Gray) []byte {
 	b = append(b, 0x1B, 0x40)
 	b = appendRaster(b, pg, d.model.HeadPins)
-	for n := d.model.Quirk("feed_lines", 80); n > 0; n -= 255 {
+	for n := d.feed; n > 0; n -= 255 {
 		b = append(b, 0x1B, 0x4A, byte(min(n, 255))) // ESC J: n dot rows (ESC d counts text lines, ~4 mm each)
 	}
 	if d.model.QuirkBool("cutter") {

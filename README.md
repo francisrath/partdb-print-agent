@@ -512,6 +512,7 @@ ESC/POS printers over Bluetooth Classic: `RG-MTP80B` (REGO, 80 mm paper, 576 dot
 Bluetooth name), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
 raster driver (`GS v 0`). A model that takes one paper width needs no `media:`; set `paper-80` or `paper-57`
 for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands.
+`feed_mm:` sets how much paper is fed after each label (default 18 mm), if yours tears off too short or long.
 
 ```yaml
 - id: rego

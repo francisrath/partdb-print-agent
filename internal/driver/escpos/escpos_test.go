@@ -142,7 +142,7 @@ func TestEncodeBandsPaddingCutter(t *testing.T) {
 
 func TestFeedOver255(t *testing.T) {
 	d := newDriver(t, false)
-	d.model.Quirks["feed_lines"] = 300
+	d.feed = 300
 	got := encode(t, d, img(8, 1, func(int, int) bool { return false }))
 	if want := []byte{0x1B, 0x4A, 0xFF, 0x1B, 0x4A, 0x2D}; !bytes.HasSuffix(got, want) {
 		t.Errorf("tail % x", got)
@@ -501,5 +501,17 @@ func TestStatusSilentSaysPowerCycle(t *testing.T) {
 	_, err := newDriver(t, false).Status(context.Background(), &fake{})
 	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "off and on") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// feed_mm overrides the model's feed: 10 mm at 203 dpi is 80 dot rows.
+func TestFeedMM(t *testing.T) {
+	m, _ := devicedb.Default().Model("RG-MTP80B")
+	d, err := driver.New(m, driver.Options{FeedMM: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := encode(t, d.(*escpos), img(8, 1, func(int, int) bool { return true })); !bytes.HasSuffix(got, []byte{0x1B, 0x4A, 80}) {
+		t.Errorf("tail % x", got[len(got)-6:])
 	}
 }

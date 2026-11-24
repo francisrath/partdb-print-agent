@@ -289,7 +289,7 @@ func TestEscposModels(t *testing.T) {
 			continue
 		}
 		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt"}) ||
-			m.Quirk("feed_lines", 0) != 128 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
+			m.Quirk("feed_lines", 0) != 144 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
 			t.Errorf("%s: %+v", id, m)
 		}
 		md := db.MediaFor(m)

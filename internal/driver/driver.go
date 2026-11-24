@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -32,9 +33,19 @@ type Options struct {
 	NoSNMP        bool
 	Darkness      string  // cat, epl: light | normal | dark ("" = normal)
 	BlackMarkMM   float64 // epl: black mark thickness; 0 = gap (or continuous) sensing
+	FeedMM        float64 // cat, escpos: paper fed after each label; 0 = the model's feed_lines
 	// zpl: move the print (dots; x > 0 right, y > 0 down) or widen it (0 = the media's width).
 	// Set by `pdb-print try` while it looks for what fixes a cut-off label.
 	OffsetXDots, OffsetYDots, PrintWidthDots int
+}
+
+// FeedDots is the paper to feed after each label, in dot rows: FeedMM at the model's dpi, else the
+// model's feed_lines (def without one).
+func (o Options) FeedDots(m *devicedb.Model, def int) int {
+	if o.FeedMM > 0 {
+		return int(math.Round(o.FeedMM * float64(m.DPI) / 25.4))
+	}
+	return m.Quirk("feed_lines", def)
 }
 
 // Result is what a print did.
