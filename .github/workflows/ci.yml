@@ -46,6 +46,11 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+          # a key of its own (setup-go hashes these files): with go.sum alone it shares lint's and
+          # packaging's key, and whichever job saves first leaves the test and race builds out
+          cache-dependency-path: |
+            go.sum
+            go.mod
       - run: go vet ./...
       # Tests never print: printers and Part-DB are faked on localhost.
       - run: go test ./...
