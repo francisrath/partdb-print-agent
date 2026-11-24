@@ -104,6 +104,7 @@ type Service struct {
 	beforePublish   func()                                                       // tests: between an online check returning and its result being stored
 	probeTimeout    time.Duration                                                // USB online check; 0 = 2 s
 	openDevice      func(path string) (io.Closer, error)                         // USB online check; nil = open read/write
+	findUSB         func(usbID, serial string) (string, error)                   // USB online check; nil = usb.Find
 	waitingForCheck func()                                                       // tests: an online call is about to wait for a running check
 	newDriver       func(*devicedb.Model, driver.Options) (driver.Driver, error) // tests: a fake driver; nil = driver.New
 	r               *render.Renderer

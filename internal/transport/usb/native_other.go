@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func listNative() ([]Printer, error) {
+func listNative(bool) ([]Printer, error) {
 	return nil, errors.New("USB printers are only supported on Linux and Windows for now")
 }
 

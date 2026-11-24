@@ -23,10 +23,14 @@ const (
 	idBufLen       = 4094     // Microsoft: larger buffers fail on some printers
 	ioctlTimeout   = 2 * time.Second
 	writeChunk     = 64 << 10
+	// writeTimeout bounds one chunk. Longer than drainTimeout (sized for the idle tail on Linux): a
+	// printer may pause mid-job (head cooling, a cut) and Linux usblp writes wait as long as it takes.
+	writeTimeout = 30 * time.Second
 )
 
 // listNative lists the printers bound to usbprint.sys. Device is the interface path to open.
-func listNative() ([]Printer, error) {
+// withIDs opens each printer for its IEEE 1284 ID.
+func listNative(withIDs bool) ([]Printer, error) {
 	set, err := windows.SetupDiGetClassDevsEx(&usbprintGUID, "", 0, windows.DIGCF_PRESENT|windows.DIGCF_DEVICEINTERFACE, 0, "")
 	if err != nil {
 		return nil, err
@@ -43,7 +47,7 @@ func listNative() ([]Printer, error) {
 		}
 		id, err := set.DeviceInstanceID(info)
 		if err != nil {
-			return nil, err
+			continue // unplugged while we looked
 		}
 		paths, err := windows.CM_Get_Device_Interface_List(id, &usbprintGUID, windows.CM_GET_DEVICE_INTERFACE_LIST_PRESENT)
 		if err != nil || len(paths) == 0 || paths[0] == "" {
@@ -52,9 +56,13 @@ func listNative() ([]Printer, error) {
 		parent, _ := windows.SetupDiGetDeviceProperty(set, info, &devpkeyParent)
 		parentID, _ := parent.(string)
 		usbID, serial := usbIDSerial(id, parentID)
-		// a printer that won't answer (busy, going away) is still listed, without its 1284 ID
-		devID, _ := deviceID(paths[0])
-		out = append(out, Printer{Device: paths[0], USBID: usbID, Serial: serial, IEEE1284: ParseIEEE1284(devID)})
+		p := Printer{Device: paths[0], USBID: usbID, Serial: serial}
+		if withIDs {
+			// a printer that won't answer (busy, going away) is still listed, without its 1284 ID
+			devID, _ := deviceID(paths[0])
+			p.IEEE1284 = ParseIEEE1284(devID)
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Device < out[j].Device })
 	return out, nil
@@ -110,19 +118,30 @@ func (d *winDevice) do(timeout time.Duration, op func(*uint32, *windows.Overlapp
 	defer windows.CloseHandle(ev)
 	o := &windows.Overlapped{HEvent: ev} // on the heap: the driver writes to it after op returns
 	var n uint32
+	cancelled := false
 	err = op(&n, o)
 	if errors.Is(err, windows.ERROR_IO_PENDING) {
 		wait := uint32(windows.INFINITE)
 		if timeout >= 0 {
 			wait = uint32(timeout.Milliseconds())
 		}
-		if ev, werr := windows.WaitForSingleObject(o.HEvent, wait); werr != nil || ev != windows.WAIT_OBJECT_0 {
-			_ = windows.CancelIoEx(d.h, o)
+		if r, werr := windows.WaitForSingleObject(o.HEvent, wait); werr != nil || r != windows.WAIT_OBJECT_0 {
+			cancelled = windows.CancelIoEx(d.h, o) == nil
 		}
 		err = windows.GetOverlappedResult(d.h, o, &n, true) // always: the buffers are in use until it's done
 	}
+	return overlappedResult(n, err, cancelled)
+}
+
+// overlappedResult maps an ended operation: our own cancel is a timeout (os.ErrDeadlineExceeded when
+// nothing moved), an abort we didn't ask for means the printer went away (Windows aborts pending I/O
+// on removal).
+func overlappedResult(n uint32, err error, cancelled bool) (int, error) {
 	if errors.Is(err, windows.ERROR_OPERATION_ABORTED) {
-		if n == 0 {
+		switch {
+		case !cancelled:
+			return int(n), fmt.Errorf("printer gone? %w", err)
+		case n == 0:
 			return 0, os.ErrDeadlineExceeded
 		}
 		err = nil
@@ -148,16 +167,16 @@ func (d *winDevice) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-// Write sends p in chunks; a chunk the printer doesn't take within drainTimeout (out of paper,
+// Write sends p in chunks; a chunk the printer doesn't take within writeTimeout (out of paper,
 // stalled) is cancelled. A write completes when usbprint has sent it, so Close needs no drain.
 func (d *winDevice) Write(p []byte) (int, error) {
 	var total int
 	for len(p) > 0 {
 		chunk := p[:min(len(p), writeChunk)]
-		n, err := d.do(drainTimeout, func(n *uint32, o *windows.Overlapped) error { return windows.WriteFile(d.h, chunk, n, o) })
+		n, err := d.do(writeTimeout, func(n *uint32, o *windows.Overlapped) error { return windows.WriteFile(d.h, chunk, n, o) })
 		total += n
 		if errors.Is(err, os.ErrDeadlineExceeded) || err == nil && n < len(chunk) {
-			return total, fmt.Errorf("the printer took no data for %v (%d of %d bytes sent)", drainTimeout, total, total+len(p)-n)
+			return total, fmt.Errorf("the printer took no data for %v (%d of %d bytes sent)", writeTimeout, total, total+len(p)-n)
 		}
 		if err != nil {
 			return total, err

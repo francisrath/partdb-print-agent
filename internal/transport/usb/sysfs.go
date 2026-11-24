@@ -20,9 +20,13 @@ type Printer struct {
 
 // List returns the USB printers the OS driver has bound: Linux usblp, Windows usbprint.sys.
 // A non-empty sysfs reads that tree instead, on any OS (tests use fake trees).
-func List(sysfs string) ([]Printer, error) {
+func List(sysfs string) ([]Printer, error) { return list(sysfs, true) }
+
+// list skips the IEEE 1284 IDs when withIDs is false where reading them costs I/O (Windows opens
+// each printer for them); Find needs only USB ids and serials, and runs at every job and heartbeat.
+func list(sysfs string, withIDs bool) ([]Printer, error) {
 	if sysfs == "" {
-		return listNative()
+		return listNative(withIDs)
 	}
 	return listSysfs(sysfs)
 }
@@ -93,13 +97,13 @@ func ParseIEEE1284(s string) map[string]string {
 
 // Find returns the device of the printer with usbID (and serial, if given).
 func Find(sysfs, usbID, serial string) (string, error) {
-	ps, err := List(sysfs)
+	ps, err := list(sysfs, false)
 	if err != nil {
 		return "", err
 	}
 	var hits []Printer
 	for _, p := range ps {
-		if p.USBID == usbID && (serial == "" || p.Serial == serial) {
+		if p.USBID == usbID && (serial == "" || strings.EqualFold(p.Serial, serial)) {
 			hits = append(hits, p)
 		}
 	}
@@ -121,5 +125,5 @@ func Find(sysfs, usbID, serial string) (string, error) {
 	if serial == "" && len(serials) == len(hits) {
 		return "", fmt.Errorf("%d USB printers %s connected: set serial (%s)", len(hits), usbID, strings.Join(serials, ", "))
 	}
-	return "", fmt.Errorf("%d USB printers %s connected that serial can't tell apart: use device: /dev/usb/lpN instead", len(hits), usbID)
+	return "", fmt.Errorf("%d USB printers %s connected that serial can't tell apart: set device: to the path pdb-print discover shows instead", len(hits), usbID)
 }

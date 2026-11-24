@@ -25,7 +25,7 @@ func init() {
 const pollInterval = 50 * time.Millisecond
 
 type Transport struct {
-	Device      string        // /dev/usb/lp0; looked up from USBID (+ Serial) at each Open when set
+	Device      string        // /dev/usb/lp0 (Windows: \\?\USB#… path); looked up from USBID (+ Serial) at each Open when set
 	USBID       string        // 04f9:209c
 	Serial      string        // tells identical printers apart
 	Sysfs       string        // "" = /sys (tests use a fake tree)
@@ -44,7 +44,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	if open == nil {
 		open = OpenDevice
 	}
-	if t.USBID != "" { // a replugged printer may come back as another lpN
+	if t.USBID != "" { // a replugged printer may come back as another device
 		dev, err := Find(t.Sysfs, t.USBID, t.Serial)
 		if err != nil {
 			return err
