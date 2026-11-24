@@ -113,7 +113,11 @@ func openPrinter(device string) (io.ReadWriteCloser, error) {
 	}
 	d := f.(*winDevice)
 	if typ, err := d.dword(ioctlGetInterfaceType); err == nil && typ == usbPrinterInterfaceDual {
-		if p, err := d.dword(ioctlGetProtocol); err == nil && p == protocolIPP && d.setProtocol(protocolBIDI) == nil {
+		if p, err := d.dword(ioctlGetProtocol); err == nil && p == protocolIPP {
+			if err := d.setProtocol(protocolBIDI); err != nil { // left in IPP, the printer would drop the job
+				d.Close()
+				return nil, fmt.Errorf("switch the printer out of IPP over USB: %w", err)
+			}
 			d.restore = protocolIPP
 		}
 	}

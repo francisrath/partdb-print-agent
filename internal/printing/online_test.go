@@ -244,6 +244,7 @@ func TestOnlineSlowUSBFind(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	s.findUSB = func(string, string) (string, error) { <-release; return "/dev/usb/lp9", nil }
+	s.openDevice = func(string) (io.Closer, error) { return nil, errors.New("no real USB in tests") }
 	p := &config.Printer{ID: "pt", Model: "PT-9500PC", Transport: config.Transport{Kind: "usb", USBID: "04f9:200f"}}
 	start := time.Now()
 	if s.Online(p) || time.Since(start) > time.Second {

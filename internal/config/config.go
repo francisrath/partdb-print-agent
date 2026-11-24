@@ -233,6 +233,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
+	usbs := map[string]string{} // two entries for one USB printer would run jobs on it at once
 	for i := range c.Printers {
 		p := &c.Printers[i]
 		if p.ID == "" {
@@ -244,6 +245,13 @@ func (c *Config) Validate() error {
 		seen[p.ID] = true
 		if err := p.validate(); err != nil {
 			return fmt.Errorf("printer %q: %w", p.ID, err)
+		}
+		if t := p.Transport; t.Kind == "usb" {
+			key := t.USBID + "|" + strings.ToLower(t.Serial) + "|" + t.Device
+			if other, ok := usbs[key]; ok {
+				return fmt.Errorf("printers %q and %q are the same USB printer", other, p.ID)
+			}
+			usbs[key] = p.ID
 		}
 	}
 	if c.HotFolder.Enabled && !seen[c.HotFolder.Printer] {
