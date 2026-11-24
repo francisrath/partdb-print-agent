@@ -301,7 +301,7 @@ in when a status read says nothing. `pdb-print printers status ql810` and the we
 ### Brother QL
 
 Over the network (port 9100), or USB on Linux through the `usblp` driver (add the user to group `lp`) and on
-Windows. The QL-810W prints nothing over USB on Windows yet: use it over the network there.
+Windows.
 On the network the agent reads the printer over SNMP (UDP 161) before each job: the loaded roll, errors
 (cover open, wrong media, empty) and, after sending, whether the label actually printed.
 
