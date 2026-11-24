@@ -50,7 +50,9 @@ func (d *dialog) output() string {
 // answer waits for prompt (after the last one answered) and types ans; hook runs just before.
 func (d *dialog) answer(prompt, ans string, hook ...func()) {
 	d.t.Helper()
-	for end := time.Now().Add(20 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+	// 3 minutes: the first test print compiles PDFium, which with -race and a cold cache (CI) takes
+	// well over 20 s
+	for end := time.Now().Add(3 * time.Minute); ; time.Sleep(5 * time.Millisecond) {
 		out := d.output()
 		if i := strings.Index(out[d.seen:], prompt); i >= 0 {
 			d.seen += i + len(prompt)
