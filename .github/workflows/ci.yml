@@ -13,13 +13,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # docs-only PRs (docs/, top-level Markdown) skip the jobs below; skipped jobs still let `ci` pass
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$PR" ]; then echo code=true >>"$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
+          if grep -qvE '^docs/|^[^/]+\.md$' <<<"$files"; then echo code=true; else echo code=false; fi >>"$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,7 +63,10 @@ jobs:
         run: CGO_ENABLED=1 go build -o /dev/null ./cmd/pdb-print-ble
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,7 +93,10 @@ jobs:
           done
 
   packaging:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,7 +138,10 @@ jobs:
   # the Windows release half (.goreleaser-windows.yaml plus setup.exe), as release.yml's release-windows
   # job runs it
   packaging-windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04 # as release-windows: setup.exe builds with the image's Wine
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,11 +155,39 @@ jobs:
           distribution: goreleaser
           version: v2.20.3
           args: release --snapshot --clean --skip=publish --config .goreleaser-windows.yaml
-      - name: install Wine
+      # Wine's debs come from Ubuntu's mirror, which is sometimes very slow; keep them in the Actions cache.
+      # Caches saved on main are visible to every PR, so pushes to main keep it filled.
+      - id: image
+        run: echo "version=$ImageOS-$ImageVersion" >>"$GITHUB_OUTPUT"
+      - id: debs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/wine-debs
+          key: wine-debs-${{ steps.image.outputs.version }}-${{ github.run_id }}
+          restore-keys: |
+            wine-debs-${{ steps.image.outputs.version }}-
+            wine-debs-
+      - id: wine
+        name: install Wine
+        timeout-minutes: 10 # without cached debs a slow mirror can take minutes; fail rather than hang
         run: |
+          mkdir -p ~/wine-debs/partial
+          before=$(find ~/wine-debs -name '*.deb' | wc -l)
           sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine64 wine32:i386 xvfb
+          # the runner's regional mirror was down to 30-60 KB/s (2026-11-24); Ubuntu's Azure CDN mirror instead
+          sudo sed -i -E 's#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://azure.archive.ubuntu.com/ubuntu/#' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives="$HOME/wine-debs" \
+            install -y --no-install-recommends wine wine64 wine32:i386 xvfb
+          [ "$(find ~/wine-debs -name '*.deb' | wc -l)" = "$before" ] || echo downloaded=true >>"$GITHUB_OUTPUT"
+      # also after a timeout: the debs downloaded so far make the next run faster
+      - if: always() && steps.image.outcome == 'success'
+        run: sudo rm -rf ~/wine-debs/partial ~/wine-debs/lock && sudo chown -R "$USER" ~/wine-debs
+      - if: always() && steps.image.outcome == 'success' && (steps.wine.outcome != 'success' || steps.wine.outputs.downloaded == 'true')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/wine-debs
+          key: ${{ steps.debs.outputs.cache-primary-key }}
       - name: build setup.exe
         run: scripts/windows-setup.sh
       - name: check packages
@@ -151,7 +207,10 @@ jobs:
 
   # the macOS release half (.goreleaser-darwin.yaml), as release.yml's release-darwin job runs it
   packaging-darwin:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -190,3 +249,16 @@ jobs:
           grep -qx pdb-print-ble <<<"$files"
           grep -q ' pdb-print_.*_darwin_universal.tar.gz$' dist/checksums-darwin.txt
           grep -q 'binary "pdb-print-ble"' dist/homebrew/Casks/pdb-print.rb
+
+  # the one required status check: fails if any job above failed or was cancelled (skipped is fine)
+  ci:
+    if: always()
+    needs: [changes, test, lint, packaging, packaging-windows, packaging-darwin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          ! grep -qE 'failure|cancelled' <<<"$RESULTS"
