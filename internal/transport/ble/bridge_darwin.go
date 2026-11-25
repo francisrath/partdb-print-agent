@@ -445,7 +445,12 @@ type stderrTail struct{ b []byte }
 func (w *stderrTail) Write(p []byte) (int, error) {
 	w.b = append(w.b, p...)
 	if len(w.b) > 4096 {
-		w.b = w.b[len(w.b)-1024:]
+		// keep the last 1 KiB from a line start, so a long fatal line keeps its mark
+		cut := bytes.LastIndexByte(w.b[:len(w.b)-1024], '\n') + 1
+		if len(w.b)-cut > 64<<10 { // ponytail: one endless line still gets cut, at 64 KiB
+			cut = len(w.b) - 1024
+		}
+		w.b = w.b[cut:]
 	}
 	return len(p), nil
 }

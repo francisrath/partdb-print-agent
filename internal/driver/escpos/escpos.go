@@ -255,22 +255,27 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 	var rs replies
 	waiting, confirmed := true, 0
 	for i, pg := range pages {
+		if i > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, stopped(err, i, len(pages))
+			}
+		}
 		if waiting {
 			if err := drain(t, &rs); err != nil {
-				return nil, d.dropped(err, confirmed, len(pages))
+				return nil, d.dropped(err, confirmed, i, len(pages))
 			}
 		}
 		if _, err := t.Write(pg); err != nil {
 			if i == 0 {
 				return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
 			}
-			return nil, d.dropped(err, confirmed, len(pages))
+			return nil, d.dropped(err, confirmed, i+1, len(pages))
 		}
 		if !waiting {
 			continue
 		}
 		if _, err := t.Write([]byte{0x1D, 0x72, 0x01}); err != nil {
-			return nil, d.dropped(err, confirmed, len(pages))
+			return nil, d.dropped(err, confirmed, i+1, len(pages))
 		}
 		ok, err := d.await(ctx, t, &rs, res, i, len(pages))
 		if err != nil {
@@ -307,6 +312,9 @@ func (d *escpos) await(ctx context.Context, t driver.Transport, rs *replies, res
 			return false, nil
 		}
 		if err := ctx.Err(); err != nil {
+			if i < n-1 {
+				return false, stopped(err, i+1, n)
+			}
 			res.Message = "sent (unconfirmed: stopped waiting: " + err.Error() + ")"
 			return false, nil
 		}
@@ -349,23 +357,33 @@ func (d *escpos) await(ctx context.Context, t driver.Transport, rs *replies, res
 		case errors.Is(err, driver.ErrNoReadback):
 			return false, nil // no read channel: don't spin
 		case err != nil && !isTimeout(err):
-			return false, d.dropped(err, i, n)
+			return false, d.dropped(err, i, i+1, n)
 		case err == nil:
 			time.Sleep(time.Millisecond) // (0, nil): no answer, don't spin
 		}
 		if time.Now().After(nextPoll) {
 			if _, err := t.Write([]byte{0x10, 0x04, 0x02}); err != nil {
-				return false, d.dropped(err, i, n)
+				return false, d.dropped(err, i, i+1, n)
 			}
 			nextPoll = time.Now().Add(d.poll)
 		}
 	}
 }
 
-func (d *escpos) dropped(err error, printed, n int) error {
+// dropped: labels [printed, sent) were sent but not confirmed, so any of them may have printed.
+func (d *escpos) dropped(err error, printed, sent, n int) error {
 	what := "the label was sent, it may have printed"
-	if n > 1 {
+	switch {
+	case n == 1:
+	case sent-printed > 1:
+		what = fmt.Sprintf("%d of %d labels printed, labels %d to %d may have", printed, n, printed+1, sent)
+	default:
 		what = fmt.Sprintf("%d of %d labels printed, the next may have", printed, n)
 	}
 	return &driver.Error{Code: driver.CommsError, Err: err, Detail: "connection dropped: " + what + ": " + err.Error()}
+}
+
+// stopped: the job was cancelled after sent labels; the rest are never sent.
+func stopped(err error, sent, n int) error {
+	return fmt.Errorf("%w: %d of %d labels sent, the rest weren't", err, sent, n)
 }

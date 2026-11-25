@@ -691,13 +691,14 @@ func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *devicedb
 // printer's usual paper), or the only one it takes. Then it needs no `media:`. The model's list, not
 // media_allowed: a one-entry allow-list says what may be loaded, not what is.
 func onlyMedia(p *config.Printer, model *devicedb.Model) (devicedb.Media, bool) {
-	if id := model.Defaults["media"]; id != "" {
-		return LookupMedia(p, id)
+	id := model.Defaults["media"]
+	if id == "" && len(model.Media) == 1 {
+		id = model.Media[0]
 	}
-	if len(model.Media) == 1 {
-		return LookupMedia(p, model.Media[0])
+	if id == "" || !slices.Contains(p.AllowedMedia(model), id) {
+		return devicedb.Media{}, false
 	}
-	return devicedb.Media{}, false
+	return LookupMedia(p, id)
 }
 
 // FittingProfiles lists the label profiles of the config's Part-DB instance whose labels fit m,

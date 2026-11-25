@@ -592,3 +592,17 @@ func TestEchoSkipsFatalLine(t *testing.T) {
 		t.Errorf("echo %q, want %q", got, want)
 	}
 }
+
+// A fatal line longer than the kept tail still reaches fatalLine whole.
+func TestStderrTailKeepsLongFatalLine(t *testing.T) {
+	tail := new(stderrTail)
+	msg := strings.Repeat("x", 2000)
+	for _, p := range []string{strings.Repeat("pdb-print-ble: log\n", 200), fatalMark + msg + "\n"} {
+		if _, err := tail.Write([]byte(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := fatalLine(string(tail.b)); got != msg {
+		t.Errorf("fatalLine = %d bytes, want %d", len(got), len(msg))
+	}
+}

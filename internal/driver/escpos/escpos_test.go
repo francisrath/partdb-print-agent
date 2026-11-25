@@ -26,6 +26,7 @@ type fake struct {
 	readErr error           // returned by Read instead of a timeout once the stream is empty
 	zero    bool            // Read returns (0, nil) when empty
 	onGSR   func()          // called when GS r is written
+	failAt  int             // the failAt-th Write (1-based) fails with io.EOF
 	timeout []time.Duration // SetReadTimeout calls
 }
 
@@ -36,6 +37,9 @@ func (f *fake) Close() error               { return nil }
 func (f *fake) Kind() string               { return "bt" }
 func (f *fake) Write(p []byte) (int, error) {
 	f.written = append(f.written, append([]byte(nil), p...))
+	if len(f.written) == f.failAt {
+		return 0, io.EOF
+	}
 	if f.onGSR != nil && bytes.Equal(p, []byte{0x1D, 0x72, 0x01}) {
 		f.onGSR()
 	}
@@ -532,5 +536,38 @@ func TestEncodeCentresNarrowPaper(t *testing.T) {
 	row := got[10:70]
 	if !bytes.Equal(row[:12], make([]byte, 12)) || !bytes.Equal(row[12:], bytes.Repeat([]byte{0xFF}, 48)) {
 		t.Errorf("row % x", row)
+	}
+}
+
+// Cancelled while label 1 of 3 waits: labels 2 and 3 are never sent.
+func TestPrintCtxStopsRemainingLabels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := newDriver(t, false)
+	d.confirm = time.Minute
+	f := &fake{onGSR: cancel}
+	_, err := d.Print(ctx, f, pagesJob(3))
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "1 of 3 labels sent") {
+		t.Fatalf("err = %v", err)
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 1 {
+		t.Errorf("%d labels sent, want 1", pages)
+	}
+}
+
+// Label 1 got no GS r answer, so labels 2 and 3 went unconfirmed: a drop names all three.
+func TestPrintDroppedNamesUnconfirmedLabels(t *testing.T) {
+	d := newDriver(t, false)
+	d.confirm = 10 * time.Millisecond
+	_, err := d.Print(context.Background(), &fake{failAt: 4}, pagesJob(3)) // page, GS r, page, page
+	var de *driver.Error
+	if !errors.As(err, &de) || !strings.Contains(de.Detail, "0 of 3 labels printed, labels 1 to 3 may have") {
+		t.Errorf("err = %v", err)
 	}
 }

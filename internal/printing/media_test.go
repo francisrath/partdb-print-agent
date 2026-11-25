@@ -256,4 +256,8 @@ func TestMediaModelDefault(t *testing.T) {
 	if err != nil || got.ID != "paper-57" {
 		t.Fatalf("configured: got %q, %v", got.ID, err)
 	}
+	// a default outside media_allowed is never picked: the job asks for media: instead
+	if got, _, err = s.pickMedia(&config.Printer{ID: "p", Model: "RG-MTP80B", MediaAllowed: []string{"paper-57"}}, m, nil); err == nil {
+		t.Errorf("default outside media_allowed: got %q", got.ID)
+	}
 }
