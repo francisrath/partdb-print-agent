@@ -255,15 +255,13 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 	var rs replies
 	waiting, confirmed := true, 0
 	for i, pg := range pages {
-		if i > 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, stopped(err, i, len(pages))
-			}
-		}
 		if waiting {
 			if err := drain(t, &rs); err != nil {
 				return nil, d.dropped(err, confirmed, i, len(pages))
 			}
+		}
+		if err := ctx.Err(); err != nil { // after drain: it can take a while
+			return nil, stopped(err, i, len(pages))
 		}
 		if _, err := t.Write(pg); err != nil {
 			if i == 0 {

@@ -27,6 +27,7 @@ type fake struct {
 	zero    bool            // Read returns (0, nil) when empty
 	onGSR   func()          // called when GS r is written
 	failAt  int             // the failAt-th Write (1-based) fails with io.EOF
+	onRead  func()          // called on every Read
 	timeout []time.Duration // SetReadTimeout calls
 }
 
@@ -50,6 +51,9 @@ func (f *fake) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 func (f *fake) Read(p []byte) (int, error) {
+	if f.onRead != nil {
+		f.onRead()
+	}
 	if len(f.in) == 0 {
 		time.Sleep(time.Millisecond)
 		if f.readErr != nil {
@@ -569,5 +573,21 @@ func TestPrintDroppedNamesUnconfirmedLabels(t *testing.T) {
 	var de *driver.Error
 	if !errors.As(err, &de) || !strings.Contains(de.Detail, "0 of 3 labels printed, labels 1 to 3 may have") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// Cancelled while draining before label 1: nothing is sent.
+func TestPrintCtxDuringDrainSendsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fake{onRead: cancel}
+	_, err := newDriver(t, false).Print(ctx, f, pagesJob(2))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, w := range f.written {
+		if len(w) > 3 {
+			t.Fatal("a label was sent after the cancel")
+		}
 	}
 }
