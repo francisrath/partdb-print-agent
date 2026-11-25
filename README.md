@@ -516,7 +516,7 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
 ESC/POS printers over Bluetooth Classic: `RG-MTP80B` (REGO, 80 mm paper, 576 dots; recognised by its
 Bluetooth name), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
 raster driver (`GS v 0`). The RG-MTP80B prints on 80 mm paper unless `media: paper-57` says a 57 mm roll is
-loaded (it sits centred in the holder, and so does the print); set `paper-80` or `paper-57` for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands.
+loaded (it sits centred in the holder, and so does the print); set `paper-80` or `paper-57` for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands. Use continuous paper with the printer's Paper Type set to Normal: in black-mark mode it splits each label into pieces whenever Bluetooth data pauses, and it has no page mode or stored graphics (`ESC L`, `GS ( L`) to avoid that.
 `feed_mm:` sets how much paper is fed after each label (default 18 mm), if yours tears off too short or long.
 
 ```yaml

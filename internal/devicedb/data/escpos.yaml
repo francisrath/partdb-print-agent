@@ -17,6 +17,6 @@ models:
     media: [paper-80, paper-57] # a 57 mm roll sits centred in the holder: the driver centres it
     defaults: {media: paper-80}
     tested: maintainer
-    tested_note: "Bluetooth Classic on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands"
+    tested_note: "Bluetooth Classic on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands. Continuous paper only: set Paper Type to Normal (black-mark labels print in pieces)"
   - {<<: *escpos, id: ESCPOS-80, vendor: Generic, match: {}, media: [paper-80], defaults: {}, quirks: {feed_lines: 144, confirm_timeout_ms: 20000}, tested: "", tested_note: ""}
   - {<<: *escpos, id: ESCPOS-58, vendor: Generic, match: {}, defaults: {}, quirks: {feed_lines: 144, confirm_timeout_ms: 20000}, head_pins: 384, media: [paper-57], tested: "", tested_note: ""}
