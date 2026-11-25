@@ -442,15 +442,22 @@ func (e *echo) Write(p []byte) (int, error) {
 // stderrTail keeps the end of the helper's stderr (exec copies it from one goroutine; read it after Wait).
 type stderrTail struct{ b []byte }
 
+const maxLine = 4096 // bytes kept of one stderr line
+
 func (w *stderrTail) Write(p []byte) (int, error) {
-	w.b = append(w.b, p...)
-	if len(w.b) > 4096 {
-		// keep the last 1 KiB from a line start, so a long fatal line keeps its mark
-		cut := bytes.LastIndexByte(w.b[:len(w.b)-1024], '\n') + 1
-		if len(w.b)-cut > 64<<10 { // ponytail: one endless line still gets cut, at 64 KiB
-			cut = len(w.b) - 1024
+	n := len(p)
+	for len(p) > 0 {
+		line, rest, nl := bytes.Cut(p, []byte{'\n'})
+		p = rest
+		// each line keeps its first maxLine bytes, so a long fatal line keeps its mark
+		cur := len(w.b) - (bytes.LastIndexByte(w.b, '\n') + 1)
+		w.b = append(w.b, line[:min(len(line), max(maxLine-cur, 0))]...)
+		if nl {
+			w.b = append(w.b, '\n')
 		}
-		w.b = w.b[cut:]
 	}
-	return len(p), nil
+	if len(w.b) > 4096 { // keep the last lines, from a line start
+		w.b = w.b[bytes.LastIndexByte(w.b[:len(w.b)-1024], '\n')+1:]
+	}
+	return n, nil
 }

@@ -606,3 +606,16 @@ func TestStderrTailKeepsLongFatalLine(t *testing.T) {
 		t.Errorf("fatalLine = %d bytes, want %d", len(got), len(msg))
 	}
 }
+
+// A fatal line over 64 KiB, split across writes, keeps its mark and the start of its cause.
+func TestStderrTailKeepsHugeFatalLine(t *testing.T) {
+	tail := new(stderrTail)
+	tail.Write([]byte("pdb-print-ble: log\n" + fatalMark + "cause "))
+	for range 100 {
+		tail.Write([]byte(strings.Repeat("x", 1000)))
+	}
+	tail.Write([]byte("\n"))
+	if got := fatalLine(string(tail.b)); !strings.HasPrefix(got, "cause x") || len(got) > maxLine {
+		t.Errorf("fatalLine = %d bytes %.10q", len(got), got)
+	}
+}
