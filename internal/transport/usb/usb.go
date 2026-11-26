@@ -1,4 +1,5 @@
-// Package usb is the USB printer-class transport: Linux usblp (/dev/usb/lpN), Windows usbprint.sys.
+// Package usb is the USB printer-class transport: Linux usblp (/dev/usb/lpN), Windows usbprint.sys,
+// macOS through the helper pdb-print-usb.
 package usb
 
 import (
@@ -42,7 +43,7 @@ func (t *Transport) Kind() string { return "usb" }
 func (t *Transport) Open(ctx context.Context) error {
 	open := t.OpenFile
 	if open == nil {
-		open = openPrinter
+		open = func(device string) (io.ReadWriteCloser, error) { return openPrinter(ctx, device) }
 	}
 	if t.USBID != "" { // a replugged printer may come back as another device
 		dev, err := Find(t.Sysfs, t.USBID, t.Serial)

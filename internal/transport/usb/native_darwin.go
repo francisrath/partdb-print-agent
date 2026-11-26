@@ -15,7 +15,7 @@ import (
 )
 
 // macOS has no printer device to open: the helper pdb-print-usb (cgo, IOUSBHost) talks to the printer-class
-// interface, through the same client as the Bluetooth helper. Device is the interface's iokit:0x… id.
+// interface, through the same client as the Bluetooth helper. Device is the USB device's iokit:0x… id.
 
 func listNative(withIDs bool) ([]Printer, error) {
 	ps, err := ble.ListUSB(context.Background(), withIDs)
@@ -30,11 +30,11 @@ func listNative(withIDs bool) ([]Printer, error) {
 	return out, nil
 }
 
-// openPrinter opens the printer for a job; the helper waits a few seconds when macOS's own print queue
-// still has it.
-func openPrinter(device string) (io.ReadWriteCloser, error) {
+// openPrinter opens the printer for a job; the helper waits up to 20 s when macOS's own print queue
+// still has it, or until ctx ends.
+func openPrinter(ctx context.Context, device string) (io.ReadWriteCloser, error) {
 	t := ble.NewUSB(device)
-	if err := t.Open(context.Background()); err != nil {
+	if err := t.Open(ctx); err != nil {
 		return nil, err
 	}
 	return helperDevice{t}, nil
@@ -47,6 +47,9 @@ func (d helperDevice) SetReadDeadline(t time.Time) error {
 	d.SetReadTimeout(max(time.Until(t), time.Millisecond))
 	return nil
 }
+
+// FoundIsPresent: OpenDevice only lists printers, which Find has just done, so the online check skips it.
+const FoundIsPresent = true
 
 // OpenDevice is the online check's open: on macOS it only checks that the printer is connected, since
 // opening it would take the interface from macOS's own print queue (and start a helper) every heartbeat.

@@ -17,9 +17,8 @@ static char *dupErr(NSString *what, NSError *e) {
 	return strdup(s.UTF8String);
 }
 
-static int intProp(io_service_t s, CFStringRef key, int parents) {
-	IOOptionBits opt = parents ? kIORegistryIterateRecursively | kIORegistryIterateParents : 0;
-	CFTypeRef v = IORegistryEntrySearchCFProperty(s, kIOServicePlane, key, NULL, opt);
+static int intProp(io_service_t s, CFStringRef key) {
+	CFTypeRef v = IORegistryEntryCreateCFProperty(s, key, NULL, 0);
 	int n = -1;
 	if (v && CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue(v, kCFNumberIntType, &n);
 	if (v) CFRelease(v);
@@ -27,8 +26,7 @@ static int intProp(io_service_t s, CFStringRef key, int parents) {
 }
 
 static NSString *strProp(io_service_t s, CFStringRef key) {
-	CFTypeRef v = IORegistryEntrySearchCFProperty(s, kIOServicePlane, key, NULL,
-		kIORegistryIterateRecursively | kIORegistryIterateParents);
+	CFTypeRef v = IORegistryEntryCreateCFProperty(s, key, NULL, 0); // the device's own: never a hub's serial
 	NSString *out = @"";
 	if (v && CFGetTypeID(v) == CFStringGetTypeID()) out = [(__bridge NSString *)v copy];
 	if (v) CFRelease(v);
@@ -37,15 +35,16 @@ static NSString *strProp(io_service_t s, CFStringRef key) {
 
 // isPrinter: a USB device with a raster printer-class interface (class 7, protocol 1 or 2) among its
 // settings. UsbDeviceSignature lists every interface class/subclass/protocol of the device whatever setting
-// is current: macOS's own queue leaves interfaces on IPP over USB (protocol 4) while it prints.
+// is current: macOS's own queue leaves interfaces on IPP over USB (protocol 4) while it prints. Layout:
+// idVendor, idProduct, bcdDevice (2 bytes each), the device's class triple, then one triple per interface.
 static int isPrinter(io_service_t dev) {
 	CFTypeRef v = IORegistryEntryCreateCFProperty(dev, CFSTR("UsbDeviceSignature"), NULL, 0);
 	int found = 0;
 	if (v && CFGetTypeID(v) == CFDataGetTypeID()) {
-		NSData *d = (__bridge NSData *)v;
-		const uint8_t raster1[] = {7, 1, 1}, raster2[] = {7, 1, 2};
-		found = [d rangeOfData:[NSData dataWithBytes:raster1 length:3] options:0 range:NSMakeRange(0, d.length)].location != NSNotFound ||
-			[d rangeOfData:[NSData dataWithBytes:raster2 length:3] options:0 range:NSMakeRange(0, d.length)].location != NSNotFound;
+		const uint8_t *b = CFDataGetBytePtr(v);
+		for (CFIndex i = 9; !found && i + 3 <= CFDataGetLength(v); i += 3) {
+			found = b[i] == 7 && b[i + 1] == 1 && (b[i + 2] == 1 || b[i + 2] == 2);
+		}
 	}
 	if (v) CFRelease(v);
 	return found;
@@ -83,7 +82,7 @@ static IOUSBHostInterface *openRaster(io_service_t dev, int *busy, NSError **err
 	IOUSBHostInterface *found = nil;
 	io_service_t s;
 	while (!found && (s = IOIteratorNext(it))) {
-		if (IOObjectConformsTo(s, "IOUSBHostInterface") && intProp(s, CFSTR("bInterfaceClass"), 0) == 7) {
+		if (IOObjectConformsTo(s, "IOUSBHostInterface") && intProp(s, CFSTR("bInterfaceClass")) == 7) {
 			NSError *e = nil;
 			IOUSBHostInterface *iface = openIface(s, &e);
 			if (!iface) {
@@ -136,8 +135,8 @@ char *usbList(int withIDs) {
 					}
 				}
 				NSString *clean = [[ieee componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\t\n"]] componentsJoinedByString:@" "];
-				[out appendFormat:@"%#llx\t%d\t%d\t%@\t%@\n", id, intProp(s, CFSTR("idVendor"), 0),
-					intProp(s, CFSTR("idProduct"), 0), strProp(s, CFSTR("USB Serial Number")), clean];
+				[out appendFormat:@"%#llx\t%d\t%d\t%@\t%@\n", id, intProp(s, CFSTR("idVendor")),
+					intProp(s, CFSTR("idProduct")), strProp(s, CFSTR("USB Serial Number")), clean];
 			}
 			IOObjectRelease(s);
 		}
@@ -183,15 +182,19 @@ void *usbOpen(uint64_t entryID, char **err) {
 	}
 }
 
+// A chunk the printer doesn't take within 30 s fails the write: a whole job may take longer than that.
 int usbWrite(void *h, const void *p, int n, char **err) {
+	enum { chunk = 64 << 10 };
 	@autoreleasepool {
 		PDBDev *dev = (__bridge PDBDev *)h;
-		NSMutableData *data = [NSMutableData dataWithBytes:p length:n];
-		NSUInteger sent = 0;
-		NSError *e = nil;
-		if (![dev.outPipe sendIORequestWithData:data bytesTransferred:&sent completionTimeout:30 error:&e]) {
-			*err = dupErr([NSString stringWithFormat:@"write (%lu of %d bytes sent)", (unsigned long)sent, n], e);
-			return -1;
+		for (int off = 0; off < n; off += chunk) {
+			NSData *data = [NSData dataWithBytesNoCopy:(void *)((const char *)p + off) length:MIN(chunk, n - off) freeWhenDone:NO];
+			NSUInteger sent = 0;
+			NSError *e = nil;
+			if (![dev.outPipe sendIORequestWithData:[data mutableCopy] bytesTransferred:&sent completionTimeout:30 error:&e]) {
+				*err = dupErr([NSString stringWithFormat:@"write (%lu of %d bytes sent)", (unsigned long)(off + sent), n], e);
+				return -1;
+			}
 		}
 		return 0;
 	}
@@ -200,15 +203,14 @@ int usbWrite(void *h, const void *p, int n, char **err) {
 int usbRead(void *h, void *buf, int n, int timeoutMS, char **err) {
 	@autoreleasepool {
 		PDBDev *dev = (__bridge PDBDev *)h;
-		if (!dev.inPipe) {
-			usleep(timeoutMS * 1000); // a unidirectional printer never answers
-			return 0;
-		}
 		NSMutableData *data = [NSMutableData dataWithLength:n];
 		NSUInteger got = 0;
 		NSError *e = nil;
 		if (![dev.inPipe sendIORequestWithData:data bytesTransferred:&got completionTimeout:timeoutMS / 1000.0 error:&e]) {
-			if (e.code == kIOReturnTimeout || (unsigned)e.code == 0xe0004051u || e.code == kIOReturnAborted) return 0;
+			if (e.code == kIOReturnTimeout || (unsigned)e.code == 0xe0004051u || e.code == kIOReturnAborted) {
+				memcpy(buf, data.bytes, got); // a reply that ended on a full packet only ends at the timeout
+				return (int)got;
+			}
 			*err = dupErr(@"read", e);
 			return -1;
 		}
@@ -216,6 +218,8 @@ int usbRead(void *h, void *buf, int n, int timeoutMS, char **err) {
 		return (int)got;
 	}
 }
+
+int usbCanRead(void *h) { return ((__bridge PDBDev *)h).inPipe != nil; }
 
 void usbClose(void *h) {
 	@autoreleasepool {

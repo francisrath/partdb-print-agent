@@ -24,9 +24,10 @@ func (f *Frames) Send(typ byte, p []byte) error {
 
 // Link is an open connection to a printer.
 type Link struct {
-	MTU   int
-	Send  func([]byte) error
-	Close func()
+	MTU        int
+	NoReadback bool // the printer can't answer (USB: no bulk IN endpoint)
+	Send       func([]byte) error
+	Close      func()
 }
 
 // ReadOpen reads the client's Open frame; nil, nil when the input ends first.
@@ -56,7 +57,7 @@ func Relay(in io.Reader, out *Frames, open func() (Link, error)) error {
 		return err
 	}
 	defer c.Close()
-	ok, _ := json.Marshal(OK{MTU: c.MTU})
+	ok, _ := json.Marshal(OK{MTU: c.MTU, NoReadback: c.NoReadback})
 	if err := out.Send(TypeOK, ok); err != nil {
 		return err
 	}

@@ -254,7 +254,8 @@ queue: Brother's own driver and software (P-touch Editor) can print between pdb-
 same moment (the two jobs would mix). On macOS USB goes through the helper `pdb-print-usb`, shipped next to
 `pdb-print` in the macOS archive and the Homebrew cask; it needs no driver and asks for no permission. macOS
 adds its own (driverless) print queue for some printers, such as the QL-810W; it and pdb-print take turns:
-a pdb-print job right after one of that queue's waits up to about 10 s for the printer. That queue defaults
+a pdb-print job right after one of that queue's waits up to 15 s for the printer, then 5 s more while the printer
+finishes that label. That queue defaults
 to the smallest label size (12×12 mm on a QL), so pick the real size when you print through it. `mirror: true` and `upside_down: true` flip
 the printed image.
 

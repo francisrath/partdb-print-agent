@@ -50,7 +50,8 @@ const KindUSB = "usb"
 
 // OK is the payload of the OK answer to Open.
 type OK struct {
-	MTU int `json:"mtu"` // bytes per chunk
+	MTU        int  `json:"mtu"`                   // bytes per chunk
+	NoReadback bool `json:"no_readback,omitempty"` // usb: the printer can't answer, Notify frames never come
 }
 
 // Write sends one frame in a single w.Write.
@@ -121,7 +122,7 @@ func MergeClassic(lists ...[]ClassicDevice) []ClassicDevice {
 
 // USBPrinter is one line of pdb-print-usb list: a USB printer-class interface.
 type USBPrinter struct {
-	Device   string `json:"device"`             // iokit:0x… registry entry id of the interface
+	Device   string `json:"device"`             // iokit:0x… registry entry id of the USB device
 	USBID    string `json:"usb_id"`             // 04f9:209c
 	Serial   string `json:"serial,omitempty"`   // "" if the printer reports none
 	IEEE1284 string `json:"ieee1284,omitempty"` // only with list --ids

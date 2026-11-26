@@ -145,8 +145,13 @@ func open(device string, out *blebridge.Frames) (blebridge.Link, error) {
 	var stop sync.WaitGroup
 	var closing sync.Once
 	done := make(chan struct{})
+	canRead := C.usbCanRead(h) != 0
 	stop.Add(1)
 	go func() {
+		if !canRead { // a unidirectional printer never answers
+			stop.Done()
+			return
+		}
 		defer stop.Done()
 		buf := C.malloc(readSize)
 		defer C.free(buf)
@@ -179,7 +184,7 @@ func open(device string, out *blebridge.Frames) (blebridge.Link, error) {
 		}
 		return nil
 	}
-	return blebridge.Link{MTU: blebridge.MaxFrame, Send: send, Close: func() {
+	return blebridge.Link{MTU: blebridge.MaxFrame, NoReadback: !canRead, Send: send, Close: func() {
 		closing.Do(func() {
 			close(done)
 			stop.Wait() // the read in flight ends within readSlice

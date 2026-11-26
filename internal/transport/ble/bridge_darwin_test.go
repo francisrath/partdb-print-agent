@@ -21,6 +21,7 @@ import (
 	"github.com/francisrath/pdb-print/internal/blecore"
 	"github.com/francisrath/pdb-print/internal/config"
 	"github.com/francisrath/pdb-print/internal/devicedb"
+	"github.com/francisrath/pdb-print/internal/driver"
 	"github.com/francisrath/pdb-print/internal/transport"
 )
 
@@ -46,7 +47,8 @@ func TestMain(m *testing.M) {
 // write "die" exits silently, "drop" exits after logging a lost link, "half" logs it, writes half a frame
 // and exits, "unmarked" exits after an ordinary log line, "junk" sends a bad frame and hangs;
 // "slowclose" takes the real helper's longest disconnect wait to close; "hang" never answers the open; "fail" refuses it; "closeonopen" answers it with a close frame; "scan" / "scan-nobt" / "scan-hang" answer the scan mode;
-// "scan-enabling" is interrupted while waiting for Bluetooth; "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it.
+// "scan-enabling" is interrupted while waiting for Bluetooth; "abort" dies at once by SIGABRT, as when macOS privacy (TCC) kills it;
+// "noread" opens a link whose printer can't answer.
 func fakeHelper(mode string, args []string) error {
 	switch mode {
 	case "abort": // a shell dies of the signal (Go would catch it and exit 2)
@@ -93,6 +95,14 @@ func fakeHelper(mode string, args []string) error {
 	}
 	if mode == "hang" {
 		time.Sleep(time.Hour)
+	}
+	if mode == "noread" { // pdb-print-usb with a printer that has no bulk IN endpoint
+		ok, _ := json.Marshal(blebridge.OK{MTU: blebridge.MaxFrame, NoReadback: true})
+		if err := blebridge.Write(os.Stdout, blebridge.TypeOK, ok); err != nil {
+			return err
+		}
+		_, _, err := blebridge.Read(os.Stdin)
+		return err
 	}
 	if mode == "bt-off" {
 		return blebridge.Write(os.Stdout, blebridge.TypeError, []byte("RG-MLP80B (AA:BB:CC:DD:EE:FF) did not answer – is it switched on and paired with this computer?"))
@@ -491,6 +501,28 @@ func newBT(t *testing.T, c config.Transport) *Transport {
 
 // Kind bt goes through the same helper, as an RFCOMM link; the escpos driver needs Read's timeout to wrap
 // os.ErrDeadlineExceeded and a dropped link to be a real error.
+func TestBridgeUSB(t *testing.T) {
+	t.Run("no readback", func(t *testing.T) {
+		useFake(t, "noread")
+		tr := NewUSB("iokit:0x1")
+		if err := tr.Open(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer tr.Close()
+		start := time.Now()
+		if _, err := tr.Read(make([]byte, 10)); !errors.Is(err, driver.ErrNoReadback) || time.Since(start) > time.Second {
+			t.Errorf("Read: %v after %v, want driver.ErrNoReadback at once", err, time.Since(start))
+		}
+	})
+	t.Run("crash is no Bluetooth denial", func(t *testing.T) {
+		useFake(t, "abort")
+		err := NewUSB("iokit:0x1").Open(context.Background())
+		if err == nil || errors.Is(err, errDenied) || strings.Contains(err.Error(), "Bluetooth") {
+			t.Errorf("Open: %v, want a plain helper exit", err)
+		}
+	})
+}
+
 func TestBridgeRFCOMM(t *testing.T) {
 	useFake(t, "ok")
 	tr := newBT(t, config.Transport{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 1})

@@ -161,7 +161,7 @@ func scanLines[T any](ctx context.Context, kind, name string, timeout time.Durat
 	out, err := cmd.Output()
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
-		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
+		if kind != "usb" && cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
 			return nil, fmt.Errorf("%s: %w; the helper exited: %w", kind, errDenied, err)
 		}
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
@@ -217,6 +217,7 @@ type Transport struct {
 	dead    error         // why the helper exited
 	buf     []byte        // notifications not read yet
 	ready   chan struct{} // signalled when buf gains bytes
+	noRead  bool          // the helper said the printer can't answer
 }
 
 type reply struct {
@@ -252,17 +253,23 @@ func (t *Transport) Open(ctx context.Context) error {
 	}
 	done := make(chan struct{})
 	t.mu.Lock()
-	t.cmd, t.stdin, t.done, t.dead = cmd, stdin, done, nil
+	t.cmd, t.stdin, t.done, t.dead, t.noRead = cmd, stdin, done, nil, false
 	t.replies, t.buf, t.ready = make(chan reply, 1), nil, make(chan struct{}, 1)
 	t.mu.Unlock()
 	go t.readLoop(cmd, stdout, tail, done)
 
 	open, _ := json.Marshal(t.req)
-	if _, err := t.request(ctx, blebridge.TypeOpen, open); err != nil {
+	ans, err := t.request(ctx, blebridge.TypeOpen, open)
+	if err != nil {
 		// Cancelled: the helper is busy scanning or connecting and won't read a Close.
 		t.stop(ctx.Err() != nil)
 		return err
 	}
+	var ok blebridge.OK
+	_ = json.Unmarshal(ans, &ok)
+	t.mu.Lock()
+	t.noRead = ok.NoReadback
+	t.mu.Unlock()
 	return nil
 }
 
@@ -303,7 +310,7 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	switch {
 	case !exiting:
 		t.dead = fmt.Errorf("%s: %s: %w", t.Kind(), t.helperName(), err)
-	case killedByPrivacy(cmd.ProcessState):
+	case t.Kind() != "usb" && killedByPrivacy(cmd.ProcessState): // pdb-print-usb never asks for Bluetooth
 		t.dead = fmt.Errorf("%s: %w; the helper exited: %w", t.Kind(), errDenied, werr)
 	case msg != "" && werr != nil:
 		t.dead = fmt.Errorf("%s: %s: %s (%w)", t.Kind(), t.helperName(), msg, werr)
@@ -385,6 +392,10 @@ func (t *Transport) Read(p []byte) (int, error) {
 		if t.cmd == nil {
 			t.mu.Unlock()
 			return 0, fmt.Errorf("%s: not open", t.Kind())
+		}
+		if t.noRead {
+			t.mu.Unlock()
+			return 0, fmt.Errorf("%s: %w", t.Kind(), driver.ErrNoReadback)
 		}
 		if len(t.buf) > 0 {
 			n := copy(p, t.buf)
