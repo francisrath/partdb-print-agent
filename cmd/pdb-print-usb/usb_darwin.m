@@ -50,6 +50,11 @@ static int isPrinter(io_service_t dev) {
 	return found;
 }
 
+// oneField makes printer-supplied text safe for a tab-separated line.
+static NSString *oneField(NSString *s) {
+	return [[s componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\t\r\n"]] componentsJoinedByString:@" "];
+}
+
 static int rasterSetting(const IOUSBInterfaceDescriptor *d) {
 	return d->bInterfaceClass == 7 && (d->bInterfaceProtocol == 1 || d->bInterfaceProtocol == 2);
 }
@@ -134,9 +139,8 @@ char *usbList(int withIDs) {
 						[iface destroy];
 					}
 				}
-				NSString *clean = [[ieee componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\t\n"]] componentsJoinedByString:@" "];
 				[out appendFormat:@"%#llx\t%d\t%d\t%@\t%@\n", id, intProp(s, CFSTR("idVendor")),
-					intProp(s, CFSTR("idProduct")), strProp(s, CFSTR("USB Serial Number")), clean];
+					intProp(s, CFSTR("idProduct")), oneField(strProp(s, CFSTR("USB Serial Number"))), oneField(ieee)];
 			}
 			IOObjectRelease(s);
 		}
