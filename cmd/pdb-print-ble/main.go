@@ -24,7 +24,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -59,7 +58,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: pdb-print-ble [scan|scan-classic --timeout 8s]")
 		os.Exit(2)
 	default:
-		err = serve(os.Stdin, &frames{w: os.Stdout})
+		err = serve(os.Stdin, &blebridge.Frames{W: os.Stdout})
 	}
 	if err != nil {
 		// The marked last stderr line is the cause pdb-print reports (and how it recognises ErrNoBluetooth).
@@ -112,96 +111,29 @@ func scan(ctx context.Context, timeout time.Duration, target *blecore.Target) ([
 	return ads, nil
 }
 
-// frames writes frames to stdout from the request loop and the notification callback.
-type frames struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (f *frames) send(typ byte, p []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return blebridge.Write(f.w, typ, p)
-}
-
-// link is an open connection: BLE or RFCOMM.
-type link struct {
-	mtu   int
-	send  func([]byte) error
-	close func()
-}
-
 // serve answers one connection: Open, then Writes until Close or end of input.
-func serve(in io.Reader, out *frames) error {
-	typ, p, err := blebridge.Read(in)
-	if err == io.EOF {
-		return nil
-	}
-	if err != nil {
+func serve(in io.Reader, out *blebridge.Frames) error {
+	req, err := blebridge.ReadOpen(in)
+	if req == nil || err != nil {
 		return err
-	}
-	if typ != blebridge.TypeOpen {
-		return fmt.Errorf("expected an open frame, got %q", typ)
-	}
-	var req blebridge.OpenRequest
-	if err := json.Unmarshal(p, &req); err != nil {
-		return fmt.Errorf("open request: %w", err)
 	}
 	switch req.Kind {
 	case "":
-		return relay(in, out, func() (link, error) {
-			c, err := open(req, out)
+		return blebridge.Relay(in, out, func() (blebridge.Link, error) {
+			c, err := open(*req, out)
 			if err != nil {
-				return link{}, err
+				return blebridge.Link{}, err
 			}
-			return link{mtu: c.mtu, send: c.ch.Send, close: c.close}, nil
+			return blebridge.Link{MTU: c.mtu, Send: c.ch.Send, Close: c.close}, nil
 		})
 	case blebridge.KindRFCOMM:
 		return onRunLoop(func() error {
-			return relay(in, out, func() (link, error) { return openRFCOMM(req, out) })
+			return blebridge.Relay(in, out, func() (blebridge.Link, error) { return openRFCOMM(*req, out) })
 		})
 	}
 	err = fmt.Errorf("unknown link kind %q", req.Kind)
-	_ = out.send(blebridge.TypeError, []byte(err.Error()))
+	_ = out.Send(blebridge.TypeError, []byte(err.Error()))
 	return err
-}
-
-// relay opens the link, then passes Writes to it until Close or end of input.
-func relay(in io.Reader, out *frames, open func() (link, error)) error {
-	c, err := open()
-	if err != nil {
-		_ = out.send(blebridge.TypeError, []byte(err.Error()))
-		return err
-	}
-	defer c.close()
-	ok, _ := json.Marshal(blebridge.OK{MTU: c.mtu})
-	if err := out.send(blebridge.TypeOK, ok); err != nil {
-		return err
-	}
-	for {
-		typ, p, err := blebridge.Read(in)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		switch typ {
-		case blebridge.TypeClose:
-			return nil
-		case blebridge.TypeWrite:
-			answer, msg := blebridge.TypeOK, []byte(nil)
-			if err := c.send(p); err != nil {
-				log.Printf("write: %v", err)
-				answer, msg = blebridge.TypeError, []byte(err.Error())
-			}
-			if err := out.send(answer, msg); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unexpected frame %q", typ)
-		}
-	}
 }
 
 // conn is the open connection serve uses.
@@ -232,7 +164,7 @@ func (c *conn) close() {
 
 // open scans for the printer (settling on a name like the in-process transport), connects and subscribes.
 // Every notification goes to the client; the chunker also sees the flow control.
-func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
+func open(req blebridge.OpenRequest, out *blebridge.Frames) (*conn, error) {
 	if req.Name == "" && req.Address == "" {
 		return nil, errors.New("set the printer's address or name")
 	}
@@ -305,7 +237,7 @@ func open(req blebridge.OpenRequest, out *frames) (*conn, error) {
 	return &conn{dev: dev, rx: rx, ch: ch, mtu: mtu, link: link}, nil
 }
 
-func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*blecore.Chunker, *bluetooth.DeviceCharacteristic, int, error) {
+func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *blebridge.Frames) (*blecore.Chunker, *bluetooth.DeviceCharacteristic, int, error) {
 	var uuids [3]bluetooth.UUID
 	for i, s := range []string{req.Service, req.Write, req.Notify} {
 		u, err := bluetooth.ParseUUID(s)
@@ -329,7 +261,7 @@ func setup(dev bluetooth.Device, req blebridge.OpenRequest, out *frames) (*bleco
 	}}
 	if err := rx.EnableNotifications(func(b []byte) {
 		ch.OnNotify(b)
-		if err := out.send(blebridge.TypeNotify, b); err != nil {
+		if err := out.Send(blebridge.TypeNotify, b); err != nil {
 			log.Printf("notification: %v", err)
 		}
 	}); err != nil {

@@ -48,7 +48,7 @@ const (
 
 // rf is the one RFCOMM link (or inquiry) of this process, shared with the IOBluetooth callbacks.
 var rf = struct {
-	out     *frames
+	out     *blebridge.Frames
 	who     string
 	opening chan struct{}
 	opened  chan openResult
@@ -81,7 +81,7 @@ func goOpening() {
 //
 //export goData
 func goData(p unsafe.Pointer, n C.int) {
-	if err := rf.out.send(blebridge.TypeNotify, C.GoBytes(p, n)); err != nil {
+	if err := rf.out.Send(blebridge.TypeNotify, C.GoBytes(p, n)); err != nil {
 		log.Printf("data: %v", err)
 	}
 }
@@ -134,9 +134,9 @@ func devices(s *C.char) []blebridge.ClassicDevice {
 }
 
 // openRFCOMM connects to the printer's serial port. Incoming data goes to out as notifications.
-func openRFCOMM(req blebridge.OpenRequest, out *frames) (link, error) {
+func openRFCOMM(req blebridge.OpenRequest, out *blebridge.Frames) (blebridge.Link, error) {
 	if C.btPowered() == 0 {
-		return link{}, errBluetoothOff
+		return blebridge.Link{}, errBluetoothOff
 	}
 	addr := req.Address
 	if addr == "" {
@@ -146,7 +146,7 @@ func openRFCOMM(req blebridge.OpenRequest, out *frames) (link, error) {
 		}
 		var err error
 		if addr, err = bt.Resolve(named, req.Name); err != nil {
-			return link{}, errors.New(strings.TrimPrefix(err.Error(), "bt: ")) // pdb-print adds it back
+			return blebridge.Link{}, errors.New(strings.TrimPrefix(err.Error(), "bt: ")) // pdb-print adds it back
 		}
 	}
 	who := addr
@@ -182,23 +182,23 @@ wait:
 			}
 		case <-deadline:
 			dropLink()
-			return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (nothing within %v)", who, rfcommConnect)
+			return blebridge.Link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (nothing within %v)", who, rfcommConnect)
 		}
 	}
 	switch r.code {
 	case C.BT_OK:
 	case C.BT_NO_SPP:
 		dropLink()
-		return link{}, fmt.Errorf("%s has no serial port (SPP) service – is it the printer, and is it switched on?", who)
+		return blebridge.Link{}, fmt.Errorf("%s has no serial port (SPP) service – is it the printer, and is it switched on?", who)
 	case C.BT_BAD_ADDRESS:
-		return link{}, fmt.Errorf("address %q isn't a Bluetooth address", addr)
+		return blebridge.Link{}, fmt.Errorf("address %q isn't a Bluetooth address", addr)
 	default:
 		dropLink()
-		return link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (IOReturn %#x)", who, uint32(r.status))
+		return blebridge.Link{}, fmt.Errorf("%s did not answer – is it switched on and paired with this computer? (IOReturn %#x)", who, uint32(r.status))
 	}
 	rf.isOpen.Store(true)
 	log.Printf("connected to %s, %d bytes per write", who, r.mtu)
-	return link{mtu: r.mtu, send: rfcommWrite, close: closeRFCOMM}, nil
+	return blebridge.Link{MTU: r.mtu, Send: rfcommWrite, Close: closeRFCOMM}, nil
 }
 
 func rfcommWrite(p []byte) error {
