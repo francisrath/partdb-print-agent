@@ -304,8 +304,8 @@ in when a status read says nothing. `pdb-print printers status ql810` and the we
 
 ### Brother QL
 
-Over the network (port 9100), or USB on Linux through the `usblp` driver (add the user to group `lp`) and on
-Windows.
+Over the network (port 9100), or USB on Linux through the `usblp` driver (add the user to group `lp`), on
+Windows and on macOS.
 On the network the agent reads the printer over SNMP (UDP 161) before each job: the loaded roll, errors
 (cover open, wrong media, empty) and, after sending, whether the label actually printed.
 
@@ -313,7 +313,7 @@ On the network the agent reads the printer over SNMP (UDP 161) before each job: 
 
 The PT-9500PC, and the newer P-touch printers (PT-E550W, PT-P750W, PT-P900 series …, see
 [docs/printers.md](docs/printers.md)), over USB (Linux through the `usblp` driver, add the user to group
-`lp`; Windows); the network models also over the network, the PT-P710BT and PT-P910BT over Bluetooth Classic. It reads the loaded tape and
+`lp`; Windows; macOS); the network models also over the network, the PT-P710BT and PT-P910BT over Bluetooth Classic. It reads the loaded tape and
 errors before each job, sends a batch label by label and waits for each to be printed. Labels print at
 true size: design the Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm
 on 36 mm tape, about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for

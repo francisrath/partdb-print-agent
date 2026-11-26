@@ -4,6 +4,8 @@ package usb
 
 import (
 	"bytes"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,7 @@ func TestListAndStatusOnMac(t *testing.T) {
 		if err := tr.Open(t.Context()); err != nil {
 			t.Fatalf("open: %v", err)
 		}
+		t.Cleanup(func() { _ = tr.Close() }) // a failed read below mustn't leave the helper holding the printer
 		if _, err := tr.Write(append(make([]byte, 200), 0x1b, 0x40, 0x1b, 0x69, 0x53)); err != nil {
 			t.Fatalf("write: %v", err)
 		}
@@ -47,7 +50,7 @@ func TestListAndStatusOnMac(t *testing.T) {
 			got = append(got, buf[:n]...)
 		}
 		start := time.Now()
-		if _, err := tr.Read(buf); err == nil || time.Since(start) > 4*time.Second {
+		if _, err := tr.Read(buf); !errors.Is(err, os.ErrDeadlineExceeded) || time.Since(start) > 4*time.Second {
 			t.Errorf("idle read: %v after %v, want a timeout around 3 s", err, time.Since(start))
 		}
 		if err := tr.Close(); err != nil {

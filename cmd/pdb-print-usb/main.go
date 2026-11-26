@@ -158,9 +158,9 @@ func open(device string, out *blebridge.Frames) (blebridge.Link, error) {
 			}
 			var e *C.char
 			n := C.usbRead(h, buf, readSize, C.int(readSlice.Milliseconds()), &e)
-			if n < 0 {
-				log.Printf("%v", cErr(e))
-				return
+			if n < 0 { // the printer is gone or broken: end the link, so the client sees it (EOF, then this line)
+				fmt.Fprintln(os.Stderr, fatalMark+cErr(e).Error())
+				os.Exit(1)
 			}
 			if n > 0 {
 				if err := out.Send(blebridge.TypeNotify, C.GoBytes(buf, n)); err != nil {
