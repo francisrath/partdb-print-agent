@@ -1,4 +1,4 @@
-//go:build !linux && !windows
+//go:build !linux && !windows && !darwin
 
 package usb
 
@@ -9,7 +9,7 @@ import (
 )
 
 func listNative(bool) ([]Printer, error) {
-	return nil, errors.New("USB printers are only supported on Linux and Windows for now")
+	return nil, errors.New("USB printers are only supported on Linux, Windows and macOS for now")
 }
 
 func openPrinter(device string) (io.ReadWriteCloser, error) { return OpenDevice(device) }

@@ -321,7 +321,7 @@ func (s *Server) discover(ctx context.Context, ip string) (cs []discovery.Candid
 		defer close(btDone)
 		bt, note, _ = discovery.Bluetooth(ctx, db, discovery.Options{})
 	}()
-	usb, _ := discovery.USB(db, "") // not on Linux or Windows: no USB printers, not an error here
+	usb, _ := discovery.USB(db, "") // no USB support here (or no pdb-print-usb on macOS): no USB printers, not an error here
 	lan, err := discovery.Network(ctx, db, discovery.Options{Timeout: 15 * time.Second})
 	<-btDone
 	return append(append(usb, lan...), bt...), note, err

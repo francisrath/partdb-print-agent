@@ -16,7 +16,8 @@ redeployed before the release (it rejects values it doesn't know, so those repor
    under Rosetta: the setup.exe part needs x86-64 Linux with Wine (the script's header lists the
    packages). PR CI (`packaging-windows`) runs it on every PR.
 3. **`release-darwin`** (macos-latest, `.goreleaser-darwin.yaml`, needs both): builds the universal
-   `pdb-print` (no cgo) and the Bluetooth helper `pdb-print-ble` (cgo, embedded Info.plist), uploads the
+   `pdb-print` (no cgo), the Bluetooth helper `pdb-print-ble` (cgo, embedded Info.plist) and the USB helper
+   `pdb-print-usb` (cgo), uploads the
    macOS archive and `checksums-darwin.txt` to that draft (GoReleaser leaves it a draft: `draft: true`) and
    pushes the Homebrew cask to `francisrath/homebrew-tap`. Its last step, **publish the draft**, checks that
    the tag has exactly one release, that it is a draft, and that it carries the three checksum files, the

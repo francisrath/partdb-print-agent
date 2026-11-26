@@ -254,19 +254,22 @@ jobs:
       - name: check packages
         run: |
           ble=dist/pdb-print-ble-universal_darwin_all/pdb-print-ble
+          usb=dist/pdb-print-usb-universal_darwin_all/pdb-print-usb
           pp=dist/pdb-print-universal_darwin_all/pdb-print
           for a in x86_64 arm64; do lipo "$pp" -verify_arch "$a"; done
           mods=$(go version -m "$pp")
           grep -q 'CGO_ENABLED=0' <<<"$mods"
           if grep -q tinygo.org/x/bluetooth <<<"$mods"; then exit 1; fi
           grep -q 'CGO_ENABLED=1' <<<"$(go version -m "$ble")"
+          for a in x86_64 arm64; do lipo "$usb" -verify_arch "$a"; done
+          if grep -q tinygo.org/x/bluetooth <<<"$(go version -m "$usb")"; then exit 1; fi # would ask for Bluetooth
           for a in x86_64 arm64; do
             lipo "$ble" -thin "$a" -output "$RUNNER_TEMP/ble-$a"
             grep -q '__info_plist' <<<"$(otool -s __TEXT __info_plist "$RUNNER_TEMP/ble-$a")"
           done
           grep -q NSBluetoothAlwaysUsageDescription <<<"$(launchctl plist "$ble")"
           # without the release secrets scripts/macos-sign.sh signs ad hoc, with the hardened runtime
-          for b in "$pp" "$ble"; do
+          for b in "$pp" "$ble" "$usb"; do
             codesign --verify --strict "$b"
             grep -q 'flags=.*runtime' <<<"$(codesign -dv "$b" 2>&1)"
           done
@@ -274,8 +277,10 @@ jobs:
           files=$(tar tzf dist/pdb-print_*_darwin_universal.tar.gz)
           grep -qx pdb-print <<<"$files"
           grep -qx pdb-print-ble <<<"$files"
+          grep -qx pdb-print-usb <<<"$files"
           grep -q ' pdb-print_.*_darwin_universal.tar.gz$' dist/checksums-darwin.txt
           grep -q 'binary "pdb-print-ble"' dist/homebrew/Casks/pdb-print.rb
+          grep -q 'binary "pdb-print-usb"' dist/homebrew/Casks/pdb-print.rb
 
   # the one required status check: fails if any job above failed or was cancelled (skipped is fine)
   ci:

@@ -9,8 +9,8 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
 (`~/Notes/claude/partdb-agent-*`). Release steps: `docs/releasing.md`.
 
 ## Decisions
-- Language **Go**, single static binary, `CGO_ENABLED=0`. The only cgo is the macOS Bluetooth helper
-  `cmd/pdb-print-ble` (CoreBluetooth/IOBluetooth), built on a macOS release runner. Module:
+- Language **Go**, single static binary, `CGO_ENABLED=0`. The only cgo is in the macOS helpers
+  `cmd/pdb-print-ble` (CoreBluetooth/IOBluetooth) and `cmd/pdb-print-usb` (IOUSBHost), built on a macOS release runner. Module:
   `github.com/francisrath/pdb-print`.
 - Licence **MIT**. Never link or copy GPL/AGPL code (no brother_ql, no MuPDF, no Poppler library, no GPL cat-printer
   projects). Protocols are implemented clean-room from public references (Brother Raster Command Reference, Zebra
@@ -31,7 +31,7 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
   untested; `pt-cbp`: PT-9500PC; `pt-raster`: PT-E550W/P750W/P710BT/P700/E500 and PT-P900 series, untested),
   `zpl` (Zebra desktop ZPL printers; industrial ZT and mobile ZQ series untested),
   `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MLP80B, generic 58/80 mm).
-- **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux usblp, Windows usbprint.sys), `ble` (Linux/Windows
+- **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux usblp, Windows usbprint.sys, macOS via the helper `pdb-print-usb`), `ble` (Linux/Windows
   in-process, macOS via the helper), `bt` (Bluetooth Classic RFCOMM: Linux/Windows sockets, macOS via the helper).
 - **Sources**: CLI `print`, local HTTP API + web UI and setup wizard on `127.0.0.1:8631` (`/v1/handoff` for the
   bookmarklet), hot folder (`internal/source/hotfolder`), server-side agent jobs (`internal/source/agentjobs`).

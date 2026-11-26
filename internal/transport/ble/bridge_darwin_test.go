@@ -172,7 +172,7 @@ func useFake(t *testing.T, mode string) {
 		}
 	}
 	old := helperPath
-	helperPath = func() (string, error) {
+	helperPath = func(string) (string, error) {
 		if mode == "" {
 			return "", errNoHelper
 		}
