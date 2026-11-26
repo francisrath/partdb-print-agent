@@ -37,7 +37,10 @@ import (
 const fatalMark = "error: "
 
 const (
-	busyWait  = 5 * time.Second // macOS's own print queue holds the interface for a few seconds after its job
+	busyWait = 15 * time.Second // macOS's own print queue holds the interface up to ~10 s after its job
+	// after that the printer is still finishing the queue's label: a QL-810W answered status 3.2 s after the
+	// interface came free (2026-11-26). ponytail: a fixed wait; the helper doesn't speak printer languages.
+	settle    = 5 * time.Second
 	readSlice = 500 * time.Millisecond
 	readSize  = 512
 )
@@ -119,13 +122,19 @@ func open(device string, out *blebridge.Frames) (blebridge.Link, error) {
 		return blebridge.Link{}, fmt.Errorf("device %q isn't a macOS USB printer (see pdb-print discover)", device)
 	}
 	var h unsafe.Pointer
+	waited := false
 	for start := time.Now(); ; {
 		var e *C.char
 		if h = C.usbOpen(C.uint64_t(id), &e); h != nil {
+			if waited {
+				log.Printf("waited for another program; holding the printer %v while it finishes", settle)
+				time.Sleep(settle)
+			}
 			break
 		}
+		waited = true
 		err := cErr(e)
-		if strings.Contains(err.Error(), "not connected") {
+		if strings.Contains(err.Error(), "not connected") || strings.Contains(err.Error(), "no raster printer interface") {
 			return blebridge.Link{}, err
 		}
 		if time.Since(start) > busyWait {

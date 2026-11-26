@@ -436,8 +436,12 @@ e.g. the QL-810W) in that protocol, where the printer ignores raster data: a job
 (IOUSBHost; no kernel driver binds a printer interface there): `pdb-print-usb list` gives the printer-class
 interfaces (`iokit:0x…` registry ids), and a job runs the helper in bridge mode with the same `internal/blebridge`
 protocol (Kind `usb`), through the Bluetooth helper's client. It is a helper of its own because the Bluetooth
-library asks for Bluetooth permission whenever its process starts. macOS's own driverless queue holds the
-interface for a few seconds after its jobs: the helper retries the open for 5 s. The online check only
+library asks for Bluetooth permission whenever its process starts. A printer is a USB device whose
+`UsbDeviceSignature` (every interface class of the device) includes a raster printer class (7/1/1 or 7/1/2);
+the helper opens that interface at job time. macOS's own driverless queue (IPP over USB, the QL-810W's
+alternate setting 7/1/4) holds the interface for up to ~10 s after its jobs and leaves it on the IPP setting
+meanwhile: the helper counts both as busy and retries for 15 s. It never switches the setting itself:
+switching it right after a queue job left the QL-810W silent on raster until it was power-cycled. The online check only
 looks for the printer in the list, so it never takes the interface. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
 binary: `pdb-print` starts it on demand and talks to it over stdin/stdout (`internal/blebridge`), so only
 the helper asks for Bluetooth permission. Docker has no Bluetooth. A Bluetooth printer takes one connection
