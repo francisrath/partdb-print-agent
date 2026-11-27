@@ -35,14 +35,16 @@ static NSString *strProp(io_service_t s, CFStringRef key) {
 
 // isPrinter: a USB device with a raster printer-class interface (class 7, protocol 1 or 2) among its
 // settings. UsbDeviceSignature lists every interface class/subclass/protocol of the device whatever setting
-// is current: macOS's own queue leaves interfaces on IPP over USB (protocol 4) while it prints. Layout:
-// idVendor, idProduct, bcdDevice (2 bytes each), the device's class triple, then one triple per interface.
+// is current: macOS's own queue leaves interfaces on IPP over USB (protocol 4) while it prints. Layout (seen
+// 2026-11-27): idVendor, idProduct (2 bytes each), the serial number's text if there is one, the device's
+// class triple, then one triple per interface. So walk the triples from the end; serial text is printable
+// and never reads as class 7, subclass 1.
 static int isPrinter(io_service_t dev) {
 	CFTypeRef v = IORegistryEntryCreateCFProperty(dev, CFSTR("UsbDeviceSignature"), NULL, 0);
 	int found = 0;
 	if (v && CFGetTypeID(v) == CFDataGetTypeID()) {
 		const uint8_t *b = CFDataGetBytePtr(v);
-		for (CFIndex i = 9; !found && i + 3 <= CFDataGetLength(v); i += 3) {
+		for (CFIndex i = CFDataGetLength(v) - 3; !found && i >= 4; i -= 3) {
 			found = b[i] == 7 && b[i + 1] == 1 && (b[i + 2] == 1 || b[i + 2] == 2);
 		}
 	}
