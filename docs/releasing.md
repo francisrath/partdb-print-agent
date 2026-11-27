@@ -2,6 +2,10 @@
 
 Push a tag `vX.Y.Z`; `.github/workflows/release.yml` does the rest in three jobs.
 
+Release notes end with the [Code signing policy](code-signing.md) link (GoReleaser adds it as the footer;
+the publish step adds it back if notes replaced by hand lost it): SignPath Foundation's terms require it on every
+release page. Only tags on `main` are released; the workflow stops on any other tag.
+
 Before tagging: a new install, model or field value in usage reports needs the pdb-print-stats collector
 redeployed before the release (it rejects values it doesn't know, so those reports would be lost).
 
