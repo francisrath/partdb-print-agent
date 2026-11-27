@@ -1,9 +1,8 @@
-// Package escpos drives ESC/POS receipt printers (Bluetooth Classic SPP, e.g. REGO RG-MLP80B) with
+// Package escpos drives ESC/POS receipt printers (Bluetooth Classic SPP, e.g. REGO RG-MTP80B) with
 // GS v 0 raster bitmaps. Commands follow Epson's public ESC/POS reference.
 package escpos
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,12 +17,17 @@ import (
 )
 
 func init() {
-	driver.Register("escpos", func(m *devicedb.Model, _ driver.Options) (driver.Driver, error) {
-		return &escpos{model: m, confirm: time.Duration(m.Quirk("confirm_timeout_ms", 20000)) * time.Millisecond}, nil
+	driver.Register("escpos", func(m *devicedb.Model, o driver.Options) (driver.Driver, error) {
+		return &escpos{model: m, feed: o.FeedDots(m, 80), confirm: time.Duration(m.Quirk("confirm_timeout_ms", 20000)) * time.Millisecond,
+			poll: time.Second, coverWait: 2 * time.Minute}, nil
 	})
 }
 
 const nearEnd = "paper near end"
+
+// errSilent: no status answer. Off, out of range, or stuck: a job cut off mid-label (connection
+// dropped) leaves the printer waiting for the rest of a raster image, swallowing what comes next.
+var errSilent = fmt.Errorf("%w: the printer doesn't answer: is it on? If a print was cut off, switch it off and on", driver.ErrNoReadback)
 
 // drainWait is the read timeout while dropping stale bytes, on transports that can shorten it: a late
 // answer is already waiting, so a quiet link needn't cost a whole read timeout.
@@ -44,33 +48,50 @@ const (
 )
 
 type escpos struct {
-	model   *devicedb.Model
-	confirm time.Duration // how long to wait for the GS r 1 answer; tests shorten it
+	model     *devicedb.Model
+	feed      int           // dot rows fed after each label
+	confirm   time.Duration // how long to wait for a label's GS r 1 answer; tests shorten these
+	poll      time.Duration // how often to ask DLE EOT 2 (cover, paper) while waiting
+	coverWait time.Duration // how long a label may wait for an open cover to close
 }
 
 func (d *escpos) Encode(w io.Writer, job *driver.Job) error {
-	feed := d.model.Quirk("feed_lines", 80)
-	cut := d.model.QuirkBool("cutter")
 	var b []byte
 	for _, pg := range job.Pages {
-		b = append(b, 0x1B, 0x40)
-		b = appendRaster(b, pg, d.model.HeadPins)
-		for n := feed; n > 0; n -= 255 {
-			b = append(b, 0x1B, 0x64, byte(min(n, 255)))
-		}
-		if cut {
-			b = append(b, 0x1D, 0x56, 0x01)
-		}
+		b = d.appendPage(b, pg, d.left(job.Media))
 	}
 	_, err := w.Write(b)
 	return err
 }
 
-// appendRaster adds img, cropped to dots (the head), as GS v 0 bands, 1 = black, MSB first, rows padded to whole bytes.
-func appendRaster(b []byte, img *image.Gray, dots int) []byte {
+// left is the margin that centres paper narrower than the head (a 57 mm roll in an 80 mm printer
+// sits in the middle of the holder), in dots.
+func (d *escpos) left(m *devicedb.Media) int {
+	if m == nil || m.PrintableWidthDots <= 0 {
+		return 0
+	}
+	return max(d.model.HeadPins-m.PrintableWidthDots, 0) / 2
+}
+
+// appendPage adds one label, left dots in: reset, raster, feed past the tear bar, cut.
+func (d *escpos) appendPage(b []byte, pg *image.Gray, left int) []byte {
+	b = append(b, 0x1B, 0x40)
+	b = appendRaster(b, pg, left, d.model.HeadPins)
+	for n := d.feed; n > 0; n -= 255 {
+		b = append(b, 0x1B, 0x4A, byte(min(n, 255))) // ESC J: n dot rows (ESC d counts text lines, ~4 mm each)
+	}
+	if d.model.QuirkBool("cutter") {
+		b = append(b, 0x1D, 0x56, 0x01)
+	}
+	return b
+}
+
+// appendRaster adds img, left dots in and cropped to dots (the head), as GS v 0 bands, 1 = black, MSB
+// first, rows padded to whole bytes.
+func appendRaster(b []byte, img *image.Gray, left, dots int) []byte {
 	r := img.Bounds()
-	dx := min(r.Dx(), dots)
-	wb := (dx + 7) / 8
+	dx := min(r.Dx(), dots-left)
+	wb := (left + dx + 7) / 8
 	for y0 := r.Min.Y; y0 < r.Max.Y; y0 += maxBand {
 		n := min(maxBand, r.Max.Y-y0)
 		b = append(b, 0x1D, 0x76, 0x30, 0x00, byte(wb), byte(wb>>8), byte(n), byte(n>>8))
@@ -79,7 +100,7 @@ func appendRaster(b []byte, img *image.Gray, dots int) []byte {
 			b = append(b, make([]byte, wb)...)
 			for x := 0; x < dx; x++ {
 				if img.GrayAt(r.Min.X+x, y).Y < 128 {
-					b[row+x/8] |= 0x80 >> (x % 8)
+					b[row+(left+x)/8] |= 0x80 >> ((left + x) % 8)
 				}
 			}
 		}
@@ -175,7 +196,7 @@ func (d *escpos) Status(ctx context.Context, t driver.Transport) (*driver.Status
 			return nil, err
 		}
 		if !ok { // without the cover and paper bits we can't vouch for the printer
-			return nil, driver.ErrNoReadback
+			return nil, errSilent
 		}
 		raw[i] = b
 	}
@@ -195,25 +216,27 @@ func (d *escpos) Status(ctx context.Context, t driver.Transport) (*driver.Status
 	return st, nil
 }
 
-// Print refuses on a bad job.Status, sends the job, then asks GS r 1 (answered in order, so after the
-// printing) and waits for the answer. No answer: sent, unconfirmed. A printer that gave no status
-// (it ignores DLE EOT) won't answer GS r either, so then there is no wait.
+// Print refuses on a bad job.Status, then sends the labels one at a time: each is followed by GS r 1
+// (answered in order, so after the printing) and the next goes only once that answer came. A printer
+// that stops (cover opened, paper out) so holds one label at most, and the error says how many
+// printed. While waiting, DLE EOT 2 (real time) watches the cover and paper: an open cover that closes
+// again lets the label finish, with a warning, since it may show a seam. A label with no answer:
+// the rest are sent without waiting, unconfirmed. A printer that gave no status (it ignores DLE EOT)
+// won't answer GS r either, so then there is no wait at all.
 func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job) (*driver.Result, error) {
 	st := job.Status // the service's reading; nil = the printer gave none
 	if st != nil && st.Code != driver.OK {
 		return nil, &driver.Error{Code: st.Code, Detail: st.Detail}
 	}
-	var b bytes.Buffer
-	if err := d.Encode(&b, job); err != nil {
-		return nil, err
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := t.Write(b.Bytes()); err != nil {
-		return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+	pages := make([][]byte, len(job.Pages))
+	res := &driver.Result{Pages: len(job.Pages)}
+	for i, pg := range job.Pages {
+		pages[i] = d.appendPage(nil, pg, d.left(job.Media))
+		res.Bytes += len(pages[i])
 	}
-	res := &driver.Result{Pages: len(job.Pages), Bytes: b.Len()}
 	if job.Media != nil {
 		res.Media = job.Media.ID
 	}
@@ -221,51 +244,144 @@ func (d *escpos) Print(ctx context.Context, t driver.Transport, job *driver.Job)
 		res.Warnings = append(res.Warnings, st.Detail)
 	}
 	if st == nil {
+		if _, err := t.Write(slices.Concat(pages...)); err != nil {
+			return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+		}
 		res.Message = "sent (unconfirmed: the printer doesn't report status)"
 		return res, nil
 	}
-	// From here the label may print: never report a failure that a retry would print twice.
+	// From the first label on, something may print: never report a failure that a retry would print twice.
 	res.Message = "sent (unconfirmed: no answer to GS r)"
 	var rs replies
-	if err := drain(t, &rs); err != nil {
-		return nil, dropped(err)
-	}
-	if _, err := t.Write([]byte{0x1D, 0x72, 0x01}); err != nil {
-		return nil, dropped(err)
-	}
-	p := make([]byte, 1)
-	for end := time.Now().Add(d.confirm); time.Now().Before(end); {
-		if err := ctx.Err(); err != nil {
-			res.Message = "sent (unconfirmed: stopped waiting: " + err.Error() + ")"
-			return res, nil
+	waiting, confirmed := true, 0
+	for i, pg := range pages {
+		if waiting {
+			if err := drain(t, &rs); err != nil {
+				return nil, d.dropped(err, confirmed, i, len(pages))
+			}
 		}
-		n, err := t.Read(p)
-		if n > 0 && !rs.take(p[0], gsrReply) {
+		if err := ctx.Err(); err != nil { // after drain: it can take a while
+			return nil, stopped(err, i, len(pages))
+		}
+		if _, err := t.Write(pg); err != nil {
+			if i == 0 {
+				return nil, &driver.Error{Code: driver.CommsError, Detail: err.Error()}
+			}
+			return nil, d.dropped(err, confirmed, i+1, len(pages))
+		}
+		if !waiting {
 			continue
 		}
-		if n > 0 {
-			switch {
-			case p[0]&gsrPaperEnd != 0:
-				return nil, &driver.Error{Code: driver.NoMedia, Detail: "out of paper while printing"}
-			case p[0]&gsrNearEnd != 0 && !slices.Contains(res.Warnings, nearEnd):
-				res.Warnings = append(res.Warnings, nearEnd)
-			}
-			res.Confirmed, res.Message = true, "printed"
-			break
+		if _, err := t.Write([]byte{0x1D, 0x72, 0x01}); err != nil {
+			return nil, d.dropped(err, confirmed, i+1, len(pages))
 		}
-		switch {
-		case errors.Is(err, driver.ErrNoReadback):
-			return res, nil // no read channel: don't spin
-		case err != nil && !isTimeout(err):
-			return nil, dropped(err)
-		case err == nil:
-			time.Sleep(time.Millisecond) // (0, nil): no answer, don't spin
+		ok, err := d.await(ctx, t, &rs, res, i, len(pages))
+		if err != nil {
+			return nil, err
 		}
+		if !ok {
+			waiting = false
+			continue
+		}
+		confirmed++
+	}
+	if confirmed == len(pages) {
+		res.Confirmed, res.Message = true, "printed"
 	}
 	return res, nil
 }
 
-func dropped(err error) error {
-	return &driver.Error{Code: driver.CommsError, Err: err,
-		Detail: "connection dropped after the label was sent, it may have printed: " + err.Error()}
+// await waits for label i's GS r 1 answer (true), watching cover and paper with DLE EOT 2 meanwhile.
+// false: no answer in time, or the wait ended (ctx, no read channel); res.Message says which.
+func (d *escpos) await(ctx context.Context, t driver.Transport, rs *replies, res *driver.Result, i, n int) (bool, error) {
+	end := time.Now().Add(d.confirm)
+	nextPoll := time.Now().Add(d.poll)
+	var coverSince time.Time
+	warned := false
+	reply := func(b byte) bool { return gsrReply(b) || dleEOTReply(b) }
+	p := make([]byte, 1)
+	for {
+		now := time.Now()
+		switch {
+		case !coverSince.IsZero() && now.Sub(coverSince) > d.coverWait:
+			return false, &driver.Error{Code: driver.CoverOpen, Detail: fmt.Sprintf(
+				"cover open: %d of %d labels printed; label %d finishes when the cover is closed, the rest weren't sent", i, n, i+1)}
+		case coverSince.IsZero() && now.After(end):
+			return false, nil
+		}
+		if err := ctx.Err(); err != nil {
+			if i < n-1 {
+				return false, stopped(err, i+1, n)
+			}
+			res.Message = "sent (unconfirmed: stopped waiting: " + err.Error() + ")"
+			return false, nil
+		}
+		got, err := t.Read(p)
+		if got > 0 {
+			b := p[0]
+			if !rs.take(b, reply) {
+				continue
+			}
+			if dleEOTReply(b) {
+				switch {
+				case b&paperStop != 0:
+					return false, &driver.Error{Code: driver.NoMedia, Detail: fmt.Sprintf("out of paper: %d of %d labels printed", i, n)}
+				case b&coverOpen != 0 && coverSince.IsZero():
+					coverSince = now
+					if !warned {
+						warned = true
+						// GS r is answered once a label is taken in, which can be while it still
+						// feeds out: the one the cover stopped may be the label before
+						which := fmt.Sprintf("label %d of %d", i+1, n)
+						if i > 0 {
+							which = fmt.Sprintf("label %d or %d of %d", i, i+1, n)
+						}
+						res.Warnings = append(res.Warnings, "cover opened while printing "+which+": check for a seam")
+					}
+				case b&coverOpen == 0 && !coverSince.IsZero():
+					coverSince, end = time.Time{}, time.Now().Add(d.confirm) // closed: the label goes on
+				}
+				continue
+			}
+			switch {
+			case b&gsrPaperEnd != 0:
+				return false, &driver.Error{Code: driver.NoMedia, Detail: fmt.Sprintf("out of paper while printing label %d of %d", i+1, n)}
+			case b&gsrNearEnd != 0 && !slices.Contains(res.Warnings, nearEnd):
+				res.Warnings = append(res.Warnings, nearEnd)
+			}
+			return true, nil
+		}
+		switch {
+		case errors.Is(err, driver.ErrNoReadback):
+			return false, nil // no read channel: don't spin
+		case err != nil && !isTimeout(err):
+			return false, d.dropped(err, i, i+1, n)
+		case err == nil:
+			time.Sleep(time.Millisecond) // (0, nil): no answer, don't spin
+		}
+		if time.Now().After(nextPoll) {
+			if _, err := t.Write([]byte{0x10, 0x04, 0x02}); err != nil {
+				return false, d.dropped(err, i, i+1, n)
+			}
+			nextPoll = time.Now().Add(d.poll)
+		}
+	}
+}
+
+// dropped: labels [printed, sent) were sent but not confirmed, so any of them may have printed.
+func (d *escpos) dropped(err error, printed, sent, n int) error {
+	what := "the label was sent, it may have printed"
+	switch {
+	case n == 1:
+	case sent-printed > 1:
+		what = fmt.Sprintf("%d of %d labels printed, labels %d to %d may have", printed, n, printed+1, sent)
+	default:
+		what = fmt.Sprintf("%d of %d labels printed, the next may have", printed, n)
+	}
+	return &driver.Error{Code: driver.CommsError, Err: err, Detail: "connection dropped: " + what + ": " + err.Error()}
+}
+
+// stopped: the job was cancelled after sent labels; the rest are never sent.
+func stopped(err error, sent, n int) error {
+	return fmt.Errorf("%w: %d of %d labels sent, the rest weren't", err, sent, n)
 }

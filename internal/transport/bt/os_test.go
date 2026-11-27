@@ -32,9 +32,9 @@ type osCase struct {
 }
 
 func TestRegistered(t *testing.T) {
-	tr, err := transport.New(config.Transport{Kind: "bt", Address: "aa:bb:cc:dd:ee:ff", Name: "RG-MLP80B", Channel: 3}, nil)
+	tr, err := transport.New(config.Transport{Kind: "bt", Address: "aa:bb:cc:dd:ee:ff", Name: "RG-MTP80B", Channel: 3}, nil)
 	b, ok := tr.(*Transport)
-	if err != nil || !ok || b.Address != "aa:bb:cc:dd:ee:ff" || b.Name != "RG-MLP80B" || b.Channel != 3 || b.dial == nil {
+	if err != nil || !ok || b.Address != "aa:bb:cc:dd:ee:ff" || b.Name != "RG-MTP80B" || b.Channel != 3 || b.dial == nil {
 		t.Fatalf("transport.New(bt) = %#v, %v", tr, err)
 	}
 }

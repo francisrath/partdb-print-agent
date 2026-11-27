@@ -36,7 +36,7 @@ func TestRetryErrnos(t *testing.T) {
 func TestDialCancelledDuringLookup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := dial(ctx, "", "RG-MLP80B", 0); !errors.Is(err, context.Canceled) {
+	if _, err := dial(ctx, "", "RG-MTP80B", 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("dial = %v, want context.Canceled", err)
 	}
 }

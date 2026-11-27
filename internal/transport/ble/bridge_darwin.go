@@ -209,7 +209,7 @@ func (t *Transport) Open(ctx context.Context) error {
 	}
 	cmd := exec.Command(helper)
 	tail := new(stderrTail)
-	cmd.Stderr = io.MultiWriter(os.Stderr, tail) // the helper logs there; a fatal last line explains an exit
+	cmd.Stderr = io.MultiWriter(&echo{w: os.Stderr}, tail) // the helper logs there; a fatal last line explains an exit
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -417,13 +417,47 @@ func (t *Transport) stop(kill bool) {
 	t.mu.Unlock()
 }
 
+// echo passes the helper's log lines on, except its fatal line: that one comes back as the error.
+type echo struct {
+	w   io.Writer
+	buf []byte // a line not finished yet
+}
+
+func (e *echo) Write(p []byte) (int, error) {
+	e.buf = append(e.buf, p...)
+	for {
+		i := bytes.IndexByte(e.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		if line := e.buf[:i+1]; !bytes.HasPrefix(line, []byte(fatalMark)) {
+			if _, err := e.w.Write(line); err != nil {
+				return len(p), err
+			}
+		}
+		e.buf = e.buf[i+1:]
+	}
+}
+
 // stderrTail keeps the end of the helper's stderr (exec copies it from one goroutine; read it after Wait).
 type stderrTail struct{ b []byte }
 
+const maxLine = 4096 // bytes kept of one stderr line
+
 func (w *stderrTail) Write(p []byte) (int, error) {
-	w.b = append(w.b, p...)
-	if len(w.b) > 4096 {
-		w.b = w.b[len(w.b)-1024:]
+	n := len(p)
+	for len(p) > 0 {
+		line, rest, nl := bytes.Cut(p, []byte{'\n'})
+		p = rest
+		// each line keeps its first maxLine bytes, so a long fatal line keeps its mark
+		cur := len(w.b) - (bytes.LastIndexByte(w.b, '\n') + 1)
+		w.b = append(w.b, line[:min(len(line), max(maxLine-cur, 0))]...)
+		if nl {
+			w.b = append(w.b, '\n')
+		}
 	}
-	return len(p), nil
+	if len(w.b) > 4096 { // keep the last lines, from a line start
+		w.b = w.b[bytes.LastIndexByte(w.b[:len(w.b)-1024], '\n')+1:]
+	}
+	return n, nil
 }

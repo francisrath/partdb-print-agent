@@ -258,7 +258,7 @@ func TestCandidateName(t *testing.T) {
 		{ModelID: "QL-810W", SNMPDescr: "Brother QL-810W"}:                                        "QL-810W",
 		{SNMPDescr: "Brother HL-L3270CDW series; Brother NC-9400h, Firmware Ver.Z  ,MID 84E-755"}: "Brother HL-L3270CDW series",
 		{IEEE1284: map[string]string{"MFG": "Zebra Technologies", "MDL": "ZTC GK420d"}}:           "Zebra Technologies ZTC GK420d",
-		{Kind: "bt", BTName: "RG-MLP80B-1234"}:                                                    "RG-MLP80B-1234",
+		{Kind: "bt", BTName: "RG-MTP80B-1234"}:                                                    "RG-MTP80B-1234",
 		{}:                                                                                        "?",
 	} {
 		if got := c.Name(); got != want {
@@ -314,7 +314,7 @@ func TestBLENoAdapter(t *testing.T) {
 func TestBTCandidates(t *testing.T) {
 	scan := func(context.Context, time.Duration) ([]bt.Device, error) {
 		return []bt.Device{
-			{Name: "RG-MLP80B-1234", Address: "AA:BB:CC:DD:EE:01"},
+			{Name: "RG-MTP80B-1234", Address: "AA:BB:CC:DD:EE:01"},
 			{Name: "Headphones", Address: "AA:BB:CC:DD:EE:02", Class: 0x240404},
 			{Name: "Receipt", Address: "AA:BB:CC:DD:EE:03", Class: 0x0680},
 			{Name: "Phone", Address: "AA:BB:CC:DD:EE:04", Class: 0x5a020c, SPP: true},
@@ -327,7 +327,7 @@ func TestBTCandidates(t *testing.T) {
 		t.Fatalf("%+v %v", cs, err)
 	}
 	for i, want := range []struct{ addr, name, model, status string }{
-		{"AA:BB:CC:DD:EE:01", "RG-MLP80B", "RG-MLP80B", Supported},
+		{"AA:BB:CC:DD:EE:01", "RG-MTP80B", "RG-MTP80B", Supported},
 		{"AA:BB:CC:DD:EE:03", "Receipt", "", Unknown},
 		{"AA:BB:CC:DD:EE:05", "Serial imager", "", Unknown},
 	} {
@@ -336,7 +336,7 @@ func TestBTCandidates(t *testing.T) {
 			t.Errorf("%d: %+v, want %+v", i, c, want)
 		}
 	}
-	if got := TransportLine(cs[0]); got != `transport: {kind: bt, name: "RG-MLP80B-1234", address: "AA:BB:CC:DD:EE:01"}` {
+	if got := TransportLine(cs[0]); got != `transport: {kind: bt, name: "RG-MTP80B-1234", address: "AA:BB:CC:DD:EE:01"}` {
 		t.Errorf("transport line %q", got)
 	}
 }
@@ -349,7 +349,7 @@ func TestBluetooth(t *testing.T) {
 		return []blecore.Advert{{Name: "MX10", Address: "AA:BB:CC:DD:EE:01"}}, nil
 	}
 	rego := func(context.Context, time.Duration) ([]bt.Device, error) {
-		return []bt.Device{{Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:02"}}, nil
+		return []bt.Device{{Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:02"}}, nil
 	}
 	bleFail := func(err error) func(context.Context, time.Duration) ([]blecore.Advert, error) {
 		return func(context.Context, time.Duration) ([]blecore.Advert, error) { return nil, err }

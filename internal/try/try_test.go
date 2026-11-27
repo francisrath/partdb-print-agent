@@ -450,7 +450,7 @@ func TestTryListsUnknownBLENeutrally(t *testing.T) {
 
 // A Bluetooth Classic printer is found and named, never asked ~HI; try doesn't test ESC/POS yet.
 func TestTryBTPrinter(t *testing.T) {
-	m, _ := devicedb.Default().Model("RG-MLP80B")
+	m, _ := devicedb.Default().Model("RG-MTP80B")
 	r, w := io.Pipe()
 	d := &dialog{t: t, in: w, done: make(chan struct{})}
 	svc := &printing.Service{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -459,7 +459,7 @@ func TestTryBTPrinter(t *testing.T) {
 		Discover: func(context.Context) ([]discovery.Candidate, error) {
 			return []discovery.Candidate{
 				{Kind: "bt", Address: "AA:BB:CC:DD:EE:03", BTName: "Receipt", Status: discovery.Unknown},
-				{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", BTName: "RG-MLP80B", Model: m, ModelID: "RG-MLP80B", Status: discovery.Supported},
+				{Kind: "bt", Address: "AA:BB:CC:DD:EE:01", BTName: "RG-MTP80B", Model: m, ModelID: "RG-MTP80B", Status: discovery.Supported},
 			}, nil
 		}}
 	go func() {
@@ -470,7 +470,7 @@ func TestTryBTPrinter(t *testing.T) {
 	got := d.finish()
 	out := d.output()
 	for _, want := range []string{"1) Bluetooth AA:BB:CC:DD:EE:03 (Bluetooth device, not a known label printer)",
-		"2) Bluetooth AA:BB:CC:DD:EE:01 RG-MLP80B", `this one is "RG-MLP80B"`} {
+		"2) Bluetooth AA:BB:CC:DD:EE:01 RG-MTP80B", `this one is "RG-MTP80B"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
