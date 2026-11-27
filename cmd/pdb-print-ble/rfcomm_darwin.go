@@ -206,7 +206,9 @@ func rfcommWrite(p []byte) error {
 		return nil
 	}
 	if r := C.btWrite(unsafe.Pointer(&p[0]), C.int(len(p))); r != 0 {
-		return fmt.Errorf("write: IOReturn %#x", uint32(r))
+		// macOS gives up on a printer that stopped taking data (seen: 0xe00002e7 after about a minute
+		// with the cover open)
+		return fmt.Errorf("the printer stopped taking data – cover open, out of paper or switched off? (IOReturn %#x)", uint32(r))
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ func init() {
 		if !ok {
 			return nil, fmt.Errorf("cat: darkness %q must be light, normal or dark", o.Darkness)
 		}
-		return &cat{model: m, speed: speed}, nil
+		return &cat{model: m, speed: speed, feed: uint16(min(o.FeedDots(m, 80), 0xFFFF))}, nil
 	})
 }
 
@@ -54,6 +54,7 @@ const (
 type cat struct {
 	model *devicedb.Model
 	speed byte
+	feed  uint16 // dot rows fed after each label
 }
 
 // reader parses frames off the notification stream, keeping partial frames between calls.
@@ -169,9 +170,8 @@ func (c *cat) Status(ctx context.Context, t driver.Transport) (*driver.Status, e
 }
 
 func (c *cat) Encode(w io.Writer, job *driver.Job) error {
-	feed := uint16(c.model.Quirk("feed_lines", 80))
 	for _, pg := range job.Pages {
-		if err := encodePage(w, pg, c.model.HeadPins, energy, c.speed, feed); err != nil {
+		if err := encodePage(w, pg, c.model.HeadPins, energy, c.speed, c.feed); err != nil {
 			return err
 		}
 	}

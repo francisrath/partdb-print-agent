@@ -293,4 +293,5 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "$RESULTS"
-          ! grep -qE 'failure|cancelled' <<<"$RESULTS"
+          # Allowlist: anything but success/skipped (failure, cancelled, abandoned = no runner) fails.
+          ! tr ' ' '\n' <<<"$RESULTS" | grep -qvxE 'success|skipped'

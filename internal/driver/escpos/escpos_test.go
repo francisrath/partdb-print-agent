@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,8 @@ type fake struct {
 	readErr error           // returned by Read instead of a timeout once the stream is empty
 	zero    bool            // Read returns (0, nil) when empty
 	onGSR   func()          // called when GS r is written
+	failAt  int             // the failAt-th Write (1-based) fails with io.EOF
+	onRead  func()          // called on every Read
 	timeout []time.Duration // SetReadTimeout calls
 }
 
@@ -35,6 +38,9 @@ func (f *fake) Close() error               { return nil }
 func (f *fake) Kind() string               { return "bt" }
 func (f *fake) Write(p []byte) (int, error) {
 	f.written = append(f.written, append([]byte(nil), p...))
+	if len(f.written) == f.failAt {
+		return 0, io.EOF
+	}
 	if f.onGSR != nil && bytes.Equal(p, []byte{0x1D, 0x72, 0x01}) {
 		f.onGSR()
 	}
@@ -45,6 +51,9 @@ func (f *fake) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 func (f *fake) Read(p []byte) (int, error) {
+	if f.onRead != nil {
+		f.onRead()
+	}
 	if len(f.in) == 0 {
 		time.Sleep(time.Millisecond)
 		if f.readErr != nil {
@@ -62,9 +71,9 @@ func (f *fake) Read(p []byte) (int, error) {
 
 func newDriver(t *testing.T, cutter bool) *escpos {
 	t.Helper()
-	m, ok := devicedb.Default().Model("RG-MLP80B")
+	m, ok := devicedb.Default().Model("RG-MTP80B")
 	if !ok {
-		t.Fatal("no RG-MLP80B")
+		t.Fatal("no RG-MTP80B")
 	}
 	c := *m
 	c.Quirks = map[string]any{"feed_lines": 80, "confirm_timeout_ms": 20000}
@@ -107,7 +116,7 @@ func TestEncodeGolden(t *testing.T) {
 	// 16x3: row 0 all black, row 1 left byte black, row 2 white
 	g := img(16, 3, func(x, y int) bool { return y == 0 || y == 1 && x < 8 })
 	want := []byte{0x1B, 0x40, 0x1D, 0x76, 0x30, 0x00, 0x02, 0x00, 0x03, 0x00,
-		0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x1B, 0x64, 0x50}
+		0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x1B, 0x4A, 0x50}
 	if got := encode(t, newDriver(t, false), g); !bytes.Equal(got, want) {
 		t.Errorf("got % x\nwant % x", got, want)
 	}
@@ -134,16 +143,16 @@ func TestEncodeBandsPaddingCutter(t *testing.T) {
 	if got[10] != 0x00 || got[11] != 0x40 {
 		t.Errorf("row bytes % x", got[10:12])
 	}
-	if want := []byte{0x1B, 0x64, 0x50, 0x1D, 0x56, 0x01}; !bytes.HasSuffix(got, want) {
+	if want := []byte{0x1B, 0x4A, 0x50, 0x1D, 0x56, 0x01}; !bytes.HasSuffix(got, want) {
 		t.Errorf("tail % x, want % x", got[len(got)-6:], want)
 	}
 }
 
 func TestFeedOver255(t *testing.T) {
 	d := newDriver(t, false)
-	d.model.Quirks["feed_lines"] = 300
+	d.feed = 300
 	got := encode(t, d, img(8, 1, func(int, int) bool { return false }))
-	if want := []byte{0x1B, 0x64, 0xFF, 0x1B, 0x64, 0x2D}; !bytes.HasSuffix(got, want) {
+	if want := []byte{0x1B, 0x4A, 0xFF, 0x1B, 0x4A, 0x2D}; !bytes.HasSuffix(got, want) {
 		t.Errorf("tail % x", got)
 	}
 }
@@ -369,5 +378,216 @@ func TestPrintSplitASBFrameIsNotTheAnswer(t *testing.T) {
 	res, err := newDriver(t, false).Print(context.Background(), f, job(okStatus))
 	if err != nil || res.Confirmed {
 		t.Errorf("%+v %v", res, err)
+	}
+}
+
+func pagesJob(n int) *driver.Job {
+	j := job(okStatus)
+	for len(j.Pages) < n {
+		j.Pages = append(j.Pages, j.Pages[0])
+	}
+	return j
+}
+
+var gsr = []byte{0x1D, 0x72, 0x01}
+
+// Labels go one at a time: each is confirmed (GS r answered) before the next is sent, so a printer
+// that stops (cover, paper) holds one label at most.
+func TestPrintPagesOneAtATime(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, {0x00}, {0x00}}}
+	res, err := newDriver(t, false).Print(context.Background(), f, pagesJob(3))
+	if err != nil || !res.Confirmed || res.Message != "printed" || res.Pages != 3 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	var order []string
+	for _, w := range f.written {
+		switch {
+		case bytes.Equal(w, gsr):
+			order = append(order, "gsr")
+		case len(w) > 3:
+			order = append(order, "page")
+		}
+	}
+	if got := strings.Join(order, " "); got != "page gsr page gsr page gsr" {
+		t.Errorf("order %q", got)
+	}
+}
+
+// The cover opened while a label printed and closed again: the printer finishes it, so the job goes
+// on, with a warning naming the label that may show a seam.
+func TestPrintCoverOpenedAndClosed(t *testing.T) {
+	// GS r: silence; poll 1: cover open; poll 2: closed, then the GS r answer
+	f := &fake{replies: [][]byte{nil, {0x16}, {0x12, 0x00}, {0x00}}}
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || !res.Confirmed {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "label 1 of 2") }) {
+		t.Errorf("warnings %q", res.Warnings)
+	}
+}
+
+// Opened while waiting for label 2: the printer may still be feeding label 1, so both are named.
+func TestPrintCoverWarningNamesBothLabels(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, nil, {0x16}, {0x12, 0x00}}}
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "label 1 or 2 of 2") }) {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// A cover left open stops the job before the next label, saying how many printed.
+func TestPrintCoverLeftOpen(t *testing.T) {
+	f := &fake{replies: [][]byte{{0x00}, nil}}
+	for range 200 {
+		f.replies = append(f.replies, []byte{0x16})
+	}
+	d := newDriver(t, false)
+	d.poll, d.coverWait = time.Millisecond, 20*time.Millisecond
+	_, err := d.Print(context.Background(), f, pagesJob(3))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.CoverOpen || !strings.Contains(de.Detail, "1 of 3 labels printed") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := slices.IndexFunc(f.written, func(w []byte) bool { return len(w) > 3 }); n < 0 {
+		t.Fatal("nothing sent")
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 2 {
+		t.Errorf("sent %d labels, want 2 (the third waits for the cover)", pages)
+	}
+}
+
+// Paper running out between labels stops the job with the count.
+func TestPrintPaperOutBetweenLabels(t *testing.T) {
+	f := &fake{replies: [][]byte{nil, {0x32}}} // GS r: silence; poll: paper end stopped printing
+	d := newDriver(t, false)
+	d.poll = time.Millisecond
+	_, err := d.Print(context.Background(), f, pagesJob(2))
+	var de *driver.Error
+	if !errors.As(err, &de) || de.Code != driver.NoMedia || !strings.Contains(de.Detail, "0 of 2 labels printed") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A printer that answers DLE EOT but never GS r still gets the whole job, unconfirmed.
+func TestPrintNoGSRStillSendsAll(t *testing.T) {
+	f := &fake{}
+	for range 500 {
+		f.replies = append(f.replies, nil)
+	}
+	f.replies[1] = []byte{0x12} // a poll answer: fine
+	d := newDriver(t, false)
+	d.poll = 5 * time.Millisecond
+	res, err := d.Print(context.Background(), f, pagesJob(2))
+	if err != nil || res.Confirmed || !strings.Contains(res.Message, "unconfirmed") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 2 {
+		t.Errorf("sent %d labels, want 2", pages)
+	}
+}
+
+// A silent printer is still ErrNoReadback (generic printers that ignore DLE EOT print blind), but
+// the error says what silence usually means here: stuck mid-label after a cut-off job.
+func TestStatusSilentSaysPowerCycle(t *testing.T) {
+	_, err := newDriver(t, false).Status(context.Background(), &fake{})
+	if !errors.Is(err, driver.ErrNoReadback) || !strings.Contains(err.Error(), "off and on") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// feed_mm overrides the model's feed: 10 mm at 203 dpi is 80 dot rows.
+func TestFeedMM(t *testing.T) {
+	m, _ := devicedb.Default().Model("RG-MTP80B")
+	d, err := driver.New(m, driver.Options{FeedMM: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := encode(t, d.(*escpos), img(8, 1, func(int, int) bool { return true })); !bytes.HasSuffix(got, []byte{0x1B, 0x4A, 80}) {
+		t.Errorf("tail % x", got[len(got)-6:])
+	}
+}
+
+// Paper narrower than the head sits centred in the holder (RG-MTP80B with a 57 mm roll): the label
+// is shifted right by half the difference, 96 dots for 384 on 576.
+func TestEncodeCentresNarrowPaper(t *testing.T) {
+	d := newDriver(t, false)
+	m57, _ := devicedb.Default().Media("paper-57")
+	var b bytes.Buffer
+	if err := d.Encode(&b, &driver.Job{Pages: []*image.Gray{img(384, 1, func(int, int) bool { return true })}, Media: &m57}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.Bytes()
+	if xb := int(got[6]) | int(got[7])<<8; xb != 60 { // 96 + 384 dots = 60 bytes
+		t.Fatalf("row is %d bytes, want 60", xb)
+	}
+	row := got[10:70]
+	if !bytes.Equal(row[:12], make([]byte, 12)) || !bytes.Equal(row[12:], bytes.Repeat([]byte{0xFF}, 48)) {
+		t.Errorf("row % x", row)
+	}
+}
+
+// Cancelled while label 1 of 3 waits: labels 2 and 3 are never sent.
+func TestPrintCtxStopsRemainingLabels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := newDriver(t, false)
+	d.confirm = time.Minute
+	f := &fake{onGSR: cancel}
+	_, err := d.Print(ctx, f, pagesJob(3))
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "1 of 3 labels sent") {
+		t.Fatalf("err = %v", err)
+	}
+	pages := 0
+	for _, w := range f.written {
+		if len(w) > 3 {
+			pages++
+		}
+	}
+	if pages != 1 {
+		t.Errorf("%d labels sent, want 1", pages)
+	}
+}
+
+// Label 1 got no GS r answer, so labels 2 and 3 went unconfirmed: a drop names all three.
+func TestPrintDroppedNamesUnconfirmedLabels(t *testing.T) {
+	d := newDriver(t, false)
+	d.confirm = 10 * time.Millisecond
+	_, err := d.Print(context.Background(), &fake{failAt: 4}, pagesJob(3)) // page, GS r, page, page
+	var de *driver.Error
+	if !errors.As(err, &de) || !strings.Contains(de.Detail, "0 of 3 labels printed, labels 1 to 3 may have") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Cancelled while draining before label 1: nothing is sent.
+func TestPrintCtxDuringDrainSendsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fake{onRead: cancel}
+	_, err := newDriver(t, false).Print(ctx, f, pagesJob(2))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, w := range f.written {
+		if len(w) > 3 {
+			t.Fatal("a label was sent after the cancel")
+		}
 	}
 }

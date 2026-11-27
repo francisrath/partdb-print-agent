@@ -267,7 +267,7 @@ func CheckDrivers(cfg *config.Config) error {
 }
 
 func options(p *config.Printer) driver.Options {
-	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness, BlackMarkMM: p.BlackMarkMM,
+	return driver.Options{Host: p.Transport.Host, SNMPCommunity: p.SNMPCommunity, NoSNMP: p.NoSNMP, Darkness: p.Darkness, BlackMarkMM: p.BlackMarkMM, FeedMM: p.FeedMM,
 		OffsetXDots: p.Adjust.XDots, OffsetYDots: p.Adjust.YDots, PrintWidthDots: p.Adjust.PrintWidthDots}
 }
 
@@ -631,6 +631,9 @@ func (s *Service) pickMedia(p *config.Printer, model *devicedb.Model, st *driver
 	if hasFallback {
 		return fallback, FromFallback, nil
 	}
+	if m, ok := onlyMedia(p, model); ok {
+		return m, FromFallback, nil
+	}
 	return devicedb.Media{}, "", errors.New("media unknown: the printer doesn't report its roll; set `media:` for this printer as a fallback")
 }
 
@@ -678,7 +681,24 @@ func (s *Service) MediaStatus(p *config.Printer, st *driver.Status) (m *devicedb
 			return &fm, f + " (config fallback)", true
 		}
 	}
+	if om, ok := onlyMedia(p, model); ok {
+		return &om, om.ID + " (this model's usual paper)", true
+	}
 	return nil, MediaName(loaded) + " reported; jobs will fail: set media for this printer as a fallback", false
+}
+
+// onlyMedia is the medium a model takes when nothing says otherwise: its defaults' media (a receipt
+// printer's usual paper), or the only one it takes. Then it needs no `media:`. The model's list, not
+// media_allowed: a one-entry allow-list says what may be loaded, not what is.
+func onlyMedia(p *config.Printer, model *devicedb.Model) (devicedb.Media, bool) {
+	id := model.Defaults["media"]
+	if id == "" && len(model.Media) == 1 {
+		id = model.Media[0]
+	}
+	if id == "" || !slices.Contains(p.AllowedMedia(model), id) {
+		return devicedb.Media{}, false
+	}
+	return LookupMedia(p, id)
 }
 
 // FittingProfiles lists the label profiles of the config's Part-DB instance whose labels fit m,

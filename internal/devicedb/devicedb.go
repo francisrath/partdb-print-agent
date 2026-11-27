@@ -452,7 +452,7 @@ func (db *DB) ModelByBLEName(name string) (*Model, bool) {
 	return best, best != nil
 }
 
-// ModelByBTName finds a model from the name a Bluetooth Classic printer is paired as ("RG-MLP80B").
+// ModelByBTName finds a model from the name a Bluetooth Classic printer is paired as ("RG-MTP80B").
 func (db *DB) ModelByBTName(name string) (*Model, bool) {
 	for _, id := range db.ModelIDs() {
 		m := db.models[id]

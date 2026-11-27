@@ -55,7 +55,7 @@ func TestBridgeFraming(t *testing.T) {
 
 // Kind and Channel select an RFCOMM link; a request without them (an older client) is BLE.
 func TestOpenRequestKind(t *testing.T) {
-	in := OpenRequest{Kind: "rfcomm", Name: "RG-MLP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 3}
+	in := OpenRequest{Kind: "rfcomm", Name: "RG-MTP80B", Address: "AA:BB:CC:DD:EE:FF", Channel: 3}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -74,10 +74,10 @@ func TestOpenRequestKind(t *testing.T) {
 // without overwriting what pairing already knows.
 func TestMergeClassic(t *testing.T) {
 	paired := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01"}, {Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}}
-	found := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
-		{Address: "AA:BB:CC:DD:EE:02", Name: "RG-MLP80B"}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
+	found := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MTP80B", Class: 0x0680},
+		{Address: "AA:BB:CC:DD:EE:02", Name: "RG-MTP80B"}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
 	got := MergeClassic(paired, found)
-	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MLP80B", Class: 0x0680},
+	want := []ClassicDevice{{Address: "AA:BB:CC:DD:EE:01", Name: "RG-MTP80B", Class: 0x0680},
 		{Address: "AA:BB:CC:DD:EE:02", Name: "Bench", Class: 0x0680}, {Address: "AA:BB:CC:DD:EE:03", Name: "Phone", Class: 0x020C}}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)

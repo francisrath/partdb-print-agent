@@ -53,7 +53,7 @@ real hardware, and which are implemented from the documentation only, is in [doc
 | DYMO LabelWriter | USB, Serial (330) | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | Niimbot, Phomemo | Bluetooth LE, USB serial (B21S) | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | ✅ B21S |
-| ESC/POS receipt printers | Bluetooth Classic | REGO RG-MLP80B, generic 58/80 mm | 🟡 not yet |
+| ESC/POS receipt printers | Bluetooth Classic | REGO RG-MTP80B, generic 58/80 mm | ✅ RG-MTP80B |
 
 ✅ tested on real hardware, 🟡 implemented from the documentation but not tested yet, ⏳ not supported
 yet, ❌ can't be supported. Every model with its status, the printers that aren't supported, and how to
@@ -517,16 +517,17 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
 
 ### Bluetooth Classic receipt printers (`kind: bt`)
 
-ESC/POS printers over Bluetooth Classic: `RG-MLP80B` (REGO, 80 mm paper, 576 dots; recognised by its
+ESC/POS printers over Bluetooth Classic: `RG-MTP80B` (REGO, 80 mm paper, 576 dots; recognised by its
 Bluetooth name), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
-raster driver (`GS v 0`); `media:` is `paper-80` or `paper-57`.
+raster driver (`GS v 0`). The RG-MTP80B prints on 80 mm paper unless `media: paper-57` says a 57 mm roll is
+loaded (it sits centred in the holder, and so does the print); set `paper-80` or `paper-57` for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands. Use continuous paper with the printer's Paper Type set to Normal: in black-mark mode it splits each label into pieces whenever Bluetooth data pauses, and it has no page mode or stored graphics (`ESC L`, `GS ( L`) to avoid that.
+`feed_mm:` sets how much paper is fed after each label (default 18 mm), if yours tears off too short or long.
 
 ```yaml
 - id: rego
   name: REGO
-  model: RG-MLP80B
-  transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MLP80B", channel: 1}
-  media: paper-80
+  model: RG-MTP80B
+  transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
 ```
 
 The address wins; with only `name`, pdb-print picks among the paired or known devices and refuses two
@@ -542,7 +543,9 @@ for a PIN, pair once with `bluetoothctl` (`pair <address>`, `trust <address>`; t
 
 Status is real-time (`DLE EOT`: paper out, cover open). After a job pdb-print asks the printer for its
 paper status (`GS r 1`) and reports "printed" when it answers, otherwise "sent (unconfirmed)" after 20 s.
-Many cheap printers don't answer; that is not an error. Like BLE printers, a `bt` printer takes one
+Many cheap printers don't answer; for the generic models that is not an error. The RG-MTP80B always
+answers, so pdb-print waits for each label's answer before sending the next, and refuses to print when the
+printer stays silent: switch it off and on (a cut-off print leaves it waiting for the rest of an image). Like BLE printers, a `bt` printer takes one
 connection at a time: a status check during a job answers Busy at once without connecting (ask again after
 the job for the printer's own status). It shows online after it has been used
 recently: scans don't count, because the OS lists paired printers even when they are off.

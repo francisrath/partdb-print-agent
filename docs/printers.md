@@ -135,7 +135,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
-| 🟡 | RG-MLP80B | Bluetooth Classic | escpos/raster |  |
+| ✅ maintainer | RG-MTP80B | Bluetooth Classic | escpos/raster | Bluetooth Classic on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands. Continuous paper only: set Paper Type to Normal (black-mark labels print in pieces) |
 
 ### TSC
 

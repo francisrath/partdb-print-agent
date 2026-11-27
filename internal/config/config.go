@@ -120,6 +120,9 @@ type Printer struct {
 	// BlackMarkMM is the thickness of the black marks on the back of die-cut media, for models with quirk
 	// black_mark; 0 (the default) = the printer finds labels by their gaps.
 	BlackMarkMM float64 `yaml:"black_mark_mm,omitempty"`
+	// FeedMM is the paper fed after each label on models that feed by themselves (receipt and cat
+	// printers), to put the label past the tear bar; 0 = the model's default.
+	FeedMM float64 `yaml:"feed_mm,omitempty"`
 	// AllowScaling prints labels whose size doesn't match the media by scaling them,
 	// instead of refusing with MEDIA_MISMATCH.
 	AllowScaling bool `yaml:"allow_scaling,omitempty"`
@@ -409,6 +412,10 @@ func (p *Printer) validate() error {
 	switch {
 	case p.BlackMarkMM < 0:
 		return fmt.Errorf("black_mark_mm %v must be 0 (gap sensing) or more", p.BlackMarkMM)
+	case p.FeedMM < 0 || p.FeedMM > 100:
+		return fmt.Errorf("feed_mm %v must be between 0 (the model's default) and 100", p.FeedMM)
+	case p.FeedMM > 0 && m.Quirk("feed_lines", -1) < 0:
+		return fmt.Errorf("feed_mm: %s doesn't feed after a label by itself", m.ID)
 	case p.BlackMarkMM > 0 && !m.QuirkBool("black_mark"):
 		return fmt.Errorf("%s has no black mark setting", m.ID)
 	}
