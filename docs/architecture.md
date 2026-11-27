@@ -420,7 +420,7 @@ print queue, IPP. Exec plugins for external GPL tools were considered and not bu
 | Kind | Linux | macOS | Windows |
 |---|---|---|---|
 | `tcp` (raw 9100) | ✓ | ✓ | ✓ |
-| `usb` | usblp `/dev/usb/lpN`, found by `usb_id` in sysfs | – | usbprint.sys (inbox "USB Printing Support"), found by `usb_id` among the `GUID_DEVINTERFACE_USBPRINT` interfaces |
+| `usb` | usblp `/dev/usb/lpN`, found by `usb_id` in sysfs | IOUSBHost in the helper `pdb-print-usb`, found by `usb_id` | usbprint.sys (inbox "USB Printing Support"), found by `usb_id` among the `GUID_DEVINTERFACE_USBPRINT` interfaces |
 | `serial` | `/dev/serial/by-id/…`, `/dev/ttyUSB0`, Pi UART | `/dev/cu.*` | `COMn` |
 | `ble` | BlueZ over D-Bus | CoreBluetooth in the helper `pdb-print-ble` | WinRT, in-process (BLE adapter needed) |
 | `bt` (Classic RFCOMM) | RFCOMM socket; BlueZ for name lookup and scan | IOBluetooth in the helper | Winsock Bluetooth socket, SDP lookup |
@@ -432,7 +432,19 @@ reads the device id, and reads and writes are overlapped and cancelled with `Can
 deadline or after 30 s without progress on a write chunk. usbprint doesn't lock the device: the Windows
 spooler can print to it at the same time. Windows starts an interface that also offers IPP over USB (7/1/4 next to 7/1/2,
 e.g. the QL-810W) in that protocol, where the printer ignores raster data: a job switches it to BIDI with
-`IOCTL_USBPRINT_SET_PROTOCOL` and back on close, so Windows' own IPP queue keeps working. No USB on macOS yet. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
+`IOCTL_USBPRINT_SET_PROTOCOL` and back on close, so Windows' own IPP queue keeps working. USB on macOS goes through the cgo helper `cmd/pdb-print-usb`
+(IOUSBHost; no kernel driver binds a printer interface there): `pdb-print-usb list` gives the USB devices
+with a printer-class interface (`iokit:0x…` registry ids of the devices), and a job runs the helper in bridge mode with the same `internal/blebridge`
+protocol (Kind `usb`), through the Bluetooth helper's client. It is a helper of its own because the Bluetooth
+library asks for Bluetooth permission whenever its process starts. A printer is a USB device whose
+`UsbDeviceSignature` (every interface class of the device) includes a raster printer class (7/1/1 or 7/1/2);
+the helper opens that interface at job time. macOS's own driverless queue (IPP over USB, the QL-810W's
+alternate setting 7/1/4) holds the interface for up to ~10 s after its jobs and leaves it on the IPP setting
+meanwhile: the helper counts both as busy and retries for 15 s, then
+holds the printer 5 s more while it finishes the queue's label (it answers status only then). It never switches the setting itself:
+switching it right after a queue job left the QL-810W silent on raster until it was power-cycled. The online check only
+looks for the printer in the list, so it never takes the interface. Writes go in 64 KiB chunks, each with
+30 s to leave; a printer without a bulk IN endpoint reports no read-back. On macOS all Bluetooth goes through `cmd/pdb-print-ble`, the only cgo
 binary: `pdb-print` starts it on demand and talks to it over stdin/stdout (`internal/blebridge`), so only
 the helper asks for Bluetooth permission. Docker has no Bluetooth. A Bluetooth printer takes one connection
 at a time.
@@ -446,7 +458,7 @@ nothing printable is sent.
 
 | Method | What it finds |
 |---|---|
-| USB (Linux sysfs, Windows usbprint.sys) | printer-class USB printers: USB id, serial, IEEE 1284 device id |
+| USB (Linux sysfs, Windows usbprint.sys, macOS `pdb-print-usb list`) | printer-class USB printers: USB id, serial, IEEE 1284 device id |
 | Network | hosts on the local subnets (each at most a /24) with port 9100 open, named from SNMP `sysDescr` |
 | Bluetooth LE | advertised names matching a model, and unknown devices with the cat printers' service `ae30` |
 | Bluetooth Classic | paired/known devices and an inquiry: names matching a model, or a printer class of device |
@@ -580,7 +592,7 @@ which we couldn't link anyway. The only cgo is the macOS Bluetooth helper, built
 | Platform | Package | Runs as |
 |---|---|---|
 | Windows x64 | `setup.exe` (Inno Setup) or zip + `pdb-print install` | per-user: login autostart without a window (`pdb-printw.exe`); or the Windows service `pdb-print` for all users. Unsigned for now (SmartScreen warns). |
-| macOS universal | Homebrew cask (`francisrath/tap`), tar.gz | `pdb-print serve`; `pdb-print-ble` next to it. Developer-ID signed and notarised. |
+| macOS universal | Homebrew cask (`francisrath/tap`), tar.gz | `pdb-print serve`; `pdb-print-ble` and `pdb-print-usb` next to it. Developer-ID signed and notarised. |
 | Debian, Ubuntu, Raspberry Pi OS | `.deb` via `install.sh` (checks `checksums.txt`) | systemd service as user `pdb-print` (groups `lp`, `bluetooth`, `dialout`); `--setup-window` until set up. |
 | Headless, any Linux | Docker `ghcr.io/francisrath/pdb-print` (amd64, arm64); archives incl. `linux_armv6` | container with `--network host`, setup window on first start; no Bluetooth. |
 
@@ -641,7 +653,7 @@ message is free-form detail.
 
 * **Repo:** [github.com/francisrath/pdb-print](https://github.com/francisrath/pdb-print) (renamed from
   partdb-print-agent in 2026-11), separate from Part-DB.
-* **Layout:** `cmd/pdb-print`, `cmd/pdb-print-ble`, `cmd/pdb-print-stats`; `internal/…` (§3.2);
+* **Layout:** `cmd/pdb-print`, `cmd/pdb-print-ble`, `cmd/pdb-print-usb`, `cmd/pdb-print-stats`; `internal/…` (§3.2);
   `packaging/` (deb, docker, windows); `docs/`; `assets/icon/`.
 * **Contributing:** `CONTRIBUTING.md`, issue forms, `SECURITY.md`, `CODEOWNERS`. A new model is a device
   database entry; a new family a package under `internal/driver/`; a new connection under
@@ -664,7 +676,7 @@ Next:
   DYMO, P-touch raster, Phomemo).
 * Windows code signing (SignPath was declined; reapply later).
 
-Not planned for now: A4 sheets and office printers, IPP, exec plugins, USB on macOS/Windows, a tray app,
+Not planned for now: A4 sheets and office printers, IPP, exec plugins, a tray app,
 OAuth pairing.
 
 ---

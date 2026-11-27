@@ -247,12 +247,16 @@ it; to edit it by hand see `config.example.yaml`. Each printer names its `model`
 which picks the driver; a config with an unknown or missing model doesn't load. Part-DB's address and
 token can also come from `PDB_PRINT_URL` and `PDB_PRINT_TOKEN` (see `.env.example`).
 
-USB printers on Linux and Windows are found by `usb_id` (and `serial`, for two identical printers) at every
+USB printers on Linux, Windows and macOS are found by `usb_id` (and `serial`, for two identical printers) at every
 job, so replugging doesn't matter; `device: /dev/usb/lpN` works too on Linux. On Windows pdb-print uses the
 built-in "USB Printing Support" driver: no driver to install or swap, and the printer keeps its Windows print
 queue: Brother's own driver and software (P-touch Editor) can print between pdb-print jobs, just not at the
-same moment (the two jobs would mix). USB on macOS isn't
-supported yet. `mirror: true` and `upside_down: true` flip
+same moment (the two jobs would mix). On macOS USB goes through the helper `pdb-print-usb`, shipped next to
+`pdb-print` in the macOS archive and the Homebrew cask; it needs no driver and asks for no permission. macOS
+adds its own (driverless) print queue for some printers, such as the QL-810W; it and pdb-print take turns:
+a pdb-print job right after one of that queue's waits up to 15 s for the printer, then 5 s more while the printer
+finishes that label. That queue defaults
+to the smallest label size (12×12 mm on a QL), so pick the real size when you print through it. `mirror: true` and `upside_down: true` flip
 the printed image.
 
 `discover` only connects to the print port and asks SNMP; it never sends anything a printer could
@@ -301,8 +305,8 @@ in when a status read says nothing. `pdb-print printers status ql810` and the we
 
 ### Brother QL
 
-Over the network (port 9100), or USB on Linux through the `usblp` driver (add the user to group `lp`) and on
-Windows.
+Over the network (port 9100), or USB on Linux through the `usblp` driver (add the user to group `lp`), on
+Windows and on macOS.
 On the network the agent reads the printer over SNMP (UDP 161) before each job: the loaded roll, errors
 (cover open, wrong media, empty) and, after sending, whether the label actually printed.
 
@@ -310,7 +314,7 @@ On the network the agent reads the printer over SNMP (UDP 161) before each job: 
 
 The PT-9500PC, and the newer P-touch printers (PT-E550W, PT-P750W, PT-P900 series …, see
 [docs/printers.md](docs/printers.md)), over USB (Linux through the `usblp` driver, add the user to group
-`lp`; Windows); the network models also over the network, the PT-P710BT and PT-P910BT over Bluetooth Classic. It reads the loaded tape and
+`lp`; Windows; macOS); the network models also over the network, the PT-P710BT and PT-P910BT over Bluetooth Classic. It reads the loaded tape and
 errors before each job, sends a batch label by label and waits for each to be printed. Labels print at
 true size: design the Part-DB profile at the full tape width and keep the unprintable edges clear (4.5 mm
 on 36 mm tape, about 1 mm on narrower tapes). Part-DB places label content over the whole page, so for
@@ -323,7 +327,7 @@ next print (or press the cut button); a batch on laminated tape comes out as one
 
 ### Zebra (ZPL)
 
-Over the network (port 9100) or USB (Linux, Windows), at 203 or 300 dpi; the mobile ZQ printers also over
+Over the network (port 9100) or USB (Linux, Windows, macOS), at 203 or 300 dpi; the mobile ZQ printers also over
 Bluetooth Classic (`kind: bt`, with the printer set to ZPL). Zebras don't report their label *width*,
 so set `media:` to the loaded size (`label-102x102` for 4×4", `label-102x152` for 4×6" …; `pdb-print media`
 lists them); the printer's reported label length is checked against it. Every label goes as one compressed
@@ -335,7 +339,7 @@ non-Zebra might print).
 ### Zebra EPL2 (LP/TLP 2824, 2844 …)
 
 Older Zebra/Eltron desktops that speak only EPL2: `model:` LP2824, TLP2824, LP2844, TLP2844, TLP3842 (300 dpi)
-and TLP2746e over USB (Linux, Windows) or their internal ZebraNet print server (TCP 9100); LP/TLP2722, LP/TLP2742 and
+and TLP2746e over USB (Linux, Windows, macOS) or their internal ZebraNet print server (TCP 9100); LP/TLP2722, LP/TLP2742 and
 TLP3742 only through an external ZebraNet PrintServer II (they have no USB). Models with "-Z" or "Plus" speak ZPL:
 use the Zebra (ZPL) section. **Untested**: written from Zebra's EPL Programming Guide, no EPL printer was at hand.
 
@@ -357,7 +361,7 @@ supported, and the serial-only LP/TLP 2622, LP 2443 and Strata aren't in the dev
 ### TSC and other TSPL printers
 
 TSC printers and TSPL clones (Xprinter, Munbyn, iDPRT, HPRT; every model in [docs/printers.md](docs/printers.md)). **None of them has
-been tested on a real printer yet.** Over USB (Linux, Windows), the network (port 9100) on models with Ethernet, or
+been tested on a real printer yet.** Over USB (Linux, Windows, macOS), the network (port 9100) on models with Ethernet, or
 Bluetooth Classic (`kind: bt`) on models with a Bluetooth serial option. They aren't recognised automatically
 (no USB ids or Bluetooth names are published): pick the model by hand. TSPL printers don't report the loaded
 label, so set `media:` to it: a size `pdb-print media` lists for your model, die-cut (`label-102x152` for 4×6")
@@ -382,7 +386,7 @@ media (`BLINE`) isn't supported yet.
 
 `model:` a DYMO LabelWriter 330/400/450 series or 4XL (`LabelWriter-450`, `LabelWriter-4XL` …; every model in
 [docs/printers.md](docs/printers.md)). They are USB printer-class devices, so they print
-over USB like the Brother printers: Linux's `usblp` (group `lp`) or Windows. The driver speaks DYMO's published raster
+over USB like the Brother printers: Linux's `usblp` (group `lp`), Windows or macOS. The driver speaks DYMO's published raster
 protocol (LabelWriter 400/450 Series Technical Reference): one raster line per dot row at 300 dpi, `ESC L`
 set to the label length so the printer finds the next label, a short feed between labels and a feed to the
 tear bar after the last. DYMOs don't report which labels are loaded, so set `media:` to the roll's DYMO

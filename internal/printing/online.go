@@ -180,6 +180,10 @@ func (s *Service) reachable(p *config.Printer) (bool, <-chan struct{}) {
 					opened <- false
 					return
 				}
+				if usb.FoundIsPresent && s.openDevice == nil { // macOS: opening would only list the printers again
+					opened <- true
+					return
+				}
 			}
 			f, err := open(dev)
 			opened <- err == nil && f.Close() == nil

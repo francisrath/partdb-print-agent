@@ -321,7 +321,7 @@ func (s *Server) discover(ctx context.Context, ip string) (cs []discovery.Candid
 		defer close(btDone)
 		bt, note, _ = discovery.Bluetooth(ctx, db, discovery.Options{})
 	}()
-	usb, _ := discovery.USB(db, "") // not on Linux or Windows: no USB printers, not an error here
+	usb, _ := discovery.USB(db, "") // no USB support here (or no pdb-print-usb on macOS): no USB printers, not an error here
 	lan, err := discovery.Network(ctx, db, discovery.Options{Timeout: 15 * time.Second})
 	<-btDone
 	return append(append(usb, lan...), bt...), note, err
@@ -477,7 +477,11 @@ func (s *Server) setupPrint(ctx context.Context, d *Draft) {
 	p := &d.Printer
 	d.Printed = false // only a label printed with the current settings counts
 	if p.Media == "" {
-		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		wait := 5 * time.Second
+		if p.Transport.Kind == "usb" { // on macOS the helper waits up to 15 s (+5 s) for macOS's own print queue
+			wait = 25 * time.Second
+		}
+		sctx, cancel := context.WithTimeout(ctx, wait)
 		st, err := s.Svc.Status(sctx, p)
 		cancel()
 		switch {

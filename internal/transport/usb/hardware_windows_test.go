@@ -3,6 +3,7 @@
 package usb
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -54,7 +55,7 @@ func protocolSwitch(t *testing.T, device string) {
 		t.Fatalf("%s: set IPP: %v", device, err)
 	}
 	f.Close()
-	if f, err = openPrinter(device); err != nil {
+	if f, err = openPrinter(context.Background(), device); err != nil {
 		t.Fatal(err)
 	}
 	if p, err := f.(*winDevice).dword(ioctlGetProtocol); p != protocolBIDI {

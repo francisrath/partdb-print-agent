@@ -20,7 +20,7 @@ README ([Development](README.md#development), [Adding a printer](README.md#addin
 ## Pull requests
 
 - `go vet ./...`, `staticcheck ./...` and `go test ./...` must pass (CI runs vet and tests on Linux, Windows and macOS, staticcheck on Linux).
-  The binary builds with `CGO_ENABLED=0` (only the macOS Bluetooth helper `cmd/pdb-print-ble` uses cgo).
+  The binary builds with `CGO_ENABLED=0` (only the macOS helpers `cmd/pdb-print-ble` and `cmd/pdb-print-usb` use cgo).
 - Tests never send real print jobs or touch real USB or Bluetooth: use fake transports, pipes or fake helper
   processes. Tests that need hardware go behind the `hardware` build tag.
 - A new model of a driver family pdb-print already has is a device-database entry in

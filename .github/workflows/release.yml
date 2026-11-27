@@ -201,7 +201,7 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/check"
           tar xzf dist/pdb-print_*_darwin_universal.tar.gz -C "$RUNNER_TEMP/check"
-          for b in pdb-print pdb-print-ble; do
+          for b in pdb-print pdb-print-ble pdb-print-usb; do
             codesign --verify --strict "$RUNNER_TEMP/check/$b"
             spctl --assess --type install "$RUNNER_TEMP/check/$b"
           done

@@ -1,5 +1,5 @@
-// Package blebridge is the stdin/stdout protocol between pdb-print and its macOS Bluetooth helper
-// pdb-print-ble. A frame is type(1) len(4, big-endian) payload. The client sends Open (JSON OpenRequest),
+// Package blebridge is the stdin/stdout protocol between pdb-print and its macOS helpers: pdb-print-ble
+// (Bluetooth) and pdb-print-usb (USB printers). A frame is type(1) len(4, big-endian) payload. The client sends Open (JSON OpenRequest),
 // then Write frames, then Close; the helper answers Open and each Write with OK or Error, and sends Notify
 // frames (every notification from the printer, flow control included) at any time. When the link drops
 // the helper exits; the client sees end of file.
@@ -25,11 +25,13 @@ const (
 const MaxFrame = 1 << 20
 
 // OpenRequest selects the printer (the address wins, as in config.Transport) and its link: BLE with its
-// GATT layout, or (Kind "rfcomm") Bluetooth Classic serial port on Channel (0 = look up the SPP record).
+// GATT layout, (Kind "rfcomm") Bluetooth Classic serial port on Channel (0 = look up the SPP record), or
+// (Kind "usb", pdb-print-usb) the USB printer interface Device as pdb-print-usb list shows it.
 // For rfcomm, Write frames go to the channel, incoming data comes back as Notify frames and OK.MTU is the
 // channel's MTU.
 type OpenRequest struct {
-	Kind    string `json:"kind,omitempty"` // "" = BLE, "rfcomm"
+	Kind    string `json:"kind,omitempty"`   // "" = BLE, "rfcomm", "usb"
+	Device  string `json:"device,omitempty"` // usb only
 	Name    string `json:"name,omitempty"`
 	Address string `json:"address,omitempty"`
 	Channel int    `json:"channel,omitempty"` // rfcomm only
@@ -42,9 +44,14 @@ type OpenRequest struct {
 // KindRFCOMM is OpenRequest.Kind for a Bluetooth Classic serial port link.
 const KindRFCOMM = "rfcomm"
 
+// KindUSB is OpenRequest.Kind for a USB printer interface (pdb-print-usb). Write frames go to its bulk OUT
+// endpoint and what the printer sends comes back as Notify frames.
+const KindUSB = "usb"
+
 // OK is the payload of the OK answer to Open.
 type OK struct {
-	MTU int `json:"mtu"` // bytes per chunk
+	MTU        int  `json:"mtu"`                   // bytes per chunk
+	NoReadback bool `json:"no_readback,omitempty"` // usb: the printer can't answer, Notify frames never come
 }
 
 // Write sends one frame in a single w.Write.
@@ -111,4 +118,12 @@ func MergeClassic(lists ...[]ClassicDevice) []ClassicDevice {
 		}
 	}
 	return all
+}
+
+// USBPrinter is one line of pdb-print-usb list: a USB printer-class interface.
+type USBPrinter struct {
+	Device   string `json:"device"`             // iokit:0x… registry entry id of the USB device
+	USBID    string `json:"usb_id"`             // 04f9:209c
+	Serial   string `json:"serial,omitempty"`   // "" if the printer reports none
+	IEEE1284 string `json:"ieee1284,omitempty"` // only with list --ids
 }

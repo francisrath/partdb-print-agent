@@ -1,6 +1,6 @@
 # GoReleaser v2 config for macOS, run on a macOS runner after .goreleaser.yaml (see
-# .github/workflows/release.yml): universal pdb-print (no cgo) plus the cgo Bluetooth helper
-# pdb-print-ble next to it, added to the draft release the Linux job made (release.yml publishes it).
+# .github/workflows/release.yml): universal pdb-print (no cgo) plus the cgo helpers pdb-print-ble
+# (Bluetooth) and pdb-print-usb (USB printers) next to it, added to the draft release the Linux job made (release.yml publishes it).
 # Local dry run: go run github.com/goreleaser/goreleaser/v2@v2.20.3 release --snapshot --clean --config .goreleaser-darwin.yaml --skip=homebrew
 version: 2
 project_name: pdb-print
@@ -28,6 +28,16 @@ builds:
     ldflags:
       - -s -w -linkmode=external -extldflags '-sectcreate __TEXT __info_plist cmd/pdb-print-ble/Info.plist'
     mod_timestamp: "{{ .CommitTimestamp }}"
+  # USB printers through IOUSBHost (cgo); no Bluetooth code, so it asks for no permission
+  - id: pdb-print-usb
+    main: ./cmd/pdb-print-usb
+    binary: pdb-print-usb
+    env: [CGO_ENABLED=1]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
 universal_binaries:
   - id: pdb-print-universal
@@ -42,9 +52,15 @@ universal_binaries:
     replace: true
     hooks:
       post: ./scripts/macos-sign.sh "{{ .Path }}" # keeps the -sectcreate Info.plist; codesign seals it
+  - id: pdb-print-usb-universal
+    ids: [pdb-print-usb]
+    name_template: pdb-print-usb
+    replace: true
+    hooks:
+      post: ./scripts/macos-sign.sh "{{ .Path }}"
 
 archives:
-  - ids: [pdb-print-universal, pdb-print-ble-universal]
+  - ids: [pdb-print-universal, pdb-print-ble-universal, pdb-print-usb-universal]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_darwin_universal"
     files: [LICENSE, README.md, config.example.yaml]
@@ -66,7 +82,7 @@ changelog:
 
 homebrew_casks:
   - name: pdb-print
-    binaries: [pdb-print, pdb-print-ble]
+    binaries: [pdb-print, pdb-print-ble, pdb-print-usb]
     skip_upload: auto # pre-releases don't update the tap
     homepage: https://github.com/francisrath/pdb-print
     description: Direct label printing for Part-DB

@@ -41,7 +41,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | 🟡 | QL-710W | Network, USB | brother/ql |  |
 | 🟡 | QL-720NW | Network, USB | brother/ql |  |
 | 🟡 | QL-800 | USB | brother/ql |  |
-| ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10; USB on Linux and Windows 11, 2026-11 |
+| ✅ maintainer | QL-810W | Network, USB | brother/ql | TCP and SNMP status, 2026-10; USB on Linux, Windows 11 and macOS, 2026-11 |
 | 🟡 | QL-820NWB | Network, USB | brother/ql |  |
 
 ### DYMO

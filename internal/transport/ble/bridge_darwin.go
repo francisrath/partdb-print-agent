@@ -39,6 +39,12 @@ const (
 
 var errNoHelper = errors.New("install pdb-print-ble (comes with the macOS release) for Bluetooth printers")
 
+// USBHelper is the macOS USB printer helper (cmd/pdb-print-usb). It speaks the same protocol, so package
+// usb drives it through NewUSB and ListUSB; it has no Bluetooth code and asks for no permission.
+const USBHelper = "pdb-print-usb"
+
+var errNoUSBHelper = errors.New("install pdb-print-usb (comes with the macOS release) for USB printers")
+
 // errDenied: macOS privacy (TCC) kills the helper with SIGABRT when the app that started pdb-print (its
 // "responsible" app, e.g. the Claude desktop app) may not use Bluetooth. Not ErrNoBluetooth: the adapter is fine.
 var errDenied = errors.New("macOS stopped " + helperName + " from using Bluetooth because the app that started " +
@@ -75,19 +81,22 @@ func init() {
 	})
 }
 
-// helperPath finds the helper; tests replace it so they never pick up a real one.
+// helperPath finds a helper by name; tests replace it so they never pick up a real one.
 var helperPath = findHelper
 
 // findHelper looks next to the running executable, then in PATH.
-func findHelper() (string, error) {
+func findHelper(name string) (string, error) {
 	if exe, err := os.Executable(); err == nil {
-		p := filepath.Join(filepath.Dir(exe), helperName)
+		p := filepath.Join(filepath.Dir(exe), name)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 			return p, nil
 		}
 	}
-	if p, err := exec.LookPath(helperName); err == nil {
+	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
+	}
+	if name == USBHelper {
+		return "", errNoUSBHelper
 	}
 	return "", errNoHelper
 }
@@ -109,25 +118,42 @@ func helperError(kind, msg string) error {
 // prompt left open) is a plain error. When ctx ends early the helper is interrupted and reports what it
 // has seen so far.
 func Scan(ctx context.Context, timeout time.Duration) ([]blecore.Advert, error) {
-	return scanLines[blecore.Advert](ctx, "ble", "scan", timeout)
+	return scanLines[blecore.Advert](ctx, "ble", helperName, timeout, "scan")
 }
 
 // ScanClassic lists the paired Bluetooth Classic devices and those an inquiry finds within timeout, through
 // the helper's scan-classic mode; errors as for Scan.
 func ScanClassic(ctx context.Context, timeout time.Duration) ([]blebridge.ClassicDevice, error) {
-	return scanLines[blebridge.ClassicDevice](ctx, "bt", "scan-classic", timeout)
+	return scanLines[blebridge.ClassicDevice](ctx, "bt", helperName, timeout, "scan-classic")
 }
 
-// scanLines runs a scan mode of the helper and decodes its JSON lines; errors start with kind.
-func scanLines[T any](ctx context.Context, kind, mode string, timeout time.Duration) ([]T, error) {
-	helper, err := helperPath()
+// ListUSB lists the USB printers through pdb-print-usb list; ids reads their IEEE 1284 IDs too (that opens
+// each printer).
+func ListUSB(ctx context.Context, ids bool) ([]blebridge.USBPrinter, error) {
+	args := []string{"list"}
+	if ids {
+		args = append(args, "--ids")
+	}
+	return scanLines[blebridge.USBPrinter](ctx, "usb", USBHelper, 5*time.Second, args...)
+}
+
+// NewUSB is a connection to a USB printer interface (device as ListUSB reports it) through pdb-print-usb.
+func NewUSB(device string) *Transport {
+	return &Transport{kind: "usb", helper: USBHelper, req: blebridge.OpenRequest{Kind: blebridge.KindUSB, Device: device}}
+}
+
+// scanLines runs a mode of helper name (args: mode and its flags) and decodes its JSON lines; errors start
+// with kind.
+func scanLines[T any](ctx context.Context, kind, name string, timeout time.Duration, args ...string) ([]T, error) {
+	mode := args[0]
+	helper, err := helperPath(name)
 	if err != nil {
 		return nil, err
 	}
 	// The helper's enable may take EnableWait plus one more library Enable (10 s) before the scan starts.
 	ctx, cancel := context.WithTimeout(ctx, timeout+blecore.EnableWait+15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, helper, mode, "--timeout", timeout.String())
+	cmd := exec.CommandContext(ctx, helper, append(args, "--timeout", timeout.String())...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
@@ -135,7 +161,7 @@ func scanLines[T any](ctx context.Context, kind, mode string, timeout time.Durat
 	out, err := cmd.Output()
 	// After an interrupt the helper still exits 0 with what it found, but Output reports the cancellation.
 	if err != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Success()) {
-		if cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
+		if kind != "usb" && cmd.ProcessState != nil && killedByPrivacy(cmd.ProcessState) {
 			return nil, fmt.Errorf("%s: %w; the helper exited: %w", kind, errDenied, err)
 		}
 		// Interrupted while still waiting for Bluetooth, it says so (e.g. the setup wizard's deadline
@@ -146,14 +172,14 @@ func scanLines[T any](ctx context.Context, kind, mode string, timeout time.Durat
 		if ctx.Err() != nil { // it didn't stop in time (stuck in Enable): killed, nothing to report
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%s: %s %s: %w", kind, helperName, mode, err)
+		return nil, fmt.Errorf("%s: %s %s: %w", kind, name, mode, err)
 	}
 	var found []T
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		var v T
 		if err := json.Unmarshal(sc.Bytes(), &v); err != nil {
-			return nil, fmt.Errorf("%s: %s %s output: %w", kind, helperName, mode, err)
+			return nil, fmt.Errorf("%s: %s %s output: %w", kind, name, mode, err)
 		}
 		found = append(found, v)
 	}
@@ -177,6 +203,7 @@ func fatalLine(s string) string {
 // pdb-print-ble process.
 type Transport struct {
 	kind   string // "" = ble
+	helper string // "" = pdb-print-ble
 	req    blebridge.OpenRequest
 	readTO time.Duration // per Read; 0 = readTimeout (SetReadTimeout)
 
@@ -190,6 +217,7 @@ type Transport struct {
 	dead    error         // why the helper exited
 	buf     []byte        // notifications not read yet
 	ready   chan struct{} // signalled when buf gains bytes
+	noRead  bool          // the helper said the printer can't answer
 }
 
 type reply struct {
@@ -199,11 +227,13 @@ type reply struct {
 
 func (t *Transport) Kind() string { return cmp.Or(t.kind, "ble") }
 
+func (t *Transport) helperName() string { return cmp.Or(t.helper, helperName) }
+
 func (t *Transport) Open(ctx context.Context) error {
 	t.reqMu.Lock()
 	defer t.reqMu.Unlock()
 	t.stop(false) // a helper left from an earlier Open (it may have died already)
-	helper, err := helperPath()
+	helper, err := helperPath(t.helperName())
 	if err != nil {
 		return err
 	}
@@ -223,17 +253,23 @@ func (t *Transport) Open(ctx context.Context) error {
 	}
 	done := make(chan struct{})
 	t.mu.Lock()
-	t.cmd, t.stdin, t.done, t.dead = cmd, stdin, done, nil
+	t.cmd, t.stdin, t.done, t.dead, t.noRead = cmd, stdin, done, nil, false
 	t.replies, t.buf, t.ready = make(chan reply, 1), nil, make(chan struct{}, 1)
 	t.mu.Unlock()
 	go t.readLoop(cmd, stdout, tail, done)
 
 	open, _ := json.Marshal(t.req)
-	if _, err := t.request(ctx, blebridge.TypeOpen, open); err != nil {
+	ans, err := t.request(ctx, blebridge.TypeOpen, open)
+	if err != nil {
 		// Cancelled: the helper is busy scanning or connecting and won't read a Close.
 		t.stop(ctx.Err() != nil)
 		return err
 	}
+	var ok blebridge.OK
+	_ = json.Unmarshal(ans, &ok)
+	t.mu.Lock()
+	t.noRead = ok.NoReadback
+	t.mu.Unlock()
 	return nil
 }
 
@@ -273,15 +309,15 @@ func (t *Transport) readLoop(cmd *exec.Cmd, stdout io.Reader, tail *stderrTail, 
 	t.mu.Lock()
 	switch {
 	case !exiting:
-		t.dead = fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
-	case killedByPrivacy(cmd.ProcessState):
+		t.dead = fmt.Errorf("%s: %s: %w", t.Kind(), t.helperName(), err)
+	case t.Kind() != "usb" && killedByPrivacy(cmd.ProcessState): // pdb-print-usb never asks for Bluetooth
 		t.dead = fmt.Errorf("%s: %w; the helper exited: %w", t.Kind(), errDenied, werr)
 	case msg != "" && werr != nil:
-		t.dead = fmt.Errorf("%s: %s: %s (%w)", t.Kind(), helperName, msg, werr)
+		t.dead = fmt.Errorf("%s: %s: %s (%w)", t.Kind(), t.helperName(), msg, werr)
 	case werr != nil:
-		t.dead = fmt.Errorf("%s: %s exited: %w", t.Kind(), helperName, werr)
+		t.dead = fmt.Errorf("%s: %s exited: %w", t.Kind(), t.helperName(), werr)
 	default:
-		t.dead = fmt.Errorf("%s: %s exited", t.Kind(), helperName)
+		t.dead = fmt.Errorf("%s: %s exited", t.Kind(), t.helperName())
 	}
 	t.mu.Unlock()
 	close(done)
@@ -300,7 +336,7 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 		case <-done:
 			return nil, t.deadErr()
 		case <-time.After(closeGrace):
-			return nil, fmt.Errorf("%s: %s: %w", t.Kind(), helperName, err)
+			return nil, fmt.Errorf("%s: %s: %w", t.Kind(), t.helperName(), err)
 		}
 	}
 	var r reply
@@ -321,7 +357,7 @@ func (t *Transport) request(ctx context.Context, typ byte, payload []byte) ([]by
 	case blebridge.TypeError:
 		return nil, helperError(t.Kind(), string(r.payload))
 	}
-	return nil, fmt.Errorf("%s: %s: unexpected reply %q", t.Kind(), helperName, r.typ)
+	return nil, fmt.Errorf("%s: %s: unexpected reply %q", t.Kind(), t.helperName(), r.typ)
 }
 
 func (t *Transport) deadErr() error {
@@ -357,6 +393,10 @@ func (t *Transport) Read(p []byte) (int, error) {
 			t.mu.Unlock()
 			return 0, fmt.Errorf("%s: not open", t.Kind())
 		}
+		if t.noRead {
+			t.mu.Unlock()
+			return 0, fmt.Errorf("%s: %w", t.Kind(), driver.ErrNoReadback)
+		}
 		if len(t.buf) > 0 {
 			n := copy(p, t.buf)
 			t.buf = t.buf[n:]
@@ -376,7 +416,7 @@ func (t *Transport) Read(p []byte) (int, error) {
 			}
 		case <-timer.C:
 			what := "notification"
-			if t.Kind() == "bt" {
+			if t.Kind() != "ble" {
 				what = "answer"
 			}
 			return 0, fmt.Errorf("%s: no %s within %v: %w", t.Kind(), what, to, os.ErrDeadlineExceeded)

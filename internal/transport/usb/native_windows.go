@@ -1,6 +1,7 @@
 package usb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,9 @@ const (
 	// printer may pause mid-job (head cooling, a cut) and Linux usblp writes wait as long as it takes.
 	writeTimeout = 30 * time.Second
 )
+
+// FoundIsPresent: Find's listing says nothing about whether the device opens, so the online check opens it.
+const FoundIsPresent = false
 
 // listNative lists the printers bound to usbprint.sys. Device is the interface path to open.
 // withIDs opens each printer for its IEEE 1284 ID.
@@ -106,7 +110,7 @@ type winDevice struct {
 // (QL-810W) in that protocol, where the printer ignores raster data: switch it to BIDI while we print
 // and back on Close, so Windows' own IPP queue keeps working.
 // ponytail: an older Windows without these IOCTLs fails them; the device is then used as it is.
-func openPrinter(device string) (io.ReadWriteCloser, error) {
+func openPrinter(_ context.Context, device string) (io.ReadWriteCloser, error) {
 	f, err := OpenDevice(device)
 	if err != nil {
 		return nil, err
