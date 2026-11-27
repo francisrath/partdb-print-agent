@@ -85,6 +85,11 @@ printers:
   #   transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
   #   feed_mm: 18               # paper fed after each label (receipt and cat printers); default per model
   #   media: paper-80           # paper-57 for ESCPOS-58
+  # The same printer over USB: its USB id is a generic one, so set the model by hand or let the setup
+  # wizard's "Ask this printer what it is" find it.
+  # - id: rego-usb
+  #   model: RG-MTP80B
+  #   transport: {kind: usb, usb_id: "0483:5720"}
   # Brother P-touch PT-9500PC over USB (Linux, e.g. a Raspberry Pi, where the user needs group `lp`; Windows)
   # - id: pt9500
   #   name: Brother PT-9500PC

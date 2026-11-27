@@ -406,7 +406,7 @@ Every model with its test status: [printers.md](printers.md).
 | `zpl` | Zebra desktops (GK420d community-tested), ZT industrial, ZQ mobile | tcp, usb, serial, bt (ZQ) | `~HS`; waits for the buffer to empty | Zebra ZPL II guide |
 | `epl` | EPL2-only LP/TLP 2824, 2844, 3842, 2722/2742 … | usb, tcp, serial | `^ee` over USB/serial; TCP is blind | Zebra EPL Programming Guide |
 | `tspl` | TSC and clones (Xprinter, Munbyn, iDPRT, HPRT) | usb, tcp, bt | `<ESC>!?` byte; waits for "printing" to clear | TSC TSPL/TSPL2 manual |
-| `escpos` | REGO RG-MTP80B, generic 58/80 mm | bt | `DLE EOT`; `GS r 1` after a job | Epson ESC/POS reference |
+| `escpos` | REGO RG-MTP80B, generic 58/80 mm | bt, usb | `DLE EOT`; `GS r 1` after a job; `GS I` 66/67 (maker, model) to identify a USB printer | Epson ESC/POS reference |
 | `dymo` | `lw400`: LabelWriter 400/450 series, 4XL; `lw300`: 330 | usb, serial (330) | `ESC A` byte; never confirms a finished label | DYMO LabelWriter 400/450 Technical Reference |
 | `cat` | `gb`: GB01–03, GT01, YT01, MX05–MX10 (MX10 tested) | ble | none | public cat-printer write-ups |
 | `niimbot` | `b1`, `b21`, `d11`, `d110`, `v4`: B1, B21, B21S (tested), B18, D11, D110, D101, Pro models | ble, serial (B21S USB) | heartbeat (cover, paper, battery), RFID roll info; print-end confirmation | niimbluelib (MIT), printers.niim.blue (facts only) |

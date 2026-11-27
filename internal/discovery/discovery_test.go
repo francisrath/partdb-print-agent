@@ -393,3 +393,45 @@ func TestBluetooth(t *testing.T) {
 		})
 	}
 }
+
+// escposFake answers GS I 66 (maker) and GS I 67 (model) like the REGO RG-MTP80B over USB; nothing else.
+type escposFake struct {
+	answers map[byte]string
+	out     []byte
+}
+
+func (f *escposFake) Write(p []byte) (int, error) {
+	if len(p) == 3 && p[0] == 0x1d && p[1] == 'I' {
+		f.out = append(f.out, f.answers[p[2]]...)
+	}
+	return len(p), nil
+}
+
+func (f *escposFake) Read(p []byte) (int, error) {
+	if len(f.out) == 0 {
+		return 0, os.ErrDeadlineExceeded
+	}
+	n := copy(p, f.out)
+	f.out = f.out[n:]
+	return n, nil
+}
+
+func TestESCPOSID(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answers  map[byte]string
+		want     string
+		answered bool
+	}{
+		{"rego", map[byte]string{66: "_REGO\x00", 67: "MTP80B\x00"}, "REGO MTP80B", true},
+		{"model only", map[byte]string{67: "MTP58\x00"}, "MTP58", true},
+		{"nothing to say", map[byte]string{66: "_\x00", 67: "_\x00"}, "", true}, // Epson: an empty field is "_" NUL
+		{"silent", nil, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, answered := escposID(&escposFake{answers: tc.answers}); got != tc.want || answered != tc.answered {
+				t.Errorf("got %q, %v; want %q, %v", got, answered, tc.want, tc.answered)
+			}
+		})
+	}
+}

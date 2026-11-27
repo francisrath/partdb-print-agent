@@ -53,7 +53,7 @@ real hardware, and which are implemented from the documentation only, is in [doc
 | DYMO LabelWriter | USB, Serial (330) | 330, 400, 450 series, 4XL | 🟡 not yet |
 | Bluetooth "cat printers" | Bluetooth LE | GB01–03, GT01, YT01, MX05–MX10 | ✅ MX10 |
 | Niimbot, Phomemo | Bluetooth LE, USB serial (B21S) | Niimbot B1, B21, D11, D110 …; Phomemo M02, M110, M200, D30 … | ✅ B21S |
-| ESC/POS receipt printers | Bluetooth Classic | REGO RG-MTP80B, generic 58/80 mm | ✅ RG-MTP80B |
+| ESC/POS receipt printers | Bluetooth Classic, USB | REGO RG-MTP80B, generic 58/80 mm | ✅ RG-MTP80B |
 
 ✅ tested on real hardware, 🟡 implemented from the documentation but not tested yet, ⏳ not supported
 yet, ❌ can't be supported. Every model with its status, the printers that aren't supported, and how to
@@ -511,10 +511,10 @@ projects, so treat them as experimental and report what happens (`pdb-print repo
 
 `pdb-print media` lists each model's label sizes. `pdb-print try` doesn't cover these yet.
 
-### Bluetooth Classic receipt printers (`kind: bt`)
+### Receipt printers (ESC/POS, `kind: bt` or `usb`)
 
-ESC/POS printers over Bluetooth Classic: `RG-MTP80B` (REGO, 80 mm paper, 576 dots; recognised by its
-Bluetooth name), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
+ESC/POS printers over Bluetooth Classic or USB: `RG-MTP80B` (REGO, 80 mm paper, 576 dots; recognised by its
+Bluetooth name, `RG-MTP80B…`, or REGO's label model `RG-MLP80B…`), or `ESCPOS-80` / `ESCPOS-58` for a generic 80 or 58 mm printer. They use the ESC/POS
 raster driver (`GS v 0`). The RG-MTP80B prints on 80 mm paper unless `media: paper-57` says a 57 mm roll is
 loaded (it sits centred in the holder, and so does the print); set `paper-80` or `paper-57` for the generic ones. Darkness is the printer's own setting: the RG-MTP80B ignores ESC/POS density commands. Use continuous paper with the printer's Paper Type set to Normal: in black-mark mode it splits each label into pieces whenever Bluetooth data pauses, and it has no page mode or stored graphics (`ESC L`, `GS ( L`) to avoid that.
 `feed_mm:` sets how much paper is fed after each label (default 18 mm), if yours tears off too short or long.
@@ -524,6 +524,17 @@ loaded (it sits centred in the holder, and so does the print); set `paper-80` or
   name: REGO
   model: RG-MTP80B
   transport: {kind: bt, address: "AA:BB:CC:DD:EE:FF", name: "RG-MTP80B", channel: 1}
+```
+
+Over USB the RG-MTP80B reports only a generic USB id (`0483:5720`, shared by many cheap printers) and no
+IEEE 1284 ID, so `discover` lists it as unknown. In the setup wizard, "Ask this printer what it is" sends
+the ESC/POS identify query (`GS I`); the REGO answers maker REGO, model MTP80B, and pdb-print then knows it.
+Or set the model by hand:
+
+```yaml
+- id: rego-usb
+  model: RG-MTP80B
+  transport: {kind: usb, usb_id: "0483:5720"}
 ```
 
 The address wins; with only `name`, pdb-print picks among the paired or known devices and refuses two

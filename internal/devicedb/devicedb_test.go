@@ -264,7 +264,7 @@ func TestBadBLEName(t *testing.T) {
 func TestModelByBTName(t *testing.T) {
 	db := devicedb.Default()
 	for _, tc := range []struct{ name, want string }{
-		{"RG-MTP80B", "RG-MTP80B"}, {"RG-MTP80B-1234", "RG-MTP80B"}, {"MX10", ""}, {"", ""},
+		{"RG-MTP80B", "RG-MTP80B"}, {"RG-MTP80B-1234", "RG-MTP80B"}, {"RG-MLP80B", "RG-MTP80B"}, {"RG-MTP58B", ""}, {"MX10", ""}, {"", ""},
 	} {
 		got := ""
 		if m, ok := db.ModelByBTName(tc.name); ok {
@@ -272,6 +272,21 @@ func TestModelByBTName(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("%q: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestModelByESCPOSID(t *testing.T) {
+	db := devicedb.Default()
+	for _, tc := range []struct{ id, want string }{
+		{"REGO MTP80B", "RG-MTP80B"}, {"REGO MTP80B-2", "RG-MTP80B"}, {"Other MTP80B", ""}, {"REGO MTP58B", ""}, {"", ""},
+	} {
+		got := ""
+		if m, ok := db.ModelByESCPOSID(tc.id); ok {
+			got = m.ID
+		}
+		if got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.id, got, tc.want)
 		}
 	}
 }
@@ -288,7 +303,7 @@ func TestEscposModels(t *testing.T) {
 			t.Errorf("%s missing", id)
 			continue
 		}
-		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt"}) ||
+		if m.Driver != "escpos" || m.DPI != 203 || m.HeadPins != want.pins || !slices.Equal(m.Transports, []string{"bt", "usb"}) ||
 			m.Quirk("feed_lines", 0) != 144 || m.Quirk("confirm_timeout_ms", 0) != 20000 {
 			t.Errorf("%s: %+v", id, m)
 		}
