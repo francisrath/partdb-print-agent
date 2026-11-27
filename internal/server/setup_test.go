@@ -437,6 +437,35 @@ func TestWizardIdentify(t *testing.T) {
 	}
 }
 
+// An unknown USB printer can be asked what it is (ESC/POS GS I), only the one the form names.
+func TestWizardIdentifyUSB(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Discover = func(ctx context.Context, ip string) ([]discovery.Candidate, error) {
+		return []discovery.Candidate{{Kind: "usb", Device: "iokit:0x1", USBID: "0483:5720", Status: discovery.Unknown}}, nil
+	}
+	var asked []string
+	h.srv.Identify = func(ctx context.Context, db *devicedb.DB, c discovery.Candidate) (discovery.Candidate, string, error) {
+		asked = append(asked, c.Device)
+		m, _ := db.Model("RG-MTP80B")
+		c.Model, c.ModelID, c.Status = m, m.ID, discovery.Supported
+		return c, "REGO MTP80B", nil
+	}
+	h.do("GET", "/setup/", nil)
+	h.srv.local.Draft.Instance = &config.Instance{ID: "default", BaseURL: h.partdb.URL, Token: "tcp_test"} // step 1 done
+	body := h.do("GET", "/setup/printer", nil).Body.String()
+	if !strings.Contains(body, "Ask this printer what it is") || !strings.Contains(body, "doesn't speak ESC/POS may print") {
+		t.Fatalf("no identify button with warning: %s", body)
+	}
+	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}, "device": {"iokit:0x2"}}), "/setup/printer")
+	if len(asked) != 0 {
+		t.Fatal("identified a printer the form didn't name")
+	}
+	wantRedirect(t, h.post("/setup/printer/identify", url.Values{"candidate": {"0"}, "device": {"iokit:0x1"}}), "/setup/printer")
+	if c := h.srv.local.Draft.Candidates[0]; len(asked) != 1 || c.ModelID != "RG-MTP80B" || c.Status != discovery.Supported {
+		t.Errorf("after identify (%v): %+v", asked, c)
+	}
+}
+
 // A BLE cat printer is a "Bluetooth" row, and picking it sets up a ble transport.
 func TestWizardBLERow(t *testing.T) {
 	h := newHarness(t)

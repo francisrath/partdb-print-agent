@@ -73,8 +73,8 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 | 🟡 | MX08 | Bluetooth LE | cat/gb |  |
 | ✅ maintainer | MX10 | Bluetooth LE | cat/gb | Bluetooth LE on Linux, Windows and macOS, 2026-11 |
 | 🟡 | YT01 | Bluetooth LE | cat/gb |  |
-| 🟡 | ESCPOS-58 | Bluetooth Classic | escpos/raster |  |
-| 🟡 | ESCPOS-80 | Bluetooth Classic | escpos/raster |  |
+| 🟡 | ESCPOS-58 | Bluetooth Classic, USB | escpos/raster |  |
+| 🟡 | ESCPOS-80 | Bluetooth Classic, USB | escpos/raster |  |
 
 ### HPRT
 
@@ -135,7 +135,7 @@ them by hand: change the data and run `go test ./internal/devicedb -run TestPrin
 
 | Status | Model | Connections | Driver | Notes |
 |---|---|---|---|---|
-| ✅ maintainer | RG-MTP80B | Bluetooth Classic | escpos/raster | Bluetooth Classic on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands. Continuous paper only: set Paper Type to Normal (black-mark labels print in pieces) |
+| ✅ maintainer | RG-MTP80B | Bluetooth Classic, USB | escpos/raster | Bluetooth Classic and USB on macOS, 2026-11. Some shops list it as RG-MLP80B. Darkness is the printer's own setting: it ignores ESC/POS density commands. Continuous paper only: set Paper Type to Normal (black-mark labels print in pieces) |
 
 ### TSC
 

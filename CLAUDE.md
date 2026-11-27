@@ -30,7 +30,7 @@ transports, §10 security, §22 decisions); per-phase designs and plans live in 
   `brother` (dialects `ql`: QL-800/810W/820NWB tested, older QLs and the 1296-pin QL-1050/1060N/1100 series
   untested; `pt-cbp`: PT-9500PC; `pt-raster`: PT-E550W/P750W/P710BT/P700/E500 and PT-P900 series, untested),
   `zpl` (Zebra desktop ZPL printers; industrial ZT and mobile ZQ series untested),
-  `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MTP80B, generic 58/80 mm).
+  `cat` (Bluetooth LE "cat printers" GB/GT/YT/MX), `escpos` (ESC/POS raster: REGO RG-MTP80B over Bluetooth Classic or USB, generic 58/80 mm).
 - **Transports** (`internal/transport/<kind>`, registered by config kind): `tcp`, `usb` (Linux usblp, Windows usbprint.sys), `ble` (Linux/Windows
   in-process, macOS via the helper), `bt` (Bluetooth Classic RFCOMM: Linux/Windows sockets, macOS via the helper).
 - **Sources**: CLI `print`, local HTTP API + web UI and setup wizard on `127.0.0.1:8631` (`/v1/handoff` for the
@@ -45,7 +45,7 @@ Addresses below are placeholders; real addresses, the Part-DB URL and tokens liv
 `config.local.yaml` and `.env`. Never commit them.
 - Brother **QL-810W**, `tcp://192.168.1.50:9100`, roll **DK-22210 (29 mm continuous)**; also DK-22214 (12 mm) and
   DK-11204 (17×54 die-cut). Brother **PT-9500PC** on a Raspberry Pi agent over USB. **MX10** cat printer (BLE).
-  A REGO **RG-MTP80B** (Bluetooth Classic, ESC/POS; also USB, untested) tested 2026-11-24. Raspberry Pis and a Windows 11 laptop
+  A REGO **RG-MTP80B** (ESC/POS; Bluetooth Classic, and USB `0483:5720`, identified by `GS I` as REGO MTP80B) tested 2026-11-24 (USB 2026-11-27). Raspberry Pis and a Windows 11 laptop
   serve as test agents.
 - Part-DB 2.20.x at **https://partdb.example.org** (behind Traefik; multipart POSTs get HTTP 418 there – irrelevant
   for the agent, which only uses JSON API calls).

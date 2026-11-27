@@ -77,6 +77,7 @@ type Match struct {
 	HIModel       string   `yaml:"hi_model"`       // regexp on the model part of a Zebra ~HI reply
 	BLEName       string   `yaml:"ble_name"`       // regexp on the BLE advertised name
 	BTName        string   `yaml:"bt_name"`        // regexp on the Bluetooth Classic device name
+	ESCPOSID      string   `yaml:"escpos_id"`      // regexp on "maker model" from ESC/POS GS I 66 and 67
 }
 
 type Model struct {
@@ -94,6 +95,7 @@ type Model struct {
 	hiRe       *regexp.Regexp    // Match.HIModel, compiled at load
 	bleRe      *regexp.Regexp    // Match.BLEName, compiled at load
 	btRe       *regexp.Regexp    // Match.BTName, compiled at load
+	escposRe   *regexp.Regexp    // Match.ESCPOSID, compiled at load
 	Defaults   map[string]string `yaml:"defaults"`
 	// Tested says who printed with this model on real hardware: "maintainer", "community" or ""
 	// (implemented from the documentation, not tested yet). TestedNote says how and when.
@@ -248,6 +250,13 @@ func Load(fsys fs.FS) (*DB, error) {
 					errs = append(errs, fmt.Errorf("%s: model %s: bad bt_name pattern: %w", base, m.ID, err))
 				}
 				m.btRe = re
+			}
+			if m.Match.ESCPOSID != "" {
+				re, err := regexp.Compile(m.Match.ESCPOSID)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s: model %s: bad escpos_id pattern: %w", base, m.ID, err))
+				}
+				m.escposRe = re
 			}
 			for _, k := range []string{"ble_service", "ble_write", "ble_notify"} {
 				switch v := m.Quirks[k].(type) {
@@ -457,6 +466,17 @@ func (db *DB) ModelByBTName(name string) (*Model, bool) {
 	for _, id := range db.ModelIDs() {
 		m := db.models[id]
 		if m.btRe != nil && name != "" && m.btRe.MatchString(name) {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// ModelByESCPOSID finds a model from what an ESC/POS printer says it is: "maker model" ("REGO MTP80B").
+func (db *DB) ModelByESCPOSID(id string) (*Model, bool) {
+	for _, mid := range db.ModelIDs() {
+		m := db.models[mid]
+		if m.escposRe != nil && id != "" && m.escposRe.MatchString(id) {
 			return m, true
 		}
 	}

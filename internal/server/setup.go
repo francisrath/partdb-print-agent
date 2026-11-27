@@ -223,19 +223,20 @@ func (s *Server) setupPrinter(w http.ResponseWriter, r *http.Request) {
 		d.Candidates, d.Scanned = sortCandidates(cs), true
 	}
 	type row struct {
-		Index     int
-		C         discovery.Candidate
-		Supported bool
-		Where     string
-		Existing  string // name of a configured printer at this address
-		Current   bool   // the printer this session picked
-		Name      string
+		Index        int
+		C            discovery.Candidate
+		Supported    bool
+		Identifiable bool // the identify button is shown
+		Where        string
+		Existing     string // name of a configured printer at this address
+		Current      bool   // the printer this session picked
+		Name         string
 	}
 	var rows []row
 	for i, c := range d.Candidates {
 		cur := d.Printer.Model != "" && c.ModelID == d.Printer.Model &&
 			((c.Kind == "tcp" && d.Printer.Transport.Host == c.Host) || (d.Printer.Transport.Address != "" && btSame(d.Printer.Transport, c)) || (c.Kind == "usb" && d.Printer.Transport.Kind == "usb" && d.Printer.Transport.USBID == c.USBID && d.Printer.Transport.Serial == c.Serial && (c.USBID != "" || d.Printer.Transport.Device == c.Device)))
-		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
+		rows = append(rows, row{Index: i, C: c, Supported: c.Status == discovery.Supported, Identifiable: identifiable(c), Where: where(c), Existing: s.existing(c), Current: cur, Name: c.Name()})
 	}
 	s.setupPage(w, r, "setup-printer", 2, map[string]any{"Rows": rows, "ScanErr": scanErr, "BLENote": bleNote})
 }
@@ -375,24 +376,35 @@ func (s *Server) setupProbe(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
 }
 
-// setupIdentify asks an unknown network printer what it is (Zebra ~HI), after the user pressed
-// the button that warns about it.
+// setupIdentify asks an unknown printer what it is (network: Zebra ~HI, USB: ESC/POS GS I), after the
+// user pressed the button that warns about it.
 func (s *Server) setupIdentify(w http.ResponseWriter, r *http.Request) {
 	_, d, unlock := lockDraft(r)
 	defer unlock()
 	i, err := strconv.Atoi(r.FormValue("candidate"))
-	// the host too: the list may have changed since the page was shown, and the consent was for this printer
-	if err == nil && i >= 0 && i < len(d.Candidates) && d.Candidates[i].Kind == "tcp" && d.Candidates[i].Host == r.FormValue("host") {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		c, _, err := discovery.Identify(ctx, devicedb.Default(), d.Candidates[i])
+	// the host or device too: the list may have changed since the page was shown, and the consent was for this printer
+	if err == nil && i >= 0 && i < len(d.Candidates) && identifiable(d.Candidates[i]) &&
+		d.Candidates[i].Host == r.FormValue("host") && d.Candidates[i].Device == r.FormValue("device") {
+		identify := s.Identify
+		if identify == nil {
+			identify = discovery.Identify
+		}
+		// USB on macOS: the helper may first wait up to 20 s for macOS's own print queue
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		c, _, err := identify(ctx, devicedb.Default(), d.Candidates[i])
 		cancel()
 		d.Candidates[i] = c
 		if err != nil {
-			d.Notes = []string{fmt.Sprintf("%s: %v", c.Host, err)}
+			d.Notes = []string{fmt.Sprintf("%s: %v", cmp.Or(c.Host, c.Device), err)}
 		}
 		d.Candidates = sortCandidates(d.Candidates)
 	}
 	http.Redirect(w, r, "/setup/printer", http.StatusSeeOther)
+}
+
+// identifiable: an unknown printer Identify can ask (network or USB).
+func identifiable(c discovery.Candidate) bool {
+	return c.Status != discovery.Supported && c.ModelID == "" && (c.Kind == "tcp" || c.Kind == "usb")
 }
 
 // --- step 3: test print

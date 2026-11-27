@@ -65,14 +65,14 @@ API). You can still set up the printer; printing from Part-DB needs a newer Part
     <strong>{{if eq .Name "?"}}Unknown printer{{else}}{{.Name}}{{end}}</strong> · {{.Where}}</span>
     <span class="muted">{{if .Supported}}supported{{else}}not supported yet{{end}}{{with .Existing}} · already set up as “{{.}}”{{end}}</span>
   </label>
-  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if and (eq .C.Kind "tcp") (not .C.ModelID)}}<button class="link" form="identify-{{.Index}}" data-busy="Asking…">Ask this printer what it is</button>
-  <span class="muted">(a printer that isn't a Zebra may print a page with a few strange characters)</span> · {{end}}<a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
+  {{if and (not .Supported) (ne .C.Kind "ble") (ne .C.Kind "bt")}}<p class="indent">{{if .Identifiable}}<button class="link" form="identify-{{.Index}}" data-busy="Asking…">Ask this printer what it is</button>
+  <span class="muted">({{if eq .C.Kind "usb"}}a printer that doesn't speak ESC/POS{{else}}a printer that isn't a Zebra{{end}} may print a page with a few strange characters)</span> · {{end}}<a href="/setup/report?candidate={{.Index}}">Send us a report</a> so we can add it.</p>{{end}}
   {{end}}
 </form>
 {{else}}
 <p>No printers found. Check the printer is switched on and connected by USB or to the same network, or that Bluetooth is on and the printer is nearby.</p>
 {{end}}
-{{range .Rows}}{{if and (not .Supported) (eq .C.Kind "tcp") (not .C.ModelID)}}<form method="post" action="/setup/printer/identify" id="identify-{{.Index}}" hidden>{{template "csrf" $}}<input type="hidden" name="candidate" value="{{.Index}}"><input type="hidden" name="host" value="{{.C.Host}}"></form>{{end}}{{end}}
+{{range .Rows}}{{if .Identifiable}}<form method="post" action="/setup/printer/identify" id="identify-{{.Index}}" hidden>{{template "csrf" $}}<input type="hidden" name="candidate" value="{{.Index}}"><input type="hidden" name="host" value="{{.C.Host}}"><input type="hidden" name="device" value="{{.C.Device}}"></form>{{end}}{{end}}
 <form method="post" action="/setup/printer/probe" class="inline-form">
   {{template "csrf" .}}
   <label>Not listed? Printer's IP address <input name="ip" placeholder="192.168.1.50" inputmode="decimal"></label>

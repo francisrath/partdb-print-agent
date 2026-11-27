@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"slices"
@@ -379,10 +380,14 @@ func TransportLine(c Candidate) string {
 	return fmt.Sprintf("transport: {kind: tcp, host: %s}", c.Host)
 }
 
-// Identify asks a network printer what it is with Zebra's ~HI. Call it only after the user said
-// yes: a printer that isn't a Zebra may print the few bytes as a page. The reply names the model
-// and its dots per mm; reply is the raw answer ("" when there was none).
+// Identify asks a printer what it is: a network printer with Zebra's ~HI (the reply names the model and
+// its dots per mm), a USB printer with ESC/POS GS I (maker and model). Call it only after the user said
+// yes: a printer that speaks another language may print the few bytes as a page. reply is the raw answer
+// ("" when there was none).
 func Identify(ctx context.Context, db *devicedb.DB, c Candidate) (Candidate, string, error) {
+	if c.Kind == "usb" {
+		return identifyUSB(ctx, db, c)
+	}
 	port := c.Port
 	if port == 0 {
 		port = 9100
@@ -414,4 +419,53 @@ func Identify(ctx context.Context, db *devicedb.DB, c Candidate) (Candidate, str
 	}
 	c.setModel(m)
 	return c, string(reply), nil
+}
+
+func identifyUSB(ctx context.Context, db *devicedb.DB, c Candidate) (Candidate, string, error) {
+	t := usb.New(c.Device)
+	if err := t.Open(ctx); err != nil {
+		return c, "", err
+	}
+	defer t.Close()
+	t.SetReadTimeout(1500 * time.Millisecond)
+	id, answered := escposID(t)
+	switch {
+	case !answered:
+		return c, "", errors.New("no answer to the ESC/POS identify query (GS I): not an ESC/POS printer, or one that doesn't support it")
+	case id == "":
+		return c, "", errors.New("the printer answered the ESC/POS identify query (GS I) without a maker or model: pick its model by hand")
+	}
+	m, ok := db.ModelByESCPOSID(id)
+	if !ok {
+		return c, id, fmt.Errorf("a printer we don't know yet answered: %q", id)
+	}
+	c.setModel(m)
+	return c, id, nil
+}
+
+// escposID asks an ESC/POS printer for its maker and model (GS I 66, GS I 67) and returns "maker model",
+// either part left out when it has none, and whether it answered at all. Answers are "_text\x00" (some
+// printers leave out the "_"); "_\x00" means it has no such value.
+func escposID(t io.ReadWriter) (string, bool) {
+	answered := false
+	var parts []string
+	for _, n := range []byte{66, 67} {
+		if _, err := t.Write([]byte{0x1d, 'I', n}); err != nil {
+			return "", false
+		}
+		var got []byte
+		buf := make([]byte, 64)
+		for !bytes.Contains(got, []byte{0}) && len(got) < 256 {
+			k, err := t.Read(buf)
+			got = append(got, buf[:k]...)
+			if err != nil {
+				break
+			}
+		}
+		answered = answered || len(got) > 0
+		if s, _, _ := bytes.Cut(got, []byte{0}); len(bytes.TrimPrefix(s, []byte("_"))) > 0 {
+			parts = append(parts, strings.TrimSpace(string(bytes.TrimPrefix(s, []byte("_")))))
+		}
+	}
+	return strings.Join(parts, " "), answered
 }

@@ -115,6 +115,8 @@ type Server struct {
 	setupPrints sync.WaitGroup // wizard test prints in progress
 	// Discover finds printers for the wizard (ip "" = USB, the LAN and Bluetooth); nil = discovery package.
 	Discover func(ctx context.Context, ip string) ([]discovery.Candidate, error)
+	// Identify asks an unknown printer what it is; nil = discovery.Identify.
+	Identify func(ctx context.Context, db *devicedb.DB, c discovery.Candidate) (discovery.Candidate, string, error)
 
 	mu          sync.Mutex // guards cfg, flash, jobs, seen
 	cfg         *config.Config
